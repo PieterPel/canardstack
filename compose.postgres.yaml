@@ -1,0 +1,114 @@
+# Local stack with a Postgres DuckLake catalog instead of Quack.
+#
+#   docker compose -f compose.postgres.yaml up
+#
+# Every canardstack query makes several sequential catalog requests. Quack costs about
+# 2 ms per request, Postgres well under 1 ms, so this stack answers small queries about
+# 3-5x faster (see docs/work-log.md and bench/). It also needs no TLS front end.
+x-duckdb-otlp-image: &duckdb-otlp-image
+  # 0.7.3 is the newest duckdb-otlp release built on DuckDB 1.5.x; see compose.yaml.
+  image: ${DUCKDB_OTLP_IMAGE:-ghcr.io/smithclay/duckdb-otlp:0.7.3}
+
+services:
+  init:
+    image: docker.io/library/alpine:3
+    command: ["sh", "-c", "chmod -R 0777 /mnt/canardstack /mnt/data"]
+    volumes:
+      - canardstack-data:/mnt/canardstack
+      - ducklake-data:/mnt/data
+
+  postgres:
+    image: docker.io/library/postgres:17
+    environment:
+      POSTGRES_DB: ducklake
+      POSTGRES_PASSWORD: ducklake-dev-password
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres", "-d", "ducklake"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  ingest:
+    <<: *duckdb-otlp-image
+    depends_on:
+      init:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+    ports:
+      - "${OTLP_PORT:-4318}:4318"
+    environment:
+      DUCKDB_MODE: none
+      DUCKDB_OTLP_INIT_SQL: /etc/duckdb-otlp/ingest.sql
+      DUCKDB_CATALOG: canardlake
+      DUCKDB_OTLP_HOST: 0.0.0.0
+      DUCKDB_OTLP_HTTP_PORT: "4318"
+      DUCKDB_OTLP_GRPC_PORT: "0"
+      DUCKDB_OTLP_TOKEN: ${OTLP_TOKEN:-dev-otlp-token-123456}
+    volumes:
+      - ducklake-data:/var/lib/ducklake/data
+      - ./config/compose/duckdb-otlp-ingest-postgres.sql:/etc/duckdb-otlp/ingest.sql:ro
+    healthcheck:
+      test: ["CMD", "duckdb-otlp", "doctor", "--host", "127.0.0.1", "--http", "4318", "--grpc", "0"]
+      interval: 5s
+      timeout: 5s
+      start_period: 60s
+      retries: 24
+    restart: unless-stopped
+
+  canardstack:
+    image: ${CANARDSTACK_IMAGE:-ghcr.io/smithclay/canardstack:latest}
+    # Match the ingest image's UID so both processes can write the shared data directory.
+    user: "65532:65532"
+    depends_on:
+      init:
+        condition: service_completed_successfully
+      ingest:
+        condition: service_healthy
+    ports:
+      - "${CANARDSTACK_PORT:-9090}:9090"
+    environment:
+      CANARDSTACK_BIND: 0.0.0.0:9090
+      CANARDSTACK_API_KEY: ${CANARDSTACK_API_KEY:-dev-canardstack-key}
+      CANARDSTACK_ADMIN_API_KEY: ${CANARDSTACK_ADMIN_API_KEY:-dev-canardstack-admin-key}
+      CANARDSTACK_DATA_DIR: /var/lib/canardstack
+      CANARDSTACK_POSTGRES_DSN: dbname=ducklake host=postgres user=postgres password=ducklake-dev-password
+      CANARDSTACK_DUCKLAKE_DATA_PATH: /var/lib/ducklake/data/
+    volumes:
+      - canardstack-data:/var/lib/canardstack
+      - ducklake-data:/var/lib/ducklake/data
+    healthcheck:
+      test: ["CMD", "canardstack", "healthcheck", "--endpoint", "http://127.0.0.1:9090/healthz"]
+      interval: 5s
+      timeout: 5s
+      start_period: 20s
+      retries: 12
+    restart: on-failure
+
+  grafana:
+    image: grafana/grafana-oss:latest
+    depends_on:
+      canardstack:
+        condition: service_healthy
+    ports:
+      - "${GRAFANA_PORT:-3000}:3000"
+    environment:
+      CANARDSTACK_API_KEY: ${CANARDSTACK_API_KEY:-dev-canardstack-key}
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_SECURITY_ADMIN_USER: admin
+      GF_USERS_DEFAULT_THEME: light
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./config/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./config/grafana/dashboards:/etc/grafana/dashboards:ro
+
+volumes:
+  canardstack-data:
+  ducklake-data:
+  grafana-data:
+  postgres-data:
