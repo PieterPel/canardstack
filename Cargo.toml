@@ -50,6 +50,10 @@ detailed-metrics = []
 # lean build.
 tls = ["dep:rustls-pemfile", "dep:rustls", "dep:rcgen", "dep:tokio-rustls"]
 
+[[bench]]
+name = "query_engine"
+harness = false
+
 [dev-dependencies]
 tempfile = "3.27.0"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
