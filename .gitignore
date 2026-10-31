@@ -12,3 +12,7 @@ site/node_modules/
 .env
 /deploy/azure-functions/local.settings.json
 /deploy/azure-functions/canardstack
+
+# benchmark harness
+bench/.venv/
+bench/__pycache__/

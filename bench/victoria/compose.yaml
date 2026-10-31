@@ -1,0 +1,20 @@
+services:
+  victoria-metrics:
+    image: ${VM_IMAGE}
+    command: ["-storageDataPath=/data", "-retentionPeriod=1d", "-httpListenAddr=:8428"]
+    ports: ["18428:8428"]
+    volumes: ["vm-data:/data"]
+  victoria-logs:
+    image: ${VL_IMAGE}
+    command: ["-storageDataPath=/data", "-retentionPeriod=1d", "-httpListenAddr=:9428"]
+    ports: ["19428:9428"]
+    volumes: ["vl-data:/data"]
+  victoria-traces:
+    image: ${VT_IMAGE}
+    command: ["-storageDataPath=/data", "-retentionPeriod=1d", "-httpListenAddr=:10428"]
+    ports: ["10428:10428"]
+    volumes: ["vt-data:/data"]
+volumes:
+  vm-data:
+  vl-data:
+  vt-data:

@@ -1,0 +1,22 @@
+# Standard LGTM backends (Grafana left out of the measured path; see bench/README.md).
+services:
+  loki:
+    image: ${LOKI_IMAGE}
+    command: ["-config.file=/etc/loki/loki.yaml"]
+    ports: ["13100:3100"]
+    volumes: ["./loki.yaml:/etc/loki/loki.yaml:ro", "loki-data:/loki"]
+  tempo:
+    image: ${TEMPO_IMAGE}
+    command: ["-config.file=/etc/tempo/tempo.yaml"]
+    user: "0"
+    ports: ["13200:3200", "14328:4318"]
+    volumes: ["./tempo.yaml:/etc/tempo/tempo.yaml:ro", "tempo-data:/var/tempo"]
+  mimir:
+    image: ${MIMIR_IMAGE}
+    command: ["-config.file=/etc/mimir/mimir.yaml"]
+    ports: ["19009:9009"]
+    volumes: ["./mimir.yaml:/etc/mimir/mimir.yaml:ro", "mimir-data:/data"]
+volumes:
+  loki-data:
+  tempo-data:
+  mimir-data:

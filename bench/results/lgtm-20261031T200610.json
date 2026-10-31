@@ -1,0 +1,294 @@
+{
+  "stack": "lgtm",
+  "started": "2026-10-31T20:06:10+0100",
+  "workload": {
+    "seed": 1,
+    "services": 5,
+    "records": 2000,
+    "totals": {
+      "logs": 10000,
+      "gauge_points": 10000,
+      "sum_points": 10000,
+      "spans": 20000
+    }
+  },
+  "environment": {
+    "host": "macOS-26.5.1-arm64-arm-64bit",
+    "podman_vm": "applehv 4 CPU / 8 GiB",
+    "images": "# Pinned image tags for the comparison. Bump deliberately and record in results.\nLOKI_IMAGE=docker.io/grafana/loki:3.7.9\nTEMPO_IMAGE=docker.io/grafana/tempo:2.9.5\nMIMIR_IMAGE=docker.io/grafana/mimir:2.17.9\nVM_IMAGE=docker.io/victoriametrics/victoria-metrics:v1.155.0\nVL_IMAGE=docker.io/victoriametrics/victoria-logs:v1.53.0\nVT_IMAGE=docker.io/victoriametrics/victoria-traces:v0.12.1\nDUCKDB_OTLP_IMAGE=ghcr.io/smithclay/duckdb-otlp:0.7.3\n",
+    "note": "one benchmark stack at a time on the same VM, no CPU/memory limits; unrelated idle containers (a developer compose stack) were also running",
+    "grafana_in_path": false,
+    "collector_in_path": false
+  },
+  "unsupported": {},
+  "ingest": {
+    "logs": {
+      "batches": 50,
+      "statuses": {
+        "204": 50
+      },
+      "seconds": 0.1436342079999946,
+      "accepted_rows_per_s": 69621.29801279912,
+      "finished_at": 1793473497.954493
+    },
+    "metrics": {
+      "batches": 50,
+      "statuses": {
+        "200": 50
+      },
+      "seconds": 0.1446654169999988,
+      "accepted_rows_per_s": 138250.04216453587,
+      "finished_at": 1793473498.1061041
+    },
+    "traces": {
+      "batches": 50,
+      "statuses": {
+        "200": 50
+      },
+      "seconds": 0.37396108299999753,
+      "accepted_rows_per_s": 53481.50090794376,
+      "finished_at": 1793473498.508207
+    }
+  },
+  "visibility": {
+    "logs": {
+      "visible_seconds_after_accept": 1.1164441108703613,
+      "timed_out": false
+    },
+    "metrics": {
+      "visible_seconds_after_accept": 0.9926588535308838,
+      "timed_out": false
+    },
+    "traces": {
+      "visible_seconds_after_accept": 0.6033239364624023,
+      "timed_out": false
+    }
+  },
+  "queries": {
+    "clients_1": {
+      "log_lines": {
+        "signal": "logs",
+        "clients": 1,
+        "runs": 100,
+        "ok": 100,
+        "wrong": 0,
+        "errors": 0,
+        "first_wrong": null,
+        "latency_ms": {
+          "p50": 316.06670800000813,
+          "p95": 2152.7417079999937,
+          "p99": 2875.8787919999945,
+          "max": 3034.949375000004,
+          "mean": 634.0280941500006
+        },
+        "throughput_qps": 1.5760602624293214
+      },
+      "log_error_lines": {
+        "signal": "logs",
+        "clients": 1,
+        "runs": 100,
+        "ok": 100,
+        "wrong": 0,
+        "errors": 0,
+        "first_wrong": null,
+        "latency_ms": {
+          "p50": 4.253708999996775,
+          "p95": 6.775916999998799,
+          "p99": 8.886791999998422,
+          "max": 10.546124999990525,
+          "mean": 4.559399200000485
+        },
+        "throughput_qps": 211.5849644550494
+      },
+      "gauge_last": {
+        "signal": "metrics",
+        "clients": 1,
+        "runs": 100,
+        "ok": 100,
+        "wrong": 0,
+        "errors": 0,
+        "first_wrong": null,
+        "latency_ms": {
+          "p50": 1.8927079999997432,
+          "p95": 3.474332999999774,
+          "p99": 5.055708000000436,
+          "max": 6.279125000006047,
+          "mean": 2.110806260000544
+        },
+        "throughput_qps": 452.06866689782674
+      },
+      "sum_last": {
+        "signal": "metrics",
+        "clients": 1,
+        "runs": 100,
+        "ok": 100,
+        "wrong": 0,
+        "errors": 0,
+        "first_wrong": null,
+        "latency_ms": {
+          "p50": 1.6602500000004738,
+          "p95": 2.429374999991296,
+          "p99": 3.5850409999937938,
+          "max": 4.843458999999939,
+          "mean": 1.7449012399995922
+        },
+        "throughput_qps": 544.7776592129819
+      },
+      "gauge_points": {
+        "signal": "metrics",
+        "clients": 1,
+        "runs": 100,
+        "ok": 100,
+        "wrong": 0,
+        "errors": 0,
+        "first_wrong": null,
+        "latency_ms": {
+          "p50": 2.044249999997305,
+          "p95": 3.243667000006667,
+          "p99": 4.316209000009508,
+          "max": 4.757832999999323,
+          "mean": 2.2109650200003728
+        },
+        "throughput_qps": 394.7863862383703
+      },
+      "trace_by_id": {
+        "signal": "traces",
+        "clients": 1,
+        "runs": 100,
+        "ok": 100,
+        "wrong": 0,
+        "errors": 0,
+        "first_wrong": null,
+        "latency_ms": {
+          "p50": 6.1609170000025415,
+          "p95": 13.470124999997779,
+          "p99": 16.072667000003094,
+          "max": 17.308958000000985,
+          "mean": 7.171875869999553
+        },
+        "throughput_qps": 138.375960912943
+      }
+    },
+    "clients_4": {
+      "log_lines": {
+        "signal": "logs",
+        "clients": 4,
+        "runs": 100,
+        "ok": 100,
+        "wrong": 0,
+        "errors": 0,
+        "first_wrong": null,
+        "latency_ms": {
+          "p50": 13.359583000010389,
+          "p95": 33.30512499999827,
+          "p99": 4095.089874999999,
+          "max": 4098.605790999997,
+          "mean": 177.94345953000018
+        },
+        "throughput_qps": 22.39853582097331
+      },
+      "log_error_lines": {
+        "signal": "logs",
+        "clients": 4,
+        "runs": 100,
+        "ok": 100,
+        "wrong": 0,
+        "errors": 0,
+        "first_wrong": null,
+        "latency_ms": {
+          "p50": 7.168499999991695,
+          "p95": 15.307667000001857,
+          "p99": 17.157499999996162,
+          "max": 18.785875000006058,
+          "mean": 7.816026700000123
+        },
+        "throughput_qps": 486.7450204463473
+      },
+      "gauge_last": {
+        "signal": "metrics",
+        "clients": 4,
+        "runs": 100,
+        "ok": 100,
+        "wrong": 0,
+        "errors": 0,
+        "first_wrong": null,
+        "latency_ms": {
+          "p50": 2.6566669999965598,
+          "p95": 4.61729100000241,
+          "p99": 6.465916999999877,
+          "max": 9.113749999997367,
+          "mean": 2.851884909999569
+        },
+        "throughput_qps": 1329.2613626924413
+      },
+      "sum_last": {
+        "signal": "metrics",
+        "clients": 4,
+        "runs": 100,
+        "ok": 100,
+        "wrong": 0,
+        "errors": 0,
+        "first_wrong": null,
+        "latency_ms": {
+          "p50": 2.405042000006574,
+          "p95": 3.3309169999995447,
+          "p99": 4.873750000001564,
+          "max": 5.1712909999963586,
+          "mean": 2.4806300799993153
+        },
+        "throughput_qps": 1515.9994641850715
+      },
+      "gauge_points": {
+        "signal": "metrics",
+        "clients": 4,
+        "runs": 100,
+        "ok": 100,
+        "wrong": 0,
+        "errors": 0,
+        "first_wrong": null,
+        "latency_ms": {
+          "p50": 3.725375000001918,
+          "p95": 5.329166999999302,
+          "p99": 6.724249999990661,
+          "max": 7.617707999997947,
+          "mean": 3.8122437299992384
+        },
+        "throughput_qps": 946.8281031305579
+      },
+      "trace_by_id": {
+        "signal": "traces",
+        "clients": 4,
+        "runs": 100,
+        "ok": 100,
+        "wrong": 0,
+        "errors": 0,
+        "first_wrong": null,
+        "latency_ms": {
+          "p50": 14.379542000000356,
+          "p95": 29.203999999992902,
+          "p99": 32.378250000007824,
+          "max": 33.92949999999928,
+          "mean": 15.258082489999367
+        },
+        "throughput_qps": 258.91526156590265
+      }
+    }
+  },
+  "containers": {
+    "bench-lgtm_loki_1": {
+      "cpu_mean_pct": 1.8319595216191351,
+      "cpu_max_pct": 2.79,
+      "mem_max_mb": 103.9
+    },
+    "bench-lgtm_mimir_1": {
+      "cpu_mean_pct": 0.6065501379944803,
+      "cpu_max_pct": 1.0,
+      "mem_max_mb": 79.16
+    },
+    "bench-lgtm_tempo_1": {
+      "cpu_mean_pct": 1.066430542778289,
+      "cpu_max_pct": 2.45,
+      "mem_max_mb": 78.84
+    }
+  }
+}
