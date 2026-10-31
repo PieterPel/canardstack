@@ -314,8 +314,12 @@ pub(super) fn configure_extension_directory(
 }
 
 pub(super) fn configure_base_connection(conn: &Connection) -> Result<()> {
+    // late_materialization rewrites ORDER BY ... LIMIT into two table scans, and
+    // each DuckLake scan costs extra catalog round trips (5 more per query against
+    // a remote catalog). Measured on a 3M-row table it saves under 15%, which is
+    // far less than those round trips cost, so keep it off.
     conn.execute_batch(&format!(
-        "SET preserve_insertion_order=false;\nPRAGMA threads={DUCKDB_THREADS};"
+        "SET preserve_insertion_order=false;\nSET disabled_optimizers='late_materialization';\nPRAGMA threads={DUCKDB_THREADS};"
     ))?;
     Ok(())
 }

@@ -156,7 +156,14 @@ impl Storage {
             false
         });
 
+        // One read transaction per query: prepare binds and execute runs inside it, so
+        // DuckLake fetches the catalog snapshot once. With auto-commit, each statement
+        // is its own transaction and every query pays for the catalog lookups twice.
+        conn.execute_batch("BEGIN TRANSACTION READ ONLY")?;
         let result = f(&conn, &self.target_prefix);
+        // Read-only: rolling back and committing are equivalent. Best effort, because the
+        // connection is dropped right after and a failed query may have aborted it already.
+        let _ = conn.execute_batch("ROLLBACK");
         let (done, cvar) = &*state;
         *done.lock_or_poisoned() = true;
         cvar.notify_one();
@@ -193,6 +200,39 @@ impl Storage {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn query_closure_runs_in_one_read_transaction() {
+        let dir = tempfile::tempdir().unwrap();
+        let storage = Storage::open(&crate::Config::test(dir.path().join("query.duckdb"))).unwrap();
+        let (first, second) = storage
+            .with_query_conn("128MiB", Duration::from_secs(5), |conn, _| {
+                let txid = |conn: &Connection| {
+                    conn.query_row("SELECT txid_current()", [], |row| row.get::<_, i64>(0))
+                };
+                Ok((txid(conn)?, txid(conn)?))
+            })
+            .unwrap();
+        assert_eq!(
+            first, second,
+            "statements in one query must share a transaction"
+        );
+    }
+
+    #[test]
+    fn query_connections_disable_late_materialization() {
+        let dir = tempfile::tempdir().unwrap();
+        let storage = Storage::open(&crate::Config::test(dir.path().join("query.duckdb"))).unwrap();
+        let setting = storage
+            .with_query_conn("128MiB", Duration::from_secs(5), |conn, _| {
+                conn.query_row("SELECT current_setting('disabled_optimizers')", [], |row| {
+                    row.get::<_, String>(0)
+                })
+                .map_err(Into::into)
+            })
+            .unwrap();
+        assert!(setting.contains("late_materialization"), "{setting}");
+    }
 
     #[test]
     fn request_cancellation_interrupts_active_duckdb_work() {
