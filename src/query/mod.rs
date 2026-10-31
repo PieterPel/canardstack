@@ -340,8 +340,11 @@ fn log_select_sql(
     for (name, expr) in projected {
         columns.push(format!("cast({expr} AS VARCHAR) AS {name}"));
     }
+    // Pick the page of rows first on raw columns, then evaluate the projection (JSON
+    // extraction, lower(), casts) on only those rows. Projecting inline would evaluate
+    // every label expression for every row that matches the filter before the LIMIT.
     format!(
-        "SELECT {} FROM {source} WHERE {} ORDER BY time_unix_nano {direction} LIMIT {limit}",
+        "SELECT {} FROM (SELECT * FROM {source} WHERE {} ORDER BY time_unix_nano {direction} LIMIT {limit}) ORDER BY time_unix_nano {direction}",
         columns.join(", "),
         where_sql.join(" AND ")
     )
