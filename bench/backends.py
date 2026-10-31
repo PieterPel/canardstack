@@ -65,6 +65,15 @@ def prom_range_points(body: str) -> Optional[float]:
     return float(sum(len(s["values"]) for s in data["data"]["result"]))
 
 
+def prom_range_max(body: str) -> Optional[float]:
+    """Largest value over every point of every series in a range response."""
+    data = json.loads(body)
+    if data.get("status") != "success":
+        return None
+    values = [float(v[1]) for s in data["data"]["result"] for v in s["values"]]
+    return max(values) if values else None
+
+
 def tempo_spans(body: str) -> Optional[float]:
     data = json.loads(body)
     batches = data.get("batches") or data.get("trace", {}).get("resourceSpans") or []
@@ -112,7 +121,18 @@ def _prom_queries(base: str, label: str, prefix: str, headers: Dict[str, str]) -
             headers,
         )
 
+    def coarse_points(w: Workload, i: int):
+        # A 15 s step spans 15 samples per bucket, so a stack that averages a bucket instead of
+        # taking the newest sample cannot reach the sawtooth peak.
+        return (
+            f"{base}{prefix}/api/v1/query_range?start={w.base_ns // 10**9}&end={_last(w)}&step=15"
+            f"&query={q(sel('bench_gauge', i, w))}",
+            headers,
+        )
+
     return [
+        Query("gauge_range_max", "metrics", coarse_points, prom_range_max,
+              lambda w, i: w.expected(i)["gauge_range_max"]),
         Query("gauge_last", "metrics", instant("bench_gauge", "max"), prom_instant,
               lambda w, i: w.expected(i)["gauge_last"]),
         Query("sum_last", "metrics", instant("bench_requests", "max"), prom_instant,

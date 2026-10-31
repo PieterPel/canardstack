@@ -39,9 +39,7 @@ pick up changes through the bind mount. Screenshots from the image renderer are 
 `bench/grafana/screenshots/`.
 
 The demo stacks use the same host ports as the benchmark profiles, so do not run `demo.py` while a
-benchmark is running. canardstack's Loki and Tempo datasources report errors under "Save & test":
-Grafana's health probes call endpoints canardstack does not implement (a Loki metric query and
-`/api/echo`). The panels themselves query canardstack normally.
+benchmark is running.
 
 ## What is measured
 
@@ -58,8 +56,9 @@ latency percentiles. Each run uses a unique run id in service names and trace id
 reused stack cannot mix datasets.
 
 Query intents (`backends.py`): `log_lines`, `log_error_lines` (text filter), `gauge_last`
-and `sum_last` (instant at the last sample), `gauge_points` (1 s range query), and
-`trace_by_id`. They are limited to what canardstack supports (no `count_over_time`, no
+and `sum_last` (instant at the last sample), `gauge_points` (1 s range query, point count),
+`gauge_range_max` (15 s step range query; must reach the true sawtooth peak, which averaging a
+bucket cannot), and `trace_by_id`. They are limited to what canardstack supports (no `count_over_time`, no
 TraceQL). Each stack uses its native dialect: LogQL (Loki, canardstack), LogsQL
 (VictoriaLogs), PromQL/MetricsQL, Tempo and Jaeger trace APIs.
 

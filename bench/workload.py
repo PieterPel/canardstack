@@ -62,6 +62,9 @@ class Workload:
             "log_count": self.query_limit,
             "log_error_count": sum(1 for k in ks if k % 10 == 0),
             "gauge_last": self.gauge_value(i, self.records - 1),
+            # Peak of the sawtooth seen by a 15 s step range query: every residue of k mod 7 is
+            # sampled once there are at least 7 steps (records >= 105).
+            "gauge_range_max": max(self.gauge_value(i, k) for k in range(0, self.records, 15)),
             "gauge_count": self.records,
             "sum_last": self.sum_value(self.records - 1),
             "trace_spans": 2,
