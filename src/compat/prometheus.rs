@@ -45,6 +45,7 @@ pub fn prometheus_query(state: &AppState, params: &HashMap<String, String>) -> A
             step_seconds: 300,
             limit: 1,
             order: SortDirection::Backward,
+            instant: true,
         },
     )?;
     if rows.is_empty() {
@@ -86,13 +87,15 @@ pub fn prometheus_query_range(
             aggregation: prom.aggregation,
             filters: prom.filters.clone(),
             group_by: group_by.clone(),
+            // Prometheus range queries include `end`; time predicates are half-open.
             time_bounds: TimeBounds {
                 from: start,
-                to: end,
+                to: end + chrono::Duration::milliseconds(1),
             },
             step_seconds: step,
             limit: 5000,
             order: SortDirection::Forward,
+            instant: false,
         },
     )?;
     let mut series: BTreeMap<String, (Map<String, Value>, Vec<Value>)> = BTreeMap::new();
@@ -195,6 +198,7 @@ struct MetricPlanInput<'a> {
     step_seconds: i64,
     limit: usize,
     order: SortDirection,
+    instant: bool,
 }
 
 fn execute_metric_rows_with_sum_fallback(
@@ -240,6 +244,7 @@ fn metric_plan(input: MetricPlanInput<'_>) -> ApiResult<MetricPlan> {
         step_seconds: input.step_seconds,
         limit: input.limit,
         order: input.order,
+        instant: input.instant,
     })
 }
 

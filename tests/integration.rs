@@ -471,3 +471,127 @@ fn prometheus_metric_discovery_falls_back_to_raw_metrics() {
         }])
     );
 }
+
+/// Two gauge series sampled at t0, t0+1s, t0+2s (t0 = 2026-01-01T00:00:00Z):
+/// `a` = 1, 9, 2 and `b` = 5, 4, 4. Latest values are a=2, b=4.
+fn app_with_gauge_series() -> (tempfile::TempDir, AppState) {
+    let dir = tempdir().unwrap();
+    let mut config = Config::test(dir.path().join("canardstack.duckdb"));
+    config.operator.local_storage_dir = dir.path().join("storage");
+    let state = AppState::new_with_storage_hook_for_tests(config, |storage| {
+        storage
+            .with_conn(|conn, prefix| {
+                let rows = [("a", [1.0, 9.0, 2.0]), ("b", [5.0, 4.0, 4.0])]
+                    .iter()
+                    .flat_map(|(service, values)| {
+                        values.iter().enumerate().map(move |(i, value)| {
+                            format!(
+                                "(TIMESTAMP_NS '2026-01-01 00:00:0{i}', 'sem_gauge', {value}, \
+                                 '{service}', '{{}}', '{{}}')"
+                            )
+                        })
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                conn.execute_batch(&format!(
+                    "INSERT INTO {prefix}otlp_metrics_gauge \
+                     (time_unix_nano, name, double_value, service_name, resource_attributes, \
+                      metric_attributes) VALUES {rows};"
+                ))?;
+                Ok(())
+            })
+            .unwrap();
+    })
+    .unwrap();
+    (dir, state)
+}
+
+fn prom_get(state: &AppState, path: &str, query: &[(&str, &str)]) -> Value {
+    let params = query
+        .iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect::<HashMap<_, _>>();
+    let response = http::route("GET", path, &params, &api_headers(), &[], state);
+    assert_eq!(response.status(), 200, "{}", response.json_body());
+    response.json_body()
+}
+
+fn instant_value(state: &AppState, query: &str) -> String {
+    // 2026-01-01T00:00:02Z
+    let body = prom_get(
+        state,
+        "/api/v1/query",
+        &[("query", query), ("time", "1767225602")],
+    );
+    body["data"]["result"][0]["value"][1]
+        .as_str()
+        .unwrap_or_else(|| panic!("no value for {query}: {body}"))
+        .to_string()
+}
+
+#[test]
+fn prometheus_instant_query_uses_latest_sample_per_series() {
+    let (_dir, state) = app_with_gauge_series();
+    // Latest per series first (a=2, b=4), then aggregate across series.
+    assert_eq!(instant_value(&state, "max(sem_gauge)"), "4");
+    assert_eq!(instant_value(&state, "min(sem_gauge)"), "2");
+    assert_eq!(instant_value(&state, "sum(sem_gauge)"), "6");
+    // count() is the number of series, not the number of samples.
+    assert_eq!(instant_value(&state, "count(sem_gauge)"), "2");
+    // A bare selector returns the newest sample, not an average over the window.
+    assert_eq!(instant_value(&state, r#"sem_gauge{service_name="a"}"#), "2");
+    assert_eq!(
+        instant_value(&state, r#"max(sem_gauge{service_name="a"})"#),
+        "2"
+    );
+}
+
+#[test]
+fn prometheus_range_query_includes_the_end_timestamp() {
+    let (_dir, state) = app_with_gauge_series();
+    let body = prom_get(
+        &state,
+        "/api/v1/query_range",
+        &[
+            ("query", r#"sem_gauge{service_name="a"}"#),
+            ("start", "1767225600"),
+            ("end", "1767225602"),
+            ("step", "1"),
+        ],
+    );
+    let values = body["data"]["result"][0]["values"].as_array().unwrap();
+    let points: Vec<(i64, &str)> = values
+        .iter()
+        .map(|v| (v[0].as_i64().unwrap(), v[1].as_str().unwrap()))
+        .collect();
+    assert_eq!(
+        points,
+        vec![(1767225600, "1"), (1767225601, "9"), (1767225602, "2")],
+        "the sample exactly at `end` must be returned"
+    );
+}
+
+#[test]
+fn prometheus_instant_query_falls_back_to_sum_and_returns_empty_for_no_match() {
+    let (_dir, state) = app_with_metric_without_summary();
+    // No gauge exists, so this resolves through the sum fallback (latest value 7).
+    let body = prom_get(
+        &state,
+        "/api/v1/query",
+        &[("query", "max(demo.payment.transactions)")],
+    );
+    assert_eq!(body["data"]["result"][0]["value"][1], "7", "{body}");
+
+    // A selector that matches nothing is an empty vector, not a storage error.
+    let body = prom_get(
+        &state,
+        "/api/v1/query",
+        &[(
+            "query",
+            r#"max(demo.payment.transactions{service_name="nobody"})"#,
+        )],
+    );
+    assert_eq!(body["data"]["result"], serde_json::json!([]), "{body}");
+    let body = prom_get(&state, "/api/v1/query", &[("query", "max(no_such_metric)")]);
+    assert_eq!(body["data"]["result"], serde_json::json!([]), "{body}");
+}

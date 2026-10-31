@@ -67,6 +67,11 @@ Supported PromQL subset:
   `without(...)` grouping over supported labels such as `service_name` and
   `deployment_environment`.
 
+Instant queries (`/api/v1/query`) take the latest sample per series inside a 5-minute
+lookback ending at `time`, then aggregate across series, so `max()` is the maximum of the
+latest values and `count()` is the number of series. Range queries (`/api/v1/query_range`)
+include a sample exactly at `end`.
+
 Not implemented: full PromQL expression evaluation, joins, binary operators,
 subqueries, histograms, exemplars, rule evaluation, staleness semantics, and
 remote read/write.

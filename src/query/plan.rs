@@ -149,6 +149,9 @@ pub struct MetricPlan {
     pub step_seconds: i64,
     pub limit: usize,
     pub order: SortDirection,
+    /// Instant query: take the latest sample per series inside the window, then
+    /// aggregate across series (PromQL instant-vector semantics).
+    pub instant: bool,
 }
 
 #[derive(Clone, Debug)]

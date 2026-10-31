@@ -218,12 +218,35 @@ impl QueryEngine {
                 .map(|(_, expr)| format!(", {expr}"))
                 .collect::<String>()
         };
-        let sql = format!(
-            "SELECT to_timestamp(floor(epoch(time_unix_nano)/{step})*{step})::VARCHAR AS bucket{group_select_clause}, {agg_sql} AS value FROM {{prefix}}{table} WHERE {} GROUP BY bucket{group_clause} ORDER BY bucket {} LIMIT {}",
-            where_sql.join(" AND "),
-            plan.order.sql(),
-            plan.limit + 1
-        );
+        let sql = if plan.instant && plan.aggregation != MetricAggregation::Rate {
+            // Latest sample per series, then aggregate across series. Aggregating raw
+            // samples would make max()/count() span the whole lookback window.
+            let latest_agg = match plan.aggregation {
+                MetricAggregation::Avg => "avg(v)",
+                MetricAggregation::Min => "min(v)",
+                MetricAggregation::Max => "max(v)",
+                MetricAggregation::Sum => "sum(v)",
+                MetricAggregation::Count => "count(*)",
+                MetricAggregation::Rate => unreachable!("rate keeps the windowed query"),
+            };
+            let group_aliases = group_selects
+                .iter()
+                .map(|(label, _)| format!(", {label}"))
+                .collect::<String>();
+            format!(
+                "WITH latest AS (SELECT arg_max({value_expr}, time_unix_nano) AS v, max(time_unix_nano) AS ts{group_select_clause} FROM {{prefix}}{table} WHERE {} GROUP BY service_name, service_namespace, service_instance_id, resource_attributes, scope_name, metric_attributes) SELECT max(ts)::VARCHAR AS bucket{group_aliases}, {latest_agg} AS value FROM latest GROUP BY ALL HAVING count(*) > 0 ORDER BY bucket {} LIMIT {}",
+                where_sql.join(" AND "),
+                plan.order.sql(),
+                plan.limit + 1
+            )
+        } else {
+            format!(
+                "SELECT to_timestamp(floor(epoch(time_unix_nano)/{step})*{step})::VARCHAR AS bucket{group_select_clause}, {agg_sql} AS value FROM {{prefix}}{table} WHERE {} GROUP BY bucket{group_clause} ORDER BY bucket {} LIMIT {}",
+                where_sql.join(" AND "),
+                plan.order.sql(),
+                plan.limit + 1
+            )
+        };
         let rows = storage
             .with_query_execution(
                 &self.interactive_memory_limit,
