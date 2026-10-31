@@ -1,67 +1,128 @@
-x-duckdb-catalog-image: &duckdb-catalog-image
-  platform: ${DUCKDB_OTLP_PLATFORM:-linux/amd64}
-  build:
-    context: .
-    dockerfile: Dockerfile.duckdb-catalog
-    args:
-      DUCKDB_CATALOG_BASE_IMAGE: ${DUCKDB_CATALOG_BASE_IMAGE:-ghcr.io/smithclay/duckdb-otlp:latest}
-  image: ${DUCKDB_CATALOG_IMAGE:-canardstack-duckdb-catalog:local}
-
 x-duckdb-otlp-image: &duckdb-otlp-image
-  platform: ${DUCKDB_OTLP_PLATFORM:-linux/amd64}
-  image: ${DUCKDB_OTLP_IMAGE:-ghcr.io/smithclay/duckdb-otlp:latest}
+  # 0.7.3 is the newest duckdb-otlp release built on DuckDB 1.5.x. The current
+  # canardstack image bundles DuckDB 1.5.x and cannot read DuckLake metadata
+  # written by the DuckDB 2.0 image (duckdb-otlp:latest).
+  image: ${DUCKDB_OTLP_IMAGE:-ghcr.io/smithclay/duckdb-otlp:0.7.3}
 
 services:
-  ducklake-catalog:
-    <<: *duckdb-catalog-image
-    entrypoint: ["/bin/sh", "/usr/local/bin/duckdb-quack-catalog.sh"]
-    healthcheck:
-      disable: true
-    ports:
-      - "${QUACK_PORT:-9494}:9494"
+  # Prepare shared volumes, render the DuckLake attach SQL, and generate the
+  # self-signed certificate that fronts Quack with TLS.
+  init:
+    image: docker.io/alpine/openssl:latest
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -eu
+        chmod -R 0777 /mnt/canardstack /mnt/catalog /mnt/data
+        mkdir -p /certs /etc/duckdb-otlp
+        if [ ! -s /certs/quack.crt ] || [ ! -s /certs/quack.key ]; then
+          openssl req -x509 -newkey rsa:2048 -nodes -days 3650 \
+            -subj "/CN=quack-tls" \
+            -addext "subjectAltName=DNS:quack-tls,DNS:localhost,IP:127.0.0.1" \
+            -keyout /certs/quack.key -out /certs/quack.crt
+        fi
+        case "$$QUACK_TOKEN" in
+          *"'"*|*"|"*|*"&"*|*\\*)
+            echo "QUACK_TOKEN must not contain quotes, pipes, ampersands, or backslashes" >&2
+            exit 1
+            ;;
+        esac
+        sed "s|__QUACK_TOKEN__|$$QUACK_TOKEN|g" \
+          /templates/duckdb-otlp-ingest.sql > /etc/duckdb-otlp/ingest.sql
     environment:
-      HOME: /var/lib/duckdb
-      DUCKLAKE_CATALOG_DB: /var/lib/ducklake/catalog/catalog.duckdb
-      QUACK_BIND: quack:127.0.0.1:9495
-      QUACK_TLS_PORT: "9494"
-      QUACK_TOKEN: ${QUACK_TOKEN:-dev-quack-token}
+      QUACK_TOKEN: ${QUACK_TOKEN:-dev-quack-token-123456}
     volumes:
-      - duckdb-catalog-home:/var/lib/duckdb
+      - canardstack-data:/mnt/canardstack
+      - ducklake-catalog:/mnt/catalog
+      - ducklake-data:/mnt/data
+      - duckdb-init:/etc/duckdb-otlp
+      - quack-certs:/certs
+      - ./config/compose/duckdb-otlp-ingest.sql:/templates/duckdb-otlp-ingest.sql:ro
+
+  # A plain DuckDB database exposing Quack on an internal port. The TLS front
+  # below terminates the self-signed connection that canardstack and ingest
+  # expect for non-loopback Quack hosts.
+  ducklake-catalog:
+    <<: *duckdb-otlp-image
+    depends_on:
+      init:
+        condition: service_completed_successfully
+    command:
+      - serve
+      - --mode
+      - none
+      - --host
+      - 0.0.0.0
+      - --http
+      - "4318"
+      - --grpc
+      - "0"
+      - --quack
+      - "9495"
+      - --database
+      - /var/lib/ducklake/catalog/catalog.duckdb
+    environment:
+      DUCKDB_OTLP_TOKEN: ${QUACK_TOKEN:-dev-quack-token-123456}
+      DUCKDB_QUACK_TOKEN: ${QUACK_TOKEN:-dev-quack-token-123456}
+    volumes:
       - ducklake-catalog:/var/lib/ducklake/catalog
-      - ./config/compose/duckdb-quack-catalog.sh:/usr/local/bin/duckdb-quack-catalog.sh:ro
+    restart: unless-stopped
+
+  quack-tls:
+    image: docker.io/alpine/socat:latest
+    depends_on:
+      init:
+        condition: service_completed_successfully
+      ducklake-catalog:
+        condition: service_started
+    command:
+      - OPENSSL-LISTEN:9494,bind=0.0.0.0,reuseaddr,fork,cert=/certs/quack.crt,key=/certs/quack.key,verify=0
+      - TCP:ducklake-catalog:9495
+    volumes:
+      - quack-certs:/certs:ro
     restart: unless-stopped
 
   ingest:
     <<: *duckdb-otlp-image
-    entrypoint: ["/bin/sh", "/usr/local/bin/duckdb-otlp-ingest.sh"]
     depends_on:
-      - ducklake-catalog
+      init:
+        condition: service_completed_successfully
+      ducklake-catalog:
+        condition: service_started
+      quack-tls:
+        condition: service_started
     ports:
       - "${OTLP_PORT:-4318}:4318"
     environment:
-      HOME: /var/lib/duckdb
-      DUCKDB_INGEST_DB: /var/lib/duckdb/ingest.duckdb
-      DUCKLAKE_ATTACH_URI: ducklake:quack:ducklake-catalog:9494
-      DUCKLAKE_DATA_PATH: /var/lib/ducklake/data/
-      OTLP_BIND: otlp:0.0.0.0:4318
-      OTLP_TOKEN: ${OTLP_TOKEN:-dev-otlp-token-123456}
-      QUACK_TOKEN: ${QUACK_TOKEN:-dev-quack-token}
+      DUCKDB_MODE: none
+      DUCKDB_OTLP_INIT_SQL: /etc/duckdb-otlp/ingest.sql
+      DUCKDB_CATALOG: canardlake
+      DUCKDB_OTLP_HOST: 0.0.0.0
+      DUCKDB_OTLP_HTTP_PORT: "4318"
+      DUCKDB_OTLP_GRPC_PORT: "0"
+      DUCKDB_OTLP_TOKEN: ${OTLP_TOKEN:-dev-otlp-token-123456}
     volumes:
-      - duckdb-ingest-home:/var/lib/duckdb
       - ducklake-data:/var/lib/ducklake/data
-      - ./config/compose/duckdb-otlp-ingest.sh:/usr/local/bin/duckdb-otlp-ingest.sh:ro
+      - duckdb-init:/etc/duckdb-otlp:ro
     healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:4318/healthz"]
+      test: ["CMD", "duckdb-otlp", "doctor", "--host", "127.0.0.1", "--http", "4318", "--grpc", "0"]
       interval: 5s
       timeout: 5s
-      start_period: 90s
+      start_period: 60s
       retries: 24
     restart: unless-stopped
 
   canardstack:
     image: ${CANARDSTACK_IMAGE:-ghcr.io/smithclay/canardstack:latest}
+    # Match the ingest image's UID so both processes can write the shared
+    # DuckLake data directory without fighting over ownership.
+    user: "65532:65532"
     depends_on:
+      init:
+        condition: service_completed_successfully
       ducklake-catalog:
+        condition: service_started
+      quack-tls:
         condition: service_started
       ingest:
         condition: service_healthy
@@ -72,9 +133,9 @@ services:
       CANARDSTACK_API_KEY: ${CANARDSTACK_API_KEY:-dev-canardstack-key}
       CANARDSTACK_ADMIN_API_KEY: ${CANARDSTACK_ADMIN_API_KEY:-dev-canardstack-admin-key}
       CANARDSTACK_DATA_DIR: /var/lib/canardstack
-      CANARDSTACK_DUCKLAKE_ATTACH_URI: ${CANARDSTACK_DUCKLAKE_ATTACH_URI:-ducklake:quack:ducklake-catalog:9494}
+      CANARDSTACK_DUCKLAKE_ATTACH_URI: ${CANARDSTACK_DUCKLAKE_ATTACH_URI:-ducklake:quack:quack-tls:9494}
       CANARDSTACK_DUCKLAKE_DATA_PATH: ${CANARDSTACK_DUCKLAKE_DATA_PATH:-/var/lib/ducklake/data/}
-      CANARDSTACK_DUCKLAKE_QUACK_TOKEN: ${QUACK_TOKEN:-dev-quack-token}
+      CANARDSTACK_DUCKLAKE_QUACK_TOKEN: ${QUACK_TOKEN:-dev-quack-token-123456}
       CANARDSTACK_DUCKLAKE_QUACK_INSECURE_TLS: "true"
       motherduck_token: ${motherduck_token:-}
     volumes:
@@ -109,8 +170,8 @@ services:
 
 volumes:
   canardstack-data:
-  duckdb-catalog-home:
-  duckdb-ingest-home:
+  duckdb-init:
   ducklake-catalog:
   ducklake-data:
   grafana-data:
+  quack-certs:
