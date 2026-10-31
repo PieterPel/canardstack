@@ -51,6 +51,7 @@ enum CompatHandler {
     TempoTags,
     TempoTrace,
     TempoTagValues,
+    TempoEcho,
     BuildInfo,
 }
 
@@ -225,6 +226,13 @@ const COMPAT_ROUTES: &[CompatRoute] = &[
     ),
     compat_route(
         &["GET"],
+        "/api/echo",
+        RoutePattern::Exact("/api/echo"),
+        QueryAdmission::None,
+        CompatHandler::TempoEcho,
+    ),
+    compat_route(
+        &["GET"],
         "/api/status/buildinfo",
         RoutePattern::Exact("/api/status/buildinfo"),
         QueryAdmission::None,
@@ -270,6 +278,13 @@ pub(super) fn route_compat(
     let params = request_params(query, headers, body);
     if matched.route.handler == CompatHandler::TempoTrace {
         return tempo_trace_http(matched, headers, state, started, admitted);
+    }
+    if matched.route.handler == CompatHandler::TempoEcho {
+        // Grafana's Tempo "Save & test" probe expects the plain-text body `echo`.
+        return match authorize(matched.route.auth, headers, state, || Ok(())) {
+            Ok(()) => HttpResponse::text(200, "text/plain; charset=utf-8", "echo".to_string()),
+            Err(err) => compat_error_response(err),
+        };
     }
 
     let result = authorize(matched.route.auth, headers, state, || {
@@ -325,6 +340,7 @@ fn compat_value(
         CompatHandler::TempoTagValues => {
             compat::tempo_tag_values(state, param.expect("tag route has param"), params)
         }
+        CompatHandler::TempoEcho => Ok(json!("echo")),
         CompatHandler::BuildInfo => Ok(json!({
             "version": env!("CARGO_PKG_VERSION"),
             "revision": "canardstack",

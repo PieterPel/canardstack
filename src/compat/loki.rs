@@ -14,7 +14,27 @@ use std::collections::{BTreeMap, HashMap};
 const INTERACTIVE_RANGE_SECS: i64 = 24 * 60 * 60;
 
 pub fn loki_query(state: &AppState, params: &HashMap<String, String>) -> ApiResult<Value> {
+    if let Some(probe) = loki_probe_vector(params) {
+        return Ok(probe);
+    }
     loki_query_inner(state, params, false)
+}
+
+/// Grafana's Loki "Save & test" runs the metric query `vector(1)+vector(1)` and expects a
+/// vector result. Metric queries are not implemented, so answer just that probe.
+fn loki_probe_vector(params: &HashMap<String, String>) -> Option<Value> {
+    let query: String = params.get("query")?.split_whitespace().collect();
+    if query != "vector(1)+vector(1)" {
+        return None;
+    }
+    let at = optional_time(params, "time")
+        .ok()
+        .flatten()
+        .unwrap_or_else(Utc::now);
+    Some(loki_success(json!({
+        "resultType": "vector",
+        "result": [{"metric": {}, "value": [at.timestamp(), "2"]}]
+    })))
 }
 
 pub fn loki_query_range(state: &AppState, params: &HashMap<String, String>) -> ApiResult<Value> {

@@ -595,3 +595,93 @@ fn prometheus_instant_query_falls_back_to_sum_and_returns_empty_for_no_match() {
     let body = prom_get(&state, "/api/v1/query", &[("query", "max(no_such_metric)")]);
     assert_eq!(body["data"]["result"], serde_json::json!([]), "{body}");
 }
+
+#[test]
+fn prometheus_range_query_returns_the_latest_sample_in_each_step_not_the_average() {
+    let (_dir, state) = app_with_gauge_series();
+    // Series `a` is 1, 9, 2 at t0, t0+1, t0+2. With step=2 the first bucket holds 1 and 9:
+    // the newest is 9, where an average would be 5.
+    let body = prom_get(
+        &state,
+        "/api/v1/query_range",
+        &[
+            ("query", r#"sem_gauge{service_name="a"}"#),
+            ("start", "1767225600"),
+            ("end", "1767225602"),
+            ("step", "2"),
+        ],
+    );
+    let values = body["data"]["result"][0]["values"].as_array().unwrap();
+    let points: Vec<(i64, &str)> = values
+        .iter()
+        .map(|v| (v[0].as_i64().unwrap(), v[1].as_str().unwrap()))
+        .collect();
+    assert_eq!(points, vec![(1767225600, "9"), (1767225602, "2")], "{body}");
+}
+
+#[test]
+fn prometheus_range_query_keeps_one_series_per_service() {
+    let (_dir, state) = app_with_gauge_series();
+    let body = prom_get(
+        &state,
+        "/api/v1/query_range",
+        &[
+            ("query", "sem_gauge"),
+            ("start", "1767225600"),
+            ("end", "1767225602"),
+            ("step", "1"),
+        ],
+    );
+    let series: std::collections::BTreeMap<String, Vec<String>> = body["data"]["result"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| {
+            (
+                s["metric"]["service_name"].as_str().unwrap().to_string(),
+                s["values"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|v| v[1].as_str().unwrap().to_string())
+                    .collect(),
+            )
+        })
+        .collect();
+    assert_eq!(series["a"], ["1", "9", "2"], "{body}");
+    assert_eq!(series["b"], ["5", "4", "4"], "{body}");
+}
+
+#[test]
+fn grafana_health_probes_for_loki_and_tempo_are_answered() {
+    let (_dir, state) = app();
+    // Loki "Save & test" runs a metric query that canardstack otherwise does not implement.
+    let loki = prom_get(
+        &state,
+        "/loki/api/v1/query",
+        &[("query", "vector(1)+vector(1)")],
+    );
+    assert_eq!(loki["data"]["resultType"], "vector", "{loki}");
+    assert_eq!(loki["data"]["result"][0]["value"][1], "2", "{loki}");
+
+    // Tempo "Save & test" calls /api/echo and expects the plain-text body `echo`.
+    let echo = http::route(
+        "GET",
+        "/api/echo",
+        &HashMap::new(),
+        &api_headers(),
+        &[],
+        &state,
+    );
+    assert_eq!(echo.status(), 200);
+    assert_eq!(echo.text_body(), "echo");
+    let unauthorized = http::route(
+        "GET",
+        "/api/echo",
+        &HashMap::new(),
+        &HashMap::new(),
+        &[],
+        &state,
+    );
+    assert_eq!(unauthorized.status(), 401);
+}

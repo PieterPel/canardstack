@@ -218,9 +218,10 @@ impl QueryEngine {
                 .map(|(_, expr)| format!(", {expr}"))
                 .collect::<String>()
         };
-        let sql = if plan.instant && plan.aggregation != MetricAggregation::Rate {
+        let sql = if plan.aggregation != MetricAggregation::Rate {
             // Latest sample per series, then aggregate across series. Aggregating raw
-            // samples would make max()/count() span the whole lookback window.
+            // samples would make max()/count() span the whole window, and averaging a
+            // bucket would flatten a gauge; PromQL takes the newest sample per series.
             let latest_agg = match plan.aggregation {
                 MetricAggregation::Avg => "avg(v)",
                 MetricAggregation::Min => "min(v)",
@@ -233,12 +234,23 @@ impl QueryEngine {
                 .iter()
                 .map(|(label, _)| format!(", {label}"))
                 .collect::<String>();
-            format!(
-                "WITH latest AS (SELECT arg_max({value_expr}, time_unix_nano) AS v, max(time_unix_nano) AS ts{group_select_clause} FROM {{prefix}}{table} WHERE {} GROUP BY service_name, service_namespace, service_instance_id, resource_attributes, scope_name, metric_attributes) SELECT max(ts)::VARCHAR AS bucket{group_aliases}, {latest_agg} AS value FROM latest GROUP BY ALL HAVING count(*) > 0 ORDER BY bucket {} LIMIT {}",
-                where_sql.join(" AND "),
-                plan.order.sql(),
-                plan.limit + 1
-            )
+            let series = "service_name, service_namespace, service_instance_id, resource_attributes, scope_name, metric_attributes";
+            if plan.instant {
+                format!(
+                    "WITH latest AS (SELECT arg_max({value_expr}, time_unix_nano) AS v, max(time_unix_nano) AS ts{group_select_clause} FROM {{prefix}}{table} WHERE {} GROUP BY {series}) SELECT max(ts)::VARCHAR AS bucket{group_aliases}, {latest_agg} AS value FROM latest GROUP BY ALL HAVING count(*) > 0 ORDER BY bucket {} LIMIT {}",
+                    where_sql.join(" AND "),
+                    plan.order.sql(),
+                    plan.limit + 1
+                )
+            } else {
+                // Range: the newest sample of each series inside each step bucket.
+                format!(
+                    "WITH latest AS (SELECT floor(epoch(time_unix_nano)/{step})*{step} AS b, arg_max({value_expr}, time_unix_nano) AS v{group_select_clause} FROM {{prefix}}{table} WHERE {} GROUP BY b, {series}) SELECT to_timestamp(b)::VARCHAR AS bucket{group_aliases}, {latest_agg} AS value FROM latest GROUP BY ALL ORDER BY bucket {} LIMIT {}",
+                    where_sql.join(" AND "),
+                    plan.order.sql(),
+                    plan.limit + 1
+                )
+            }
         } else {
             format!(
                 "SELECT to_timestamp(floor(epoch(time_unix_nano)/{step})*{step})::VARCHAR AS bucket{group_select_clause}, {agg_sql} AS value FROM {{prefix}}{table} WHERE {} GROUP BY bucket{group_clause} ORDER BY bucket {} LIMIT {}",
