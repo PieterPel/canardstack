@@ -55,7 +55,7 @@ impl QueryEngine {
     pub fn run_interactive<T>(
         &self,
         storage: &Storage,
-        f: impl FnOnce(&duckdb::Connection, &str) -> anyhow::Result<T>,
+        f: impl FnMut(&duckdb::Connection, &str) -> anyhow::Result<T>,
     ) -> ApiResult<T> {
         storage
             .with_query_execution(

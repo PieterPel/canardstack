@@ -68,6 +68,10 @@ pub struct Storage {
     target_prefix: String,
     mode: String,
     catalog_name: String,
+    /// Statements that re-attach the DuckLake catalog after a stale-cache failure.
+    reattach_sql: String,
+    /// Local database to `USE` while the DuckLake catalog is detached.
+    home_catalog: String,
     postgres_catalog_configured: bool,
     local_storage_dir: PathBuf,
     last_error: Mutex<Option<String>>,
@@ -105,6 +109,8 @@ impl Storage {
         configure_base_connection(&conn)?;
         configure_write_connection(&conn, &config.operator.duckdb_write_memory_limit)?;
 
+        let home_catalog: String =
+            conn.query_row("SELECT current_database()", [], |row| row.get(0))?;
         attach_ducklake_connection(&conn, config).context(
             "DuckLake attach failed. Fix the catalog config (URI, token, network, or extension path) and restart.",
         )?;
@@ -122,6 +128,8 @@ impl Storage {
             target_prefix,
             mode,
             catalog_name: DUCKLAKE_CATALOG_NAME.to_string(),
+            reattach_sql: plan.sql,
+            home_catalog,
             postgres_catalog_configured: config.operator.postgres_dsn.is_some(),
             local_storage_dir: config.operator.local_storage_dir.clone(),
             last_error: Mutex::new(None),

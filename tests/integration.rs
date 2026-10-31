@@ -3,6 +3,10 @@ use serde_json::Value;
 use std::collections::HashMap;
 use tempfile::tempdir;
 
+#[cfg(unix)]
+#[path = "support/external_writer.rs"]
+mod external_writer;
+
 mod transport {
     use super::*;
     use canardstack::admission_control::QueryClass;

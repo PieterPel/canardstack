@@ -1,4 +1,4 @@
-use super::ducklake::configure_base_connection;
+use super::ducklake::{configure_base_connection, quote_ident};
 use super::{QueryTimeoutError, Storage};
 use crate::db::sql::escape_value;
 use crate::LockExt;
@@ -52,6 +52,14 @@ impl Drop for ActiveInterrupt<'_> {
     }
 }
 
+/// DuckLake reports this when its cached catalog still references inlined-data
+/// tables that a writer flushed away.
+fn is_stale_catalog_error(err: &anyhow::Error) -> bool {
+    let message = format!("{err:#}");
+    message.contains("Failed to read inlined data from DuckLake")
+        && message.contains("does not exist")
+}
+
 impl Storage {
     /// Read-side connection access for SELECT-only paths. Do not call into
     /// write paths from inside the closure.
@@ -64,7 +72,7 @@ impl Storage {
         &self,
         memory_limit: &str,
         timeout: Duration,
-        f: impl FnOnce(&Connection, &str) -> Result<T>,
+        f: impl FnMut(&Connection, &str) -> Result<T>,
     ) -> Result<T> {
         self.with_query_execution(memory_limit, timeout, None, f)
     }
@@ -74,7 +82,43 @@ impl Storage {
         memory_limit: &str,
         timeout: Duration,
         execution: Option<&QueryExecution>,
-        f: impl FnOnce(&Connection, &str) -> Result<T>,
+        mut f: impl FnMut(&Connection, &str) -> Result<T>,
+    ) -> Result<T> {
+        let result = self.run_query_once(memory_limit, timeout, execution, &mut f);
+        match result {
+            Err(err) if is_stale_catalog_error(&err) => {
+                // An external writer flushed or dropped inlined-data tables that the
+                // attached catalog still references. Re-attach and retry once.
+                tracing::warn!(event = "ducklake_stale_catalog_reattach", error = %err);
+                self.reattach_catalog()?;
+                self.run_query_once(memory_limit, timeout, execution, &mut f)
+            }
+            result => result,
+        }
+    }
+
+    /// Replace the attached DuckLake catalog so the next query rebuilds its
+    /// cached view of the catalog from the metadata store.
+    fn reattach_catalog(&self) -> Result<()> {
+        let conn = self.reader.lock_or_poisoned();
+        conn.execute_batch(&format!(
+            "USE {}; DETACH {};",
+            quote_ident(&self.home_catalog),
+            self.catalog_name
+        ))
+        .context("detach stale DuckLake catalog")?;
+        conn.execute_batch(&self.reattach_sql)
+            .context("re-attach DuckLake catalog")?;
+        self.metadata_generation.fetch_add(1, Ordering::SeqCst);
+        Ok(())
+    }
+
+    fn run_query_once<T>(
+        &self,
+        memory_limit: &str,
+        timeout: Duration,
+        execution: Option<&QueryExecution>,
+        f: &mut impl FnMut(&Connection, &str) -> Result<T>,
     ) -> Result<T> {
         if let Some(execution) = execution {
             execution.remaining()?;
