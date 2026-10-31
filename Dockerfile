@@ -17,11 +17,16 @@ WORKDIR /app
 FROM chef AS planner
 COPY Cargo.toml Cargo.lock ./
 COPY src ./src
+# Cargo validates every declared target, including the bench in Cargo.toml.
+COPY benches ./benches
 RUN cargo chef prepare --recipe-path recipe.json
 
 FROM chef AS builder
 
 ARG TARGETPLATFORM
+# Optional cap on parallel compile jobs. The bundled DuckDB C++ compile can exceed the memory of
+# a small build VM at the default parallelism: `--build-arg CARGO_BUILD_JOBS=2`.
+ARG CARGO_BUILD_JOBS
 
 COPY --from=planner /app/recipe.json recipe.json
 
@@ -32,13 +37,16 @@ COPY --from=planner /app/recipe.json recipe.json
 # Actions, which is why dependencies were recompiled cold on every release build.
 RUN --mount=type=cache,id=cargo-registry,target=/usr/local/cargo/registry \
     --mount=type=cache,id=cargo-git,target=/usr/local/cargo/git \
+    ${CARGO_BUILD_JOBS:+env CARGO_BUILD_JOBS=$CARGO_BUILD_JOBS} \
     cargo chef cook --release --locked --features tls --recipe-path recipe.json
 
 COPY Cargo.toml Cargo.lock ./
 COPY src ./src
+COPY benches ./benches
 
 RUN --mount=type=cache,id=cargo-registry,target=/usr/local/cargo/registry \
     --mount=type=cache,id=cargo-git,target=/usr/local/cargo/git \
+    ${CARGO_BUILD_JOBS:+env CARGO_BUILD_JOBS=$CARGO_BUILD_JOBS} \
     cargo build --release --locked --features tls \
     && cp /app/target/release/canardstack /app/canardstack
 
