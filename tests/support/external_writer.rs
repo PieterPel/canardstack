@@ -248,14 +248,6 @@ async fn verify(
             ("query", format!("{{service_name=\"{service}\"}}")),
             ("limit", "100".to_owned()),
         ];
-        let count_gauge = [(
-            "query",
-            format!("count(compat_smoke_gauge{{service_name=\"{service}\"}})"),
-        )];
-        let count_sum = [(
-            "query",
-            format!("count(compat_smoke.sum{{service_name=\"{service}\"}})"),
-        )];
         let max_gauge = [(
             "query",
             format!("max(compat_smoke_gauge{{service_name=\"{service}\"}})"),
@@ -264,10 +256,11 @@ async fn verify(
             "query",
             format!("max(compat_smoke.sum{{service_name=\"{service}\"}})"),
         )];
-        let (logs, gauge_count, sum_count, gauge_max, sum_max, trace) = tokio::try_join!(
+        // Metrics are checked by their latest value: `max()` over the newest sample per
+        // series (PromQL instant semantics) only reaches 10 + round / 100 + round once that
+        // round's data is visible. `count()` would be the number of series, not samples.
+        let (logs, gauge_max, sum_max, trace) = tokio::try_join!(
             get(client, &logs_url, &logs_params),
-            get(client, &metric_url, &count_gauge),
-            get(client, &metric_url, &count_sum),
             get(client, &metric_url, &max_gauge),
             get(client, &metric_url, &max_sum),
             get(client, &trace_url, &[]),
@@ -285,8 +278,6 @@ async fn verify(
             .collect::<Vec<_>>();
         expected.sort();
         if bodies == expected
-            && metric_value(&gauge_count) == Some(f64::from(round))
-            && metric_value(&sum_count) == Some(f64::from(round))
             && metric_value(&gauge_max) == Some(10.0 + f64::from(round))
             && metric_value(&sum_max) == Some(100.0 + f64::from(round))
             && trace["batches"][0]["instrumentationLibrarySpans"][0]["spans"][0]["name"]
@@ -295,7 +286,7 @@ async fn verify(
             return Ok(());
         }
         if Instant::now() >= deadline {
-            bail!("round {round} not readable: logs={logs}, gauge_count={gauge_count}, sum_count={sum_count}, gauge_max={gauge_max}, sum_max={sum_max}, trace={trace}");
+            bail!("round {round} not readable: logs={logs}, gauge_max={gauge_max}, sum_max={sum_max}, trace={trace}");
         }
         sleep(Duration::from_millis(200)).await;
     }
@@ -358,7 +349,10 @@ async fn external_writer_survives_schema_changes_flush_and_restarts() -> Result<
         .context("timestamp")?;
     let service = format!("compat-{nanos}");
     for round in 1..=6_u32 {
-        let timestamp = (nanos + i64::from(round)).to_string();
+        // One second apart and in the past (round 6 is ~1 s old), so every round has a distinct
+        // sample time and "latest sample" is well defined; the store keeps microsecond precision.
+        let sample_ns = nanos - (7 - i64::from(round)) * 1_000_000_000;
+        let timestamp = sample_ns.to_string();
         let trace_id = format!("{nanos:030x}{round:02x}");
         let resource =
             json!({"attributes":[{"key":"service.name","value":{"stringValue":service}}]});
@@ -367,7 +361,7 @@ async fn external_writer_survives_schema_changes_flush_and_restarts() -> Result<
             {"name":"compat_smoke_gauge","gauge":{"dataPoints":[{"timeUnixNano":timestamp,"asDouble":10.0+f64::from(round)}]}},
             {"name":"compat_smoke.sum","sum":{"aggregationTemporality":2,"isMonotonic":true,"dataPoints":[{"timeUnixNano":timestamp,"asDouble":100.0+f64::from(round)}]}}
         ]}]}]});
-        let traces = json!({"resourceSpans":[{"resource":resource,"scopeSpans":[{"spans":[{"traceId":trace_id,"spanId":"0123456789abcdef","name":format!("round-{round}"),"startTimeUnixNano":timestamp,"endTimeUnixNano":(nanos+i64::from(round)+1_000_000).to_string(),"kind":1}]}]}]});
+        let traces = json!({"resourceSpans":[{"resource":resource,"scopeSpans":[{"spans":[{"traceId":trace_id,"spanId":"0123456789abcdef","name":format!("round-{round}"),"startTimeUnixNano":timestamp,"endTimeUnixNano":(sample_ns+1_000_000).to_string(),"kind":1}]}]}]});
         tokio::try_join!(
             post(&client, writer.port, "logs", logs),
             post(&client, writer.port, "metrics", metrics),
