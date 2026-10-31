@@ -1,0 +1,344 @@
+{
+  "uid": "bench-data-canardstack-pg",
+  "title": "Benchmark data: canardstack (Postgres catalog)",
+  "tags": [
+    "bench",
+    "canardstack-pg"
+  ],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "refresh": "",
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Latest gauge value",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "canardstack-pg-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 6,
+        "h": 4
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "canardstack-pg-prometheus"
+          },
+          "expr": "bench_gauge{service_name=\"$service\"}",
+          "range": true,
+          "instant": false,
+          "legendFormat": "{{__name__}}",
+          "interval": "15s"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area"
+      }
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Latest request counter",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "canardstack-pg-prometheus"
+      },
+      "gridPos": {
+        "x": 6,
+        "y": 0,
+        "w": 6,
+        "h": 4
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "canardstack-pg-prometheus"
+          },
+          "expr": "bench_requests{service_name=\"$service\"}",
+          "range": true,
+          "instant": false,
+          "legendFormat": "{{__name__}}",
+          "interval": "15s"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area"
+      }
+    },
+    {
+      "id": 3,
+      "type": "text",
+      "title": "About",
+      "gridPos": {
+        "x": 12,
+        "y": 0,
+        "w": 12,
+        "h": 4
+      },
+      "options": {
+        "mode": "markdown",
+        "content": "Deterministic benchmark workload (run id `demo`, see `bench/demo.py`). Pick a service (`svc-demo-0` to `svc-demo-4`); the trace id defaults to the last trace of `svc-demo-0`. The data is a few tens of minutes old, so keep the time range wide."
+      }
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "bench_gauge (sawtooth, 10*service + k mod 7)",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "canardstack-pg-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 4,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "canardstack-pg-prometheus"
+          },
+          "expr": "bench_gauge{service_name=\"$service\"}",
+          "range": true,
+          "instant": false,
+          "legendFormat": "{{__name__}}",
+          "interval": "15s"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "bench_requests (monotonic sum, k + 1)",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "canardstack-pg-prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 4,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "canardstack-pg-prometheus"
+          },
+          "expr": "bench_requests{service_name=\"$service\"}",
+          "range": true,
+          "instant": false,
+          "legendFormat": "{{__name__}}",
+          "interval": "15s"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 6,
+      "type": "logs",
+      "title": "Logs",
+      "datasource": {
+        "type": "loki",
+        "uid": "canardstack-pg-loki"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 12,
+        "w": 12,
+        "h": 10
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "canardstack-pg-loki"
+          },
+          "expr": "{service_name=\"$service\"}",
+          "queryType": "range",
+          "maxLines": 200
+        }
+      ],
+      "options": {
+        "showTime": true,
+        "sortOrder": "Ascending",
+        "wrapLogMessage": false,
+        "enableLogDetails": true,
+        "dedupStrategy": "none"
+      }
+    },
+    {
+      "id": 7,
+      "type": "logs",
+      "title": "Logs containing \"error\" (every 10th record)",
+      "datasource": {
+        "type": "loki",
+        "uid": "canardstack-pg-loki"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 12,
+        "w": 12,
+        "h": 10
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "canardstack-pg-loki"
+          },
+          "expr": "{service_name=\"$service\"} |= \"error\"",
+          "queryType": "range",
+          "maxLines": 200
+        }
+      ],
+      "options": {
+        "showTime": true,
+        "sortOrder": "Ascending",
+        "wrapLogMessage": false,
+        "enableLogDetails": true,
+        "dedupStrategy": "none"
+      }
+    },
+    {
+      "id": 8,
+      "type": "traces",
+      "title": "Trace by id (root + child span)",
+      "datasource": {
+        "type": "tempo",
+        "uid": "canardstack-pg-tempo"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 22,
+        "w": 24,
+        "h": 10
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "tempo",
+            "uid": "canardstack-pg-tempo"
+          },
+          "query": "$trace_id",
+          "queryType": "traceql"
+        }
+      ]
+    }
+  ],
+  "templating": {
+    "list": [
+      {
+        "type": "textbox",
+        "name": "service",
+        "label": "service",
+        "query": "svc-demo-0",
+        "current": {
+          "text": "svc-demo-0",
+          "value": "svc-demo-0"
+        },
+        "options": []
+      },
+      {
+        "type": "textbox",
+        "name": "trace_id",
+        "label": "trace id",
+        "query": "e3869b4b2e271849cf9a4894690bc958",
+        "current": {
+          "text": "e3869b4b2e271849cf9a4894690bc958",
+          "value": "e3869b4b2e271849cf9a4894690bc958"
+        },
+        "options": []
+      }
+    ]
+  },
+  "time": {
+    "from": "now-3h",
+    "to": "now"
+  },
+  "links": [
+    {
+      "type": "dashboards",
+      "title": "Benchmark dashboards",
+      "tags": [
+        "bench"
+      ],
+      "asDropdown": true,
+      "includeVars": false,
+      "keepTime": false
+    }
+  ]
+}

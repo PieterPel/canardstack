@@ -19,6 +19,30 @@ bench/.venv/bin/python bench/report.py   # median [min-max] across trials per st
 Images are pinned in `bench/versions.env`. The canardstack profile uses a locally built
 image: `podman build -t canardstack:local .` from the repo root.
 
+## Grafana
+
+`bench/grafana/` provisions Grafana 12 with a datasource for every backend and these dashboards:
+
+- **Benchmark results**: the five-stack comparison (latency, throughput, ingest, visibility,
+  correctness, resource use) from `bench/results/`, embedded as TestData CSV so it needs no plugin.
+- **Benchmark data: <stack>** (one per stack): the demo workload on that backend: logs, a gauge, a
+  counter, an error filter and a trace, each queried with the stack's own datasource.
+
+```bash
+bench/.venv/bin/python bench/demo.py          # wipe, start and load the "demo" data into every stack
+bench/.venv/bin/python bench/grafana/build_dashboards.py   # regenerate dashboards from bench/results/
+cd bench/grafana && podman-compose -p bench-grafana up -d   # http://localhost:13030
+```
+
+Restart the Grafana container after regenerating the dashboards; live provisioning reload did not
+pick up changes through the bind mount. Screenshots from the image renderer are in
+`bench/grafana/screenshots/`.
+
+The demo stacks use the same host ports as the benchmark profiles, so do not run `demo.py` while a
+benchmark is running. canardstack's Loki and Tempo datasources report errors under "Save & test":
+Grafana's health probes call endpoints canardstack does not implement (a Loki metric query and
+`/api/echo`). The panels themselves query canardstack normally.
+
 ## What is measured
 
 | Phase | What it records |
