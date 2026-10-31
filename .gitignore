@@ -10,3 +10,5 @@ site/node_modules/
 *.ducklake.files/
 
 .env
+/deploy/azure-functions/local.settings.json
+/deploy/azure-functions/canardstack
