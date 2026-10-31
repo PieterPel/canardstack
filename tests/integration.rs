@@ -267,20 +267,31 @@ mod transport {
         let mut stream = TcpStream::connect(server.addr).await.unwrap();
         stream.write_all(b"POST /api/v1/query HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer test-key\r\nContent-Length: 1000\r\n\r\nq").await.unwrap();
         let (mut reader, mut writer) = stream.into_split();
-        let trickle = tokio::spawn(async move {
+        // Trickle one byte every 40 ms until the server answers, then only read. Writing to a
+        // socket the server has already closed makes the OS send a reset that can discard the
+        // unread 408, so reading is polled first and trickling stops as soon as data arrives.
+        let mut bytes = Vec::new();
+        let mut chunk = [0u8; 256];
+        let mut answered = false;
+        timeout(Duration::from_secs(2), async {
             loop {
-                tokio::time::sleep(Duration::from_millis(40)).await;
-                if writer.write_all(b"x").await.is_err() {
-                    break;
+                tokio::select! {
+                    biased;
+                    read = reader.read(&mut chunk) => match read {
+                        Ok(0) | Err(_) => break,
+                        Ok(n) => {
+                            answered = true;
+                            bytes.extend_from_slice(&chunk[..n]);
+                        }
+                    },
+                    _ = tokio::time::sleep(Duration::from_millis(40)), if !answered => {
+                        let _ = writer.write_all(b"x").await;
+                    }
                 }
             }
-        });
-        let mut bytes = Vec::new();
-        timeout(Duration::from_secs(2), reader.read_to_end(&mut bytes))
-            .await
-            .unwrap()
-            .unwrap();
-        trickle.abort();
+        })
+        .await
+        .unwrap();
         assert!(
             bytes.starts_with(b"HTTP/1.1 408"),
             "{}",
