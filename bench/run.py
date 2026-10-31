@@ -29,6 +29,9 @@ from otlp import post
 from workload import Workload
 
 HERE = Path(__file__).parent
+# Equal budget for every stack, enforced on the whole compose project (one pod). Per-service
+# CPU quotas throttle bursty request/response work and make the split decide the result.
+POD_ARGS = "--infra=false --share= --cpus=2 --memory=3g"
 
 
 def http_get(url: str, headers: Dict[str, str], timeout: float = 60) -> Tuple[int, str]:
@@ -69,24 +72,34 @@ def compose(backend: Backend, *args: str) -> None:
         if line and not line.startswith("#")
     )
     subprocess.run(
-        ["podman-compose", "-p", backend.project, *args],
+        ["podman-compose", f"--pod-args={POD_ARGS}", "-p", backend.project, *args],
         cwd=HERE / backend.compose_dir,
         env={**__import__("os").environ, **env},
         check=True,
     )
 
 
-def start_created(backend: Backend, timeout: float = 120) -> None:
-    """podman-compose can start dependents before `service_healthy` holds; start them once it does."""
+def start_created(backend: Backend, timeout: float = 180) -> None:
+    """podman-compose can start dependents before `service_healthy` holds.
+
+    Start such containers only once every sibling with a healthcheck is healthy, which
+    emulates `depends_on: condition: service_healthy`.
+    """
+    def ps(*filters: str) -> List[Tuple[str, str]]:
+        out = subprocess.run(
+            ["podman", "ps", "-a", "--filter", f"name=^{backend.project}_", *filters,
+             "--format", "{{.Names}}|{{.Status}}"], capture_output=True, text=True).stdout
+        return [tuple(line.split("|", 1)) for line in out.splitlines() if "|" in line]
+
     deadline = time.time() + timeout
     while time.time() < deadline:
-        created = subprocess.run(
-            ["podman", "ps", "-a", "--filter", f"name=^{backend.project}_", "--filter", "status=created",
-             "--format", "{{.Names}}"], capture_output=True, text=True).stdout.split()
+        created = [name for name, _ in ps("--filter", "status=created")]
         if not created:
             return
-        for name in created:
-            subprocess.run(["podman", "start", name], capture_output=True)
+        waiting = [n for n, status in ps() if "(starting)" in status or "(unhealthy)" in status]
+        if not waiting:
+            for name in created:
+                subprocess.run(["podman", "start", name], capture_output=True)
         time.sleep(3)
 
 
@@ -99,6 +112,18 @@ def wait_ready(backend: Backend, timeout: float = 240) -> None:
             time.sleep(2)
     if pending:
         raise SystemExit(f"stack not ready: {pending}")
+
+
+def git_revision() -> Dict[str, object]:
+    def git(*args: str) -> str:
+        return subprocess.run(["git", *args], cwd=HERE, capture_output=True, text=True).stdout.strip()
+    return {"sha": git("rev-parse", "HEAD"), "dirty": bool(git("status", "--porcelain", "--", "..", ":!bench/results"))}
+
+
+def container_image_ids(project: str) -> Dict[str, str]:
+    out = subprocess.run(["podman", "ps", "--filter", f"name=^{project}_", "--format", "{{.Names}} {{.ImageID}}"],
+                         capture_output=True, text=True).stdout
+    return dict(line.split(" ", 1) for line in out.splitlines() if " " in line)
 
 
 def to_mb(text: str) -> float:
@@ -118,6 +143,7 @@ class StatsSampler(threading.Thread):
         super().__init__(daemon=True)
         self.project = project
         self.samples: List[Dict[str, Tuple[float, float]]] = []
+        self.background: List[float] = []  # summed CPU % of containers outside this stack
         self.stop = threading.Event()
 
     def run(self) -> None:
@@ -135,6 +161,9 @@ class StatsSampler(threading.Thread):
                               to_mb(str(row.get("mem_usage", "0")).split("/")[0]))
                 for row in rows if row["name"].startswith(self.project)
             })
+            self.background.append(sum(
+                float(str(row["cpu_percent"]).rstrip("%") or 0)
+                for row in rows if not row["name"].startswith(self.project)))
 
     def summary(self) -> Dict[str, Dict[str, float]]:
         names = {n for s in self.samples for n in s}
@@ -235,41 +264,62 @@ def visibility(backend: Backend, workload: Workload, ingest_done: Dict[str, dict
     return out
 
 
-def query_suite(backend: Backend, workload: Workload, repeats: int, clients: int) -> Dict[str, dict]:
+def query_suite(backend: Backend, workload: Workload, repeats: int, clients: int,
+                rounds: int, warmup_rounds: int) -> Dict[str, dict]:
+    """Per query: `warmup_rounds` discarded, then `rounds` x `repeats` timed runs.
+
+    Percentiles are pooled over the timed rounds; the per-round p50s are kept so
+    the spread between rounds is visible.
+    """
     results: Dict[str, dict] = {}
     for query in backend.queries:
-        outcomes: List[Tuple[str, float, Optional[float]]] = []
         lock = threading.Lock()
         first_wrong: List[dict] = []
+        per_round: List[List[Tuple[str, float, Optional[float]]]] = []
+        walls: List[float] = []
 
-        def task(n: int) -> None:
-            outcome = run_once(query, workload, n % workload.services)
-            with lock:
-                outcomes.append(outcome)
-                if outcome[0] == "wrong" and not first_wrong:
-                    first_wrong.append({"observed": outcome[2],
-                                        "expected": query.expected(workload, n % workload.services)})
+        def one_round(sink: List[Tuple[str, float, Optional[float]]]) -> float:
+            def task(n: int) -> None:
+                outcome = run_once(query, workload, n % workload.services)
+                with lock:
+                    sink.append(outcome)
+                    if outcome[0] == "wrong" and not first_wrong:
+                        first_wrong.append({"observed": outcome[2],
+                                            "expected": query.expected(workload, n % workload.services)})
 
-        run_once(query, workload, 0)  # one untimed warm-up
-        started = time.perf_counter()
-        with ThreadPoolExecutor(clients) as pool:
-            list(pool.map(task, range(repeats)))
-        wall = time.perf_counter() - started
+            started = time.perf_counter()
+            with ThreadPoolExecutor(clients) as pool:
+                list(pool.map(task, range(repeats)))
+            return time.perf_counter() - started
+
+        for _ in range(warmup_rounds):
+            one_round([])
+        for _ in range(rounds):
+            sink: List[Tuple[str, float, Optional[float]]] = []
+            walls.append(one_round(sink))
+            per_round.append(sink)
+        outcomes = [o for sink in per_round for o in sink]
         ok = [lat for kind, lat, _ in outcomes if kind == "ok"]
+        round_p50 = [statistics.median(lat for kind, lat, _ in sink if kind == "ok")
+                     for sink in per_round if any(kind == "ok" for kind, _, _ in sink)]
         results[query.id] = {
             "signal": query.signal,
             "clients": clients,
+            "rounds": rounds,
             "runs": len(outcomes),
             "ok": len(ok),
             "wrong": sum(1 for k, _, _ in outcomes if k == "wrong"),
             "errors": sum(1 for k, _, _ in outcomes if k == "error"),
             "first_wrong": first_wrong[0] if first_wrong else None,
             "latency_ms": summarize(ok),
-            "throughput_qps": len(ok) / wall if wall else None,
+            "round_p50_ms": round_p50,
+            "throughput_qps": statistics.median(
+                sum(1 for k, _, _ in sink if k == "ok") / wall for sink, wall in zip(per_round, walls)),
         }
         r = results[query.id]
+        spread = f" rounds p50 {min(round_p50):.1f}-{max(round_p50):.1f}" if round_p50 else ""
         print(f"query {query.id:16s} ok={r['ok']}/{r['runs']} wrong={r['wrong']} err={r['errors']} "
-              f"p50={r['latency_ms']['p50'] and round(r['latency_ms']['p50'], 1)}ms"
+              f"p50={r['latency_ms']['p50'] and round(r['latency_ms']['p50'], 1)}ms{spread}"
               + (f" first_wrong={r['first_wrong']}" if r["first_wrong"] else ""))
     return results
 
@@ -281,7 +331,9 @@ def main() -> None:
     ap.add_argument("--services", type=int, default=5)
     ap.add_argument("--records", type=int, default=1000, help="per service, per signal")
     ap.add_argument("--ingest-concurrency", type=int, default=4)
-    ap.add_argument("--repeats", type=int, default=50)
+    ap.add_argument("--repeats", type=int, default=60, help="runs per round")
+    ap.add_argument("--rounds", type=int, default=5, help="timed rounds per query and client count")
+    ap.add_argument("--warmup-rounds", type=int, default=1, help="discarded rounds before timing")
     ap.add_argument("--clients", type=int, nargs="+", default=[1, 4])
     ap.add_argument("--visibility-timeout", type=float, default=120)
     ap.add_argument("--manage", action="store_true", help="down -v, up -d, then wait for readiness")
@@ -307,7 +359,8 @@ def main() -> None:
     sampler.start()
     ingest_result = ingest(backend, workload, args.ingest_concurrency)
     visible = visibility(backend, workload, ingest_result, args.visibility_timeout)
-    queries = {f"clients_{c}": query_suite(backend, workload, args.repeats, c) for c in args.clients}
+    queries = {f"clients_{c}": query_suite(backend, workload, args.repeats, c, args.rounds, args.warmup_rounds)
+               for c in args.clients}
     sampler.stop.set()
 
     report = {
@@ -318,7 +371,13 @@ def main() -> None:
         "environment": {
             "host": platform.platform(), "podman_vm": "applehv 4 CPU / 8 GiB",
             "images": (HERE / "versions.env").read_text(),
-            "note": "one benchmark stack at a time on the same VM, no CPU/memory limits; unrelated idle containers (a developer compose stack) were also running",
+            "image_ids": container_image_ids(backend.project),
+            "git": git_revision(),
+            "resource_budget": "2 CPUs / 3 GiB per stack, enforced on the whole pod (" + POD_ARGS + ")",
+            "rounds": {"warmup": args.warmup_rounds, "timed": args.rounds, "runs_per_round": args.repeats},
+            "background_cpu_pct_mean": statistics.fmean(sampler.background) if sampler.background else None,
+            "note": "one benchmark stack at a time on the same VM; containers outside the stack "
+                    "(a developer compose stack) may be running, see background_cpu_pct_mean",
             "grafana_in_path": False, "collector_in_path": False,
         },
         "unsupported": backend.unsupported,

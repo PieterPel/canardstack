@@ -167,6 +167,52 @@ def canardstack() -> Backend:
     )
 
 
+def canardstack_pg() -> Backend:
+    """Same query surface as `canardstack`, with a Postgres DuckLake catalog instead of Quack."""
+    base = canardstack()
+    auth = {"Authorization": "Bearer dev-canardstack-key"}
+    otlp = {"Authorization": "Bearer dev-otlp-token-123456"}
+    ingest = "http://localhost:14348"
+    query = "http://localhost:19092"
+
+    def trace(w: Workload, i: int):
+        return f"{query}/api/traces/{w.trace_id(i, w.records - 1)}", {**auth, "Accept": "application/json"}
+
+    return Backend(
+        name="canardstack-pg",
+        ingest={s: (f"{ingest}/v1/{s}", otlp) for s in ("logs", "metrics", "traces")},
+        ready=[f"{query}/healthz"],
+        queries=_loki_queries(query, auth)
+        + _prom_queries(query, "service_name", "", auth)
+        + [Query("trace_by_id", "traces", trace, tempo_spans, lambda w, i: 2)],
+        compose_dir="canardstack-pg",
+        project="bench-canardstack-pg",
+        unsupported=base.unsupported,
+    )
+
+
+def canardstack_sqlite() -> Backend:
+    """Same query surface as `canardstack`, with a SQLite DuckLake catalog on a shared volume."""
+    auth = {"Authorization": "Bearer dev-canardstack-key"}
+    otlp = {"Authorization": "Bearer dev-otlp-token-123456"}
+    ingest = "http://localhost:14358"
+    query = "http://localhost:19093"
+
+    def trace(w: Workload, i: int):
+        return f"{query}/api/traces/{w.trace_id(i, w.records - 1)}", {**auth, "Accept": "application/json"}
+
+    return Backend(
+        name="canardstack-sqlite",
+        ingest={s: (f"{ingest}/v1/{s}", otlp) for s in ("logs", "metrics", "traces")},
+        ready=[f"{query}/healthz"],
+        queries=_loki_queries(query, auth)
+        + _prom_queries(query, "service_name", "", auth)
+        + [Query("trace_by_id", "traces", trace, tempo_spans, lambda w, i: 2)],
+        compose_dir="canardstack-sqlite",
+        project="bench-canardstack-sqlite",
+    )
+
+
 def lgtm() -> Backend:
     loki, mimir, tempo = "http://localhost:13100", "http://localhost:19009", "http://localhost:13200"
 
@@ -224,4 +270,4 @@ def victoria() -> Backend:
     )
 
 
-BACKENDS = {"canardstack": canardstack, "lgtm": lgtm, "victoria": victoria}
+BACKENDS = {"canardstack": canardstack, "canardstack-pg": canardstack_pg, "canardstack-sqlite": canardstack_sqlite, "lgtm": lgtm, "victoria": victoria}

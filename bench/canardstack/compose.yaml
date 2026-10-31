@@ -1,3 +1,5 @@
+# Resource budget (2 CPUs / 3 GiB for the whole project) is applied at pod level by bench/run.py,
+# so services share it without per-service CFS throttling.
 # canardstack profile: external duckdb-otlp writer + DuckLake catalog + canardstack query server.
 x-duckdb-otlp-image: &duckdb-otlp-image
   # 0.7.3 is the newest duckdb-otlp release built on DuckDB 1.5.x. The current

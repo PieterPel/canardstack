@@ -1,3 +1,5 @@
+# Resource budget (2 CPUs / 3 GiB for the whole project) is applied at pod level by bench/run.py,
+# so services share it without per-service CFS throttling.
 services:
   victoria-metrics:
     image: ${VM_IMAGE}

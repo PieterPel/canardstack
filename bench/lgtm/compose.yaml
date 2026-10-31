@@ -1,3 +1,5 @@
+# Resource budget (2 CPUs / 3 GiB for the whole project) is applied at pod level by bench/run.py,
+# so services share it without per-service CFS throttling.
 # Standard LGTM backends (Grafana left out of the measured path; see bench/README.md).
 services:
   loki:
