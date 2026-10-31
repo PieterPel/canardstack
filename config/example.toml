@@ -13,7 +13,6 @@ socket_write_timeout_secs = 30
 # mode = "file"
 # cert_file = "/etc/canardstack/tls/fullchain.pem"
 # key_file = "/etc/canardstack/tls/privkey.pem"
-# backend_bind = "127.0.0.1:4319"
 
 [auth]
 api_key = "dev-canardstack-key"

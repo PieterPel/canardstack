@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use std::time::Instant;
 
 use super::auth::api_auth;
-use super::parser::percent_decode;
+use super::parser::query_params;
 use super::response::HttpResponse;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -68,6 +68,16 @@ struct CompatRoute {
 pub(super) struct CompatRouteMatch<'a> {
     route: &'static CompatRoute,
     param: Option<&'a str>,
+}
+
+impl CompatRouteMatch<'_> {
+    pub(super) fn query_class(self) -> Option<QueryClass> {
+        match self.route.admission {
+            QueryAdmission::None => None,
+            QueryAdmission::Cheap => Some(QueryClass::Cheap),
+            QueryAdmission::Heavy => Some(QueryClass::Heavy),
+        }
+    }
 }
 
 const COMPAT_ROUTES: &[CompatRoute] = &[
@@ -254,15 +264,16 @@ pub(super) fn route_compat(
     headers: &HashMap<String, String>,
     body: &[u8],
     state: &AppState,
+    admitted: bool,
 ) -> HttpResponse {
     let started = Instant::now();
     let params = request_params(query, headers, body);
     if matched.route.handler == CompatHandler::TempoTrace {
-        return tempo_trace_http(matched, headers, state, started);
+        return tempo_trace_http(matched, headers, state, started, admitted);
     }
 
     let result = authorize(matched.route.auth, headers, state, || {
-        with_query_admission(state, matched.route.admission, || {
+        with_query_admission(state, matched.route.admission, admitted, || {
             compat_value(matched.route.handler, matched.param, state, &params)
         })
     });
@@ -329,6 +340,7 @@ fn tempo_trace_http(
     headers: &HashMap<String, String>,
     state: &AppState,
     started: Instant,
+    admitted: bool,
 ) -> HttpResponse {
     let trace_id = matched.param.expect("trace route has param");
     let wants_json = headers
@@ -336,7 +348,7 @@ fn tempo_trace_http(
         .is_some_and(|value| value.contains("application/json"));
     if wants_json {
         let result = authorize(matched.route.auth, headers, state, || {
-            with_query_admission(state, matched.route.admission, || {
+            with_query_admission(state, matched.route.admission, admitted, || {
                 compat::tempo_trace(state, trace_id)
             })
         });
@@ -344,7 +356,7 @@ fn tempo_trace_http(
     }
 
     let result = authorize(matched.route.auth, headers, state, || {
-        with_query_admission(state, matched.route.admission, || {
+        with_query_admission(state, matched.route.admission, admitted, || {
             compat::tempo_trace_proto(state, trace_id)
         })
     });
@@ -369,24 +381,24 @@ fn authorize<T>(
 fn with_query_admission<T>(
     state: &AppState,
     admission: QueryAdmission,
+    admitted: bool,
     run: impl FnOnce() -> Result<T, ApiError>,
 ) -> Result<T, ApiError> {
+    if admitted {
+        return run();
+    }
     match admission {
         QueryAdmission::None => run(),
         QueryAdmission::Cheap => {
-            let _guard = state.admission.reserve_query_with_wait(
-                QueryClass::Cheap,
-                state.config.operator.query_admission_wait,
-                &state.metrics,
-            )?;
+            let _guard = state
+                .admission
+                .reserve_query(QueryClass::Cheap, &state.metrics)?;
             run()
         }
         QueryAdmission::Heavy => {
-            let _guard = state.admission.reserve_query_with_wait(
-                QueryClass::Heavy,
-                state.config.operator.query_admission_wait,
-                &state.metrics,
-            )?;
+            let _guard = state
+                .admission
+                .reserve_query(QueryClass::Heavy, &state.metrics)?;
             run()
         }
     }
@@ -463,13 +475,7 @@ fn request_params(
             }
         }
     } else {
-        for pair in String::from_utf8_lossy(body)
-            .split('&')
-            .filter(|s| !s.is_empty())
-        {
-            let (k, v) = pair.split_once('=').unwrap_or((pair, ""));
-            params.insert(percent_decode(k), percent_decode(v));
-        }
+        params.extend(query_params(&String::from_utf8_lossy(body)));
     }
     params
 }

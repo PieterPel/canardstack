@@ -35,7 +35,6 @@ pub struct TlsServerConfig {
     pub mode: TlsMode,
     pub cert_file: Option<PathBuf>,
     pub key_file: Option<PathBuf>,
-    pub backend_bind: String,
 }
 
 #[derive(Clone, Debug)]
@@ -99,6 +98,11 @@ impl Config {
 
 impl OperatorConfig {
     fn from_env(file: &FileConfig, data_dir: &Path) -> Result<Self> {
+        if env_string("CANARDSTACK_TLS_BACKEND_BIND")?.is_some()
+            || file.string(&["server", "tls", "backend_bind"])?.is_some()
+        {
+            anyhow::bail!("CANARDSTACK_TLS_BACKEND_BIND/server.tls.backend_bind is no longer supported; TLS uses the server bind address directly");
+        }
         reject_removed_bool(
             "CANARDSTACK_GRPC_ENABLED",
             file,
@@ -145,9 +149,6 @@ impl OperatorConfig {
                 mode: tls_mode,
                 cert_file: tls_cert_file,
                 key_file: tls_key_file,
-                backend_bind: env_string("CANARDSTACK_TLS_BACKEND_BIND")?
-                    .or(file.string(&["server", "tls", "backend_bind"])?)
-                    .unwrap_or_else(|| "127.0.0.1:4319".to_string()),
             },
             api_key: env_string("CANARDSTACK_API_KEY")?
                 .or(file.string(&["auth", "api_key"])?)
@@ -232,7 +233,6 @@ impl OperatorConfig {
                 mode: TlsMode::File,
                 cert_file: None,
                 key_file: None,
-                backend_bind: "127.0.0.1:0".to_string(),
             },
             api_key: "test-key".to_string(),
             admin_api_key: "test-admin-key".to_string(),
@@ -272,26 +272,16 @@ impl OperatorConfig {
                 "CANARDSTACK_API_KEY and CANARDSTACK_ADMIN_API_KEY must differ; reusing a single key collapses the admin authorization gate"
             );
         }
-        if self.tls.enabled {
-            if self.tls.backend_bind.trim().is_empty() {
-                anyhow::bail!("CANARDSTACK_TLS_BACKEND_BIND must not be empty when TLS is enabled");
-            }
-            if self.tls.backend_bind == self.bind {
+        if self.tls.enabled && self.tls.mode == TlsMode::File {
+            if self.tls.cert_file.is_none() {
                 anyhow::bail!(
-                    "CANARDSTACK_TLS_BACKEND_BIND must differ from CANARDSTACK_BIND when TLS is enabled"
+                    "CANARDSTACK_TLS_CERT_FILE must be set when CANARDSTACK_TLS_ENABLED=true and CANARDSTACK_TLS_MODE=file"
                 );
             }
-            if self.tls.mode == TlsMode::File {
-                if self.tls.cert_file.is_none() {
-                    anyhow::bail!(
-                        "CANARDSTACK_TLS_CERT_FILE must be set when CANARDSTACK_TLS_ENABLED=true and CANARDSTACK_TLS_MODE=file"
-                    );
-                }
-                if self.tls.key_file.is_none() {
-                    anyhow::bail!(
-                        "CANARDSTACK_TLS_KEY_FILE must be set when CANARDSTACK_TLS_ENABLED=true and CANARDSTACK_TLS_MODE=file"
-                    );
-                }
+            if self.tls.key_file.is_none() {
+                anyhow::bail!(
+                    "CANARDSTACK_TLS_KEY_FILE must be set when CANARDSTACK_TLS_ENABLED=true and CANARDSTACK_TLS_MODE=file"
+                );
             }
         }
         if self.max_body_bytes == 0 {
@@ -326,6 +316,13 @@ impl OperatorConfig {
         }
         if self.max_concurrent_connections == 0 {
             anyhow::bail!("CANARDSTACK_MAX_CONNECTIONS must be > 0");
+        }
+        if self.max_concurrent_connections > tokio::sync::Semaphore::MAX_PERMITS
+            || self.query_interactive.concurrency > tokio::sync::Semaphore::MAX_PERMITS
+        {
+            anyhow::bail!(
+                "connection and query concurrency limits exceed Tokio semaphore capacity"
+            );
         }
         if self.query_interactive.concurrency == 0 {
             anyhow::bail!("CANARDSTACK_QUERY_CONCURRENCY must be > 0");
@@ -610,7 +607,6 @@ max_connections = 42
 [server.tls]
 enabled = true
 mode = "ephemeral_self_signed"
-backend_bind = "127.0.0.1:9443"
 
 [auth]
 api_key = "file-api-key"
@@ -644,7 +640,6 @@ cheap_query_capacity = 2
         unsafe {
             env::set_var(CONFIG_PATH_ENV, &config_path);
             env::set_var("CANARDSTACK_BIND", "127.0.0.1:4319");
-            env::set_var("CANARDSTACK_TLS_BACKEND_BIND", "127.0.0.1:9444");
             env::set_var("CANARDSTACK_DUCKLAKE_ATTACH_URI", "");
             env::set_var("CANARDSTACK_DUCKLAKE_CATALOG_PATH", "/env/catalog.ducklake");
             env::set_var(
@@ -658,7 +653,6 @@ cheap_query_capacity = 2
         assert_eq!(config.operator.bind, "127.0.0.1:4319");
         assert!(config.operator.tls.enabled);
         assert_eq!(config.operator.tls.mode, TlsMode::EphemeralSelfSigned);
-        assert_eq!(config.operator.tls.backend_bind, "127.0.0.1:9444");
         assert_eq!(config.operator.api_key, "file-api-key");
         assert_eq!(config.operator.admin_api_key, "file-admin-api-key");
         assert_eq!(

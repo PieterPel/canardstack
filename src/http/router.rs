@@ -15,46 +15,18 @@ pub fn route(
     body: &[u8],
     state: &AppState,
 ) -> HttpResponse {
-    route_inner(
-        method,
-        path,
-        query,
-        headers,
-        RequestBody::Borrowed(body),
-        state,
-    )
+    route_inner(method, path, query, headers, body, state, false)
 }
 
-pub fn route_owned(
+pub(super) fn route_admitted(
     method: &str,
     path: &str,
     query: &HashMap<String, String>,
     headers: &HashMap<String, String>,
-    body: Vec<u8>,
+    body: &[u8],
     state: &AppState,
 ) -> HttpResponse {
-    route_inner(
-        method,
-        path,
-        query,
-        headers,
-        RequestBody::Owned(body),
-        state,
-    )
-}
-
-enum RequestBody<'a> {
-    Borrowed(&'a [u8]),
-    Owned(Vec<u8>),
-}
-
-impl RequestBody<'_> {
-    fn as_slice(&self) -> &[u8] {
-        match self {
-            Self::Borrowed(body) => body,
-            Self::Owned(body) => body,
-        }
-    }
+    route_inner(method, path, query, headers, body, state, true)
 }
 
 fn route_inner(
@@ -62,11 +34,12 @@ fn route_inner(
     path: &str,
     query: &HashMap<String, String>,
     headers: &HashMap<String, String>,
-    body: RequestBody<'_>,
+    body: &[u8],
     state: &AppState,
+    admitted: bool,
 ) -> HttpResponse {
     if let Some(matched) = match_compat_route(method, path) {
-        return route_compat(matched, query, headers, body.as_slice(), state);
+        return route_compat(matched, query, headers, body, state, admitted);
     }
 
     let result = match (method, path) {

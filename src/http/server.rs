@@ -1,398 +1,390 @@
+use super::compat_routes::match_compat_route;
+use super::parser::query_params;
+use super::response::HttpResponse;
+use super::router::route_admitted;
 use crate::metrics::MetricName;
-use crate::validation::ApiError;
+use crate::storage::QueryExecution;
+use crate::validation::{self, ApiError};
 use crate::AppState;
-use serde_json::json;
+use axum::body::{to_bytes, Body};
+use axum::extract::State;
+use axum::http::{header, Request, Response};
+use axum::response::IntoResponse;
+use axum::Router;
+use hyper::server::conn::http1;
+use hyper_util::rt::{TokioIo, TokioTimer};
+use hyper_util::service::TowerToHyperService;
 use std::collections::HashMap;
-use std::io::{BufReader, ErrorKind, Read};
-use std::net::{TcpListener, TcpStream};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::error::Error;
+use std::future::Future;
 use std::sync::Arc;
-use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+use tokio::io::{AsyncRead, AsyncWrite};
+use tokio::net::TcpListener;
+use tokio::sync::Semaphore;
+use tokio::task::JoinSet;
+use tokio::time::{timeout, timeout_at, Instant};
+use tokio_io_timeout::TimeoutStream;
+use tokio_util::sync::CancellationToken;
+use tokio_util::task::TaskTracker;
 
-use super::parser::{
-    read_bounded_line, split_target, LineRead, MAX_HEADER_BYTES, MAX_HEADER_COUNT,
-    MAX_HEADER_LINE_BYTES, MAX_REQUEST_LINE_BYTES,
-};
-use super::response::{write_response, write_response_with_connection, HttpResponse};
-use super::router::route_owned;
-
-const ACCEPT_POLL_INTERVAL: Duration = Duration::from_millis(10);
 const SHUTDOWN_DRAIN_TIMEOUT: Duration = Duration::from_secs(30);
-const KEEPALIVE_REQUEST_LIMIT: usize = 10_000;
-static NEVER_SHUTDOWN: AtomicBool = AtomicBool::new(false);
+const MAX_REQUEST_TARGET_BYTES: usize = 8 * 1024;
+const MAX_HEADER_BYTES: usize = 64 * 1024;
+const MAX_HEADER_COUNT: usize = 100;
 
-fn log_startup_storage_mode(probe: &crate::storage::StorageProbe) {
-    tracing::info!(
-        event = "storage_mode",
-        mode = probe.mode,
-        "serving queries from DuckLake"
-    );
+#[derive(Clone)]
+struct Transport {
+    app: Arc<AppState>,
+    operators: Arc<Semaphore>,
+    stopping: CancellationToken,
+    jobs: TaskTracker,
 }
 
-pub fn serve(state: Arc<AppState>) -> anyhow::Result<()> {
-    serve_until(state, &NEVER_SHUTDOWN)
+pub async fn serve(state: Arc<AppState>) -> anyhow::Result<()> {
+    serve_until(state, std::future::pending()).await
 }
 
-pub fn serve_until(state: Arc<AppState>, shutdown: &AtomicBool) -> anyhow::Result<()> {
-    let listener = TcpListener::bind(&state.config.operator.bind)?;
-    listener.set_nonblocking(true)?;
-    let addr = listener.local_addr()?;
-    let probe = state.storage.probe();
-    tracing::info!(event = "server_listening", addr = %addr);
-    log_startup_storage_mode(&probe);
-    let active = Arc::new(AtomicUsize::new(0));
-    let max_conns = state.config.operator.max_concurrent_connections;
+pub async fn serve_until(
+    state: Arc<AppState>,
+    shutdown: impl Future<Output = ()>,
+) -> anyhow::Result<()> {
+    let listener = TcpListener::bind(&state.config.operator.bind).await?;
+    serve_listener(listener, state, shutdown).await
+}
+
+pub async fn serve_listener(
+    listener: TcpListener,
+    state: Arc<AppState>,
+    shutdown: impl Future<Output = ()>,
+) -> anyhow::Result<()> {
+    #[cfg(feature = "tls")]
+    let tls = if state.config.operator.tls.enabled {
+        Some(tokio_rustls::TlsAcceptor::from(crate::tls::server_config(
+            &state.config.operator.tls,
+        )?))
+    } else {
+        None
+    };
+    #[cfg(not(feature = "tls"))]
+    if state.config.operator.tls.enabled {
+        anyhow::bail!("CANARDSTACK_TLS_ENABLED=true requires --features tls");
+    }
+
+    let transport = Transport {
+        app: state.clone(),
+        operators: Arc::new(Semaphore::new(1)),
+        stopping: CancellationToken::new(),
+        jobs: TaskTracker::new(),
+    };
+    let router = Router::new()
+        .fallback(dispatch)
+        .with_state(transport.clone());
+    let connections = Arc::new(Semaphore::new(
+        state.config.operator.max_concurrent_connections,
+    ));
+    let mut tasks = JoinSet::new();
     let read_timeout = state.config.operator.socket_read_timeout;
     let write_timeout = state.config.operator.socket_write_timeout;
-    while !shutdown.load(Ordering::SeqCst) {
-        let stream = match listener.accept() {
-            Ok((stream, _addr)) => stream,
-            Err(err) if err.kind() == ErrorKind::WouldBlock => {
-                thread::sleep(ACCEPT_POLL_INTERVAL);
-                continue;
+    tracing::info!(event = "server_listening", addr = %listener.local_addr()?);
+    tokio::pin!(shutdown);
+    let result = loop {
+        tokio::select! {
+            biased;
+            _ = &mut shutdown => break Ok(()),
+            Some(result) = tasks.join_next(), if !tasks.is_empty() => {
+                if let Err(err) = result {
+                    tracing::warn!(event = "http_connection_task_failed", error = %err);
+                }
             }
-            Err(err) if err.kind() == ErrorKind::Interrupted => continue,
-            Err(err) => return Err(err.into()),
-        };
-        let _ = stream.set_nonblocking(false);
-        let _ = stream.set_read_timeout(Some(read_timeout));
-        let _ = stream.set_write_timeout(Some(write_timeout));
-        // Responses are assembled into a single buffer and written in one shot,
-        // so disable Nagle to send each response promptly instead of waiting to
-        // coalesce with a follow-up that may not come (esp. under keepalive).
-        let _ = stream.set_nodelay(true);
-
-        // Bound concurrent connections so a slow-loris attacker can't pin one OS
-        // thread per socket indefinitely. Reply 503 + Retry-After (not RST) so
-        // polite exporters back off instead of hot-looping.
-        let prev = active.fetch_add(1, Ordering::SeqCst);
-        if prev >= max_conns {
-            active.fetch_sub(1, Ordering::SeqCst);
-            state.metrics.inc(
-                MetricName::HttpConnectionErrorsTotal,
-                &[("reason", "max_connections_exceeded")],
-                1,
-            );
-            tracing::warn!(
-                event = "http_connection_overflow",
-                reason = "max_connections_exceeded",
-                max_concurrent_connections = max_conns
-            );
-            let err = ApiError::new(
-                503,
-                "server_overloaded",
-                "max concurrent connections exceeded",
-            )
-            .with_retry_after(5);
-            let mut stream = stream;
-            let _ = write_response(&mut stream, HttpResponse::from_api_error(&err));
-            continue;
+            accepted = listener.accept() => {
+                let (socket, _) = match accepted {
+                    Ok(accepted) => accepted,
+                    Err(err) => break Err(err.into()),
+                };
+                let permit = match connections.clone().try_acquire_owned() {
+                    Ok(permit) => permit,
+                    Err(_) => {
+                        state.metrics.inc(MetricName::HttpConnectionErrorsTotal, &[("reason", "max_connections_exceeded")], 1);
+                        drop(socket);
+                        continue;
+                    }
+                };
+                if let Err(err) = socket.set_nodelay(true) {
+                    tracing::debug!(event = "socket_configuration_failed", error = %err);
+                    continue;
+                }
+                let router = router.clone();
+                let stopping = transport.stopping.clone();
+                #[cfg(feature = "tls")]
+                let tls = tls.clone();
+                tasks.spawn(async move {
+                    let _permit = permit;
+                    #[cfg(feature = "tls")]
+                    if let Some(tls) = tls {
+                        let stream = tokio::select! {
+                            _ = stopping.cancelled() => return,
+                            result = timeout(read_timeout, tls.accept(socket)) => match result {
+                                Ok(Ok(stream)) => stream,
+                                _ => return,
+                            }
+                        };
+                        connection(stream, router, stopping, read_timeout, write_timeout).await;
+                        return;
+                    }
+                    connection(socket, router, stopping, read_timeout, write_timeout).await;
+                });
+            }
         }
-        let active_for_thread = active.clone();
-        let state = state.clone();
-        thread::spawn(move || {
-            let _guard = ConnectionGuard {
-                active: active_for_thread,
-            };
-            if let Err(err) = handle_stream(stream, state.clone()) {
-                let reason = classify_io_error(&err);
-                state.metrics.inc(
-                    MetricName::HttpConnectionErrorsTotal,
-                    &[("reason", reason)],
-                    1,
-                );
-                tracing::warn!(
-                    event = "http_request_failed",
-                    reason,
-                    error = %err
-                );
-            }
-        });
+    };
+    drop(listener);
+    transport.stopping.cancel();
+    let drain_deadline = Instant::now() + SHUTDOWN_DRAIN_TIMEOUT;
+    if timeout_at(drain_deadline, async {
+        while tasks.join_next().await.is_some() {}
+    })
+    .await
+    .is_err()
+    {
+        tasks.abort_all();
+        while tasks.join_next().await.is_some() {}
+        tracing::warn!(event = "shutdown_drain_timeout");
     }
-    tracing::info!(
-        event = "shutdown_requested",
-        "stopped accepting new connections"
+    transport.jobs.close();
+    if timeout_at(drain_deadline, transport.jobs.wait())
+        .await
+        .is_err()
+    {
+        tracing::warn!(event = "blocking_query_drain_timeout");
+    }
+    result
+}
+
+async fn connection<I>(
+    stream: I,
+    router: Router,
+    stopping: CancellationToken,
+    read_timeout: Duration,
+    write_timeout: Duration,
+) where
+    I: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+{
+    let mut stream = TimeoutStream::new(stream);
+    stream.set_read_timeout(Some(read_timeout));
+    stream.set_write_timeout(Some(write_timeout));
+    let mut builder = http1::Builder::new();
+    builder
+        .timer(TokioTimer::new())
+        .header_read_timeout(read_timeout)
+        .max_headers(MAX_HEADER_COUNT)
+        .max_buf_size(MAX_HEADER_BYTES);
+    let connection = builder.serve_connection(
+        TokioIo::new(Box::pin(stream)),
+        TowerToHyperService::new(router),
     );
-    drain_active_connections(&active);
-    Ok(())
-}
-
-fn drain_active_connections(active: &AtomicUsize) {
-    let deadline = Instant::now() + SHUTDOWN_DRAIN_TIMEOUT;
-    while active.load(Ordering::SeqCst) > 0 && Instant::now() < deadline {
-        thread::sleep(Duration::from_millis(50));
-    }
-    let remaining = active.load(Ordering::SeqCst);
-    if remaining > 0 {
-        tracing::warn!(
-            event = "shutdown_drain_timeout",
-            active_connections = remaining
-        );
-    } else {
-        tracing::info!(event = "shutdown_complete", "active connections drained");
+    tokio::pin!(connection);
+    let result = tokio::select! {
+        result = &mut connection => result,
+        _ = stopping.cancelled() => {
+            connection.as_mut().graceful_shutdown();
+            connection.await
+        }
+    };
+    if let Err(err) = result {
+        tracing::debug!(event = "http_connection_failed", error = %err);
     }
 }
 
-struct ConnectionGuard {
-    active: Arc<AtomicUsize>,
-}
+struct CancelOnDrop(Arc<QueryExecution>);
 
-impl Drop for ConnectionGuard {
+impl Drop for CancelOnDrop {
     fn drop(&mut self) {
-        self.active.fetch_sub(1, Ordering::SeqCst);
+        self.0.cancel();
     }
 }
 
-fn classify_io_error(err: &anyhow::Error) -> &'static str {
-    if is_socket_timeout(err) {
-        return "socket_timeout";
+async fn dispatch(State(transport): State<Transport>, request: Request<Body>) -> Response<Body> {
+    let (parts, body) = request.into_parts();
+    let method = parts.method.as_str().to_owned();
+    let path = parts.uri.path().to_owned();
+    let fail = |err| request_error(&method, &path, err);
+    if transport.stopping.is_cancelled() {
+        return fail(ApiError::new(
+            503,
+            "server_stopping",
+            "server is shutting down",
+        ));
     }
-    let msg = err.to_string();
-    if msg.contains("timed out") || msg.contains("timeout") {
-        "socket_timeout"
-    } else if msg.contains("connection reset") || msg.contains("broken pipe") {
-        "connection_reset"
-    } else {
-        "io_error"
+    if parts.uri.to_string().len() > MAX_REQUEST_TARGET_BYTES
+        || parts
+            .headers
+            .iter()
+            .map(|(name, value)| name.as_str().len() + value.len() + 4)
+            .sum::<usize>()
+            > MAX_HEADER_BYTES
+    {
+        return fail(ApiError::new(
+            400,
+            "headers_too_large",
+            "request headers exceed configured limits",
+        ));
     }
-}
-
-fn is_socket_timeout(err: &anyhow::Error) -> bool {
-    err.downcast_ref::<std::io::Error>()
-        .is_some_and(|err| matches!(err.kind(), ErrorKind::TimedOut | ErrorKind::WouldBlock))
-}
-
-fn handle_stream(mut stream: TcpStream, state: Arc<AppState>) -> anyhow::Result<()> {
-    let mut reader = BufReader::new(stream.try_clone()?);
-    let mut requests = 0usize;
-    loop {
-        let mut first = String::new();
-        let first_read = match read_bounded_line(&mut reader, &mut first, MAX_REQUEST_LINE_BYTES) {
-            Ok(LineRead::Read(read)) => read,
-            Ok(LineRead::TooLong) => {
-                return write_response(&mut stream, header_limit_response());
-            }
-            Err(err) if requests > 0 && is_socket_timeout(&err) => {
-                state.metrics.inc(
-                    MetricName::HttpConnectionClosesTotal,
-                    &[("reason", "keepalive_idle_timeout")],
-                    1,
-                );
-                return Ok(());
-            }
-            Err(err) => return Err(err),
-        };
-        if first_read == 0 {
-            return Ok(());
-        }
-        let mut parts = first.split_whitespace();
-        let method = parts.next().unwrap_or("").to_string();
-        let target = parts.next().unwrap_or("/").to_string();
-
-        let mut headers = HashMap::new();
-        let mut header_bytes = 0usize;
-        loop {
-            let mut line = String::new();
-            let read = match read_bounded_line(&mut reader, &mut line, MAX_HEADER_LINE_BYTES)? {
-                LineRead::Read(read) => read,
-                LineRead::TooLong => {
-                    return write_response(&mut stream, header_limit_response());
-                }
-            };
-            header_bytes += read;
-            if header_bytes > MAX_HEADER_BYTES || headers.len() >= MAX_HEADER_COUNT {
-                return write_response(&mut stream, header_limit_response());
-            }
-            let trimmed = line.trim_end_matches(['\r', '\n']);
-            if trimmed.is_empty() {
-                break;
-            }
-            if let Some((k, v)) = trimmed.split_once(':') {
-                headers.insert(k.trim().to_ascii_lowercase(), v.trim().to_string());
-            }
-        }
-
-        let content_length = match headers.get("content-length") {
-            Some(raw) => match raw.parse() {
-                Ok(value) => value,
-                Err(_) => {
-                    return write_response(
-                        &mut stream,
-                        HttpResponse::json(
-                            400,
-                            json!({
-                                "error": "invalid_content_length",
-                                "message": "content-length must be a non-negative integer"
-                            }),
-                        ),
-                    );
-                }
-            },
-            None => 0,
-        };
-        if content_length > state.config.operator.max_body_bytes {
-            let response = HttpResponse::json(
+    for name in [
+        header::AUTHORIZATION,
+        header::HeaderName::from_static("x-api-key"),
+    ] {
+        if parts.headers.get_all(name).iter().count() > 1 {
+            return fail(ApiError::new(
                 400,
-                json!({
-                    "error": "payload_too_large",
-                    "message": format!(
-                        "payload has {content_length} bytes; max is {}",
-                        state.config.operator.max_body_bytes
-                    )
-                }),
-            );
-            return write_response(&mut stream, response);
-        }
-        let mut body = vec![0; content_length];
-        if content_length > 0 {
-            reader.read_exact(&mut body)?;
-        }
-
-        let (path, query) = split_target(&target);
-        let response = route_owned(&method, &path, &query, &headers, body, &state);
-        requests += 1;
-        let client_requested_close = headers
-            .get("connection")
-            .is_some_and(|value| value.eq_ignore_ascii_case("close"));
-        let reached_request_limit = requests >= KEEPALIVE_REQUEST_LIMIT;
-        let keep_alive = should_keep_connection_alive(client_requested_close, requests);
-        state.metrics.inc(
-            MetricName::HttpConnectionRequestsTotal,
-            &[(
-                "mode",
-                if keep_alive {
-                    "keep_alive"
-                } else {
-                    "connection_close"
-                },
-            )],
-            1,
-        );
-        write_response_with_connection(&mut stream, response, keep_alive)?;
-        if !keep_alive {
-            if reached_request_limit {
-                state.metrics.inc(
-                    MetricName::HttpConnectionClosesTotal,
-                    &[("reason", "keepalive_request_limit")],
-                    1,
-                );
-            }
-            return Ok(());
+                "duplicate_header",
+                "duplicate authentication header",
+            ));
         }
     }
-}
-
-fn should_keep_connection_alive(client_requested_close: bool, requests_served: usize) -> bool {
-    !client_requested_close && requests_served < KEEPALIVE_REQUEST_LIMIT
-}
-
-fn header_limit_response() -> HttpResponse {
-    HttpResponse::json(
-        400,
-        json!({
-            "error": "headers_too_large",
-            "message": "request headers exceed configured parser limits"
-        }),
+    let headers: HashMap<String, String> = match parts
+        .headers
+        .iter()
+        .map(|(name, value)| {
+            value
+                .to_str()
+                .map(|value| (name.as_str().to_owned(), value.to_owned()))
+        })
+        .collect()
+    {
+        Ok(headers) => headers,
+        Err(_) => {
+            return fail(ApiError::new(
+                400,
+                "invalid_header",
+                "header value is not valid text",
+            ))
+        }
+    };
+    let matched = match_compat_route(&method, &path);
+    if matched.is_some() || path.starts_with("/api/admin/") {
+        if let Err(err) =
+            validation::validate_api_key(&headers, &transport.app.config, matched.is_none())
+        {
+            return fail(err);
+        }
+    }
+    let wait = transport.app.config.operator.query_admission_wait;
+    let permit = if let Some(class) = matched.and_then(|matched| matched.query_class()) {
+        transport
+            .app
+            .admission
+            .reserve_query_with_wait(class, wait, &transport.app.metrics)
+            .await
+    } else {
+        match timeout(wait, transport.operators.clone().acquire_owned()).await {
+            Ok(Ok(permit)) => Ok(permit),
+            _ => Err(ApiError::new(
+                429,
+                "operator_admission_full",
+                "operator request capacity is exhausted",
+            )
+            .with_retry_after(1)),
+        }
+    };
+    let permit = match permit {
+        Ok(permit) => permit,
+        Err(err) => return fail(err),
+    };
+    let body = match timeout(
+        transport.app.config.operator.socket_read_timeout,
+        to_bytes(body, transport.app.config.operator.max_body_bytes),
     )
+    .await
+    {
+        Ok(Ok(body)) => body,
+        Ok(Err(err)) => return fail(body_error(&err)),
+        Err(_) => {
+            return fail(ApiError::new(
+                408,
+                "request_timeout",
+                "request body deadline exceeded",
+            ))
+        }
+    };
+    let query = query_params(parts.uri.query().unwrap_or_default());
+    let budget = Duration::from_secs(transport.app.config.operator.query_interactive.timeout_secs);
+    let execution = Arc::new(QueryExecution::new(budget));
+    let _cancel = CancelOnDrop(execution.clone());
+    let mut state = transport.app.as_ref().clone();
+    state.queries = state.queries.with_execution(execution);
+    let method_for_job = method.clone();
+    let path_for_job = path.clone();
+    let task = transport.jobs.spawn_blocking(move || {
+        let _permit = permit;
+        route_admitted(
+            &method_for_job,
+            &path_for_job,
+            &query,
+            &headers,
+            &body,
+            &state,
+        )
+    });
+    match timeout(budget, task).await {
+        Ok(Ok(response)) => response.into_response(),
+        Ok(Err(err)) => {
+            tracing::error!(event = "request_task_failed", error = %err);
+            fail(ApiError::new(
+                500,
+                "internal_error",
+                "request execution failed",
+            ))
+        }
+        Err(_) => fail(ApiError::new(
+            503,
+            "query_timeout",
+            "request execution deadline exceeded",
+        )),
+    }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::{AppState, Config};
-    use std::io::{Read, Write};
-
-    #[test]
-    fn benchmark_keepalive_allows_multiple_requests_on_one_connection() {
-        let dir = tempfile::tempdir().unwrap();
-        let mut config = Config::test(dir.path().join("canardstack.duckdb"));
-        config.operator.local_storage_dir = dir.path().join("storage");
-        let state = Arc::new(AppState::new(config).unwrap());
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let addr = listener.local_addr().unwrap();
-        let state_for_thread = state.clone();
-        let handle = thread::spawn(move || {
-            let (stream, _) = listener.accept().unwrap();
-            handle_stream(stream, state_for_thread).unwrap();
-        });
-
-        let mut client = TcpStream::connect(addr).unwrap();
-        client
-            .write_all(
-                b"GET /healthz HTTP/1.1\r\nhost: localhost\r\ncontent-length: 0\r\nconnection: keep-alive\r\n\r\n",
-            )
-            .unwrap();
-        let first = read_test_response(&mut client);
-        assert!(first.starts_with("HTTP/1.1 200 OK"));
-        assert!(first.contains("\r\nconnection: keep-alive\r\n"));
-
-        client
-            .write_all(
-                b"GET /metrics HTTP/1.1\r\nhost: localhost\r\ncontent-length: 0\r\nconnection: close\r\n\r\n",
-            )
-            .unwrap();
-        let second = read_test_response(&mut client);
-        assert!(second.starts_with("HTTP/1.1 200 OK"));
-        assert!(second.contains("\r\nconnection: close\r\n"));
-        handle.join().unwrap();
-
-        let metrics = state.metrics.render_prometheus();
-        assert!(
-            metrics.contains("canardstack_http_connection_requests_total{mode=\"keep_alive\"} 1")
-        );
-        assert!(metrics
-            .contains("canardstack_http_connection_requests_total{mode=\"connection_close\"} 1"));
-    }
-
-    #[test]
-    fn keepalive_request_limit_marks_final_response_connection_close() {
-        assert!(should_keep_connection_alive(
-            false,
-            KEEPALIVE_REQUEST_LIMIT - 1
-        ));
-        assert!(!should_keep_connection_alive(
-            false,
-            KEEPALIVE_REQUEST_LIMIT
-        ));
-        assert!(!should_keep_connection_alive(
-            true,
-            KEEPALIVE_REQUEST_LIMIT - 1
-        ));
-    }
-
-    fn read_test_response(stream: &mut TcpStream) -> String {
-        let mut bytes = Vec::new();
-        let mut buf = [0u8; 4096];
-        loop {
-            let read = stream.read(&mut buf).unwrap();
-            assert!(read > 0, "unexpected eof while reading test response");
-            bytes.extend_from_slice(&buf[..read]);
-            if test_response_complete(&bytes) {
-                break;
-            }
+fn body_error(err: &axum::Error) -> ApiError {
+    let mut source = Some(err as &(dyn Error + 'static));
+    while let Some(err) = source {
+        if err.is::<http_body_util::LengthLimitError>() {
+            return ApiError::new(
+                413,
+                "payload_too_large",
+                "request body exceeds configured limit",
+            );
         }
-        String::from_utf8(bytes).unwrap()
+        if err.downcast_ref::<std::io::Error>().is_some_and(|err| {
+            matches!(
+                err.kind(),
+                std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock
+            )
+        }) || err
+            .downcast_ref::<hyper::Error>()
+            .is_some_and(hyper::Error::is_timeout)
+        {
+            return ApiError::new(408, "request_timeout", "request body deadline exceeded");
+        }
+        source = err.source();
     }
+    ApiError::new(400, "invalid_body", "could not read request body")
+}
 
-    fn test_response_complete(bytes: &[u8]) -> bool {
-        let Some(header_end) = bytes
-            .windows(b"\r\n\r\n".len())
-            .position(|window| window == b"\r\n\r\n")
-        else {
-            return false;
-        };
-        let head = String::from_utf8_lossy(&bytes[..header_end]);
-        let content_length = head
-            .lines()
-            .skip(1)
-            .filter_map(|line| line.split_once(':'))
-            .find_map(|(name, value)| {
-                name.eq_ignore_ascii_case("content-length")
-                    .then(|| value.trim().parse::<usize>().ok())
-                    .flatten()
-            })
-            .unwrap_or(0);
-        bytes.len().saturating_sub(header_end + b"\r\n\r\n".len()) >= content_length
-    }
+fn request_error(method: &str, path: &str, err: ApiError) -> Response<Body> {
+    let response = if match_compat_route(method, path).is_some() {
+        let status = err.status;
+        let retry = err.retry_after_seconds;
+        let mut response = HttpResponse::json(status, crate::compat::compat_error(err));
+        if let Some(retry) = retry {
+            response = response.with_retry_after(retry);
+        }
+        response
+    } else {
+        HttpResponse::from_api_error(&err)
+    };
+    let mut response = response.into_response();
+    response.headers_mut().insert(
+        header::CONNECTION,
+        header::HeaderValue::from_static("close"),
+    );
+    response
 }

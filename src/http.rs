@@ -7,4 +7,4 @@ mod server;
 
 pub use response::HttpResponse;
 pub use router::route;
-pub use server::{serve, serve_until};
+pub use server::{serve, serve_listener, serve_until};

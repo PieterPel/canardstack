@@ -4,9 +4,53 @@ use crate::db::sql::escape_value;
 use crate::LockExt;
 use anyhow::{Context, Result};
 use duckdb::Connection;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
+
+pub(crate) struct QueryExecution {
+    deadline: Instant,
+    budget: Duration,
+    cancelled: AtomicBool,
+    interrupt: Mutex<Option<Arc<duckdb::InterruptHandle>>>,
+}
+
+impl QueryExecution {
+    pub(crate) fn new(budget: Duration) -> Self {
+        Self {
+            deadline: Instant::now() + budget,
+            budget,
+            cancelled: AtomicBool::new(false),
+            interrupt: Mutex::new(None),
+        }
+    }
+
+    pub(crate) fn cancel(&self) {
+        self.cancelled.store(true, Ordering::SeqCst);
+        if let Some(interrupt) = self.interrupt.lock_or_poisoned().as_ref() {
+            interrupt.interrupt();
+        }
+    }
+
+    fn remaining(&self) -> Result<Duration> {
+        let remaining = self.deadline.saturating_duration_since(Instant::now());
+        if self.cancelled.load(Ordering::SeqCst) || remaining.is_zero() {
+            return Err(anyhow::Error::new(QueryTimeoutError {
+                timeout: self.budget,
+            }));
+        }
+        Ok(remaining)
+    }
+}
+
+struct ActiveInterrupt<'a>(&'a QueryExecution);
+
+impl Drop for ActiveInterrupt<'_> {
+    fn drop(&mut self) {
+        *self.0.interrupt.lock_or_poisoned() = None;
+    }
+}
 
 impl Storage {
     /// Read-side connection access for SELECT-only paths. Do not call into
@@ -22,13 +66,34 @@ impl Storage {
         timeout: Duration,
         f: impl FnOnce(&Connection, &str) -> Result<T>,
     ) -> Result<T> {
+        self.with_query_execution(memory_limit, timeout, None, f)
+    }
+
+    pub(crate) fn with_query_execution<T>(
+        &self,
+        memory_limit: &str,
+        timeout: Duration,
+        execution: Option<&QueryExecution>,
+        f: impl FnOnce(&Connection, &str) -> Result<T>,
+    ) -> Result<T> {
+        if let Some(execution) = execution {
+            execution.remaining()?;
+        }
         let conn = self.open_scoped_query_connection()?;
+        let interrupt = conn.interrupt_handle();
+        let _active = execution.map(|execution| {
+            *execution.interrupt.lock_or_poisoned() = Some(interrupt.clone());
+            ActiveInterrupt(execution)
+        });
+        let timeout = match execution {
+            Some(execution) => timeout.min(execution.remaining()?),
+            None => timeout,
+        };
         conn.execute_batch(&format!(
             "SET memory_limit = '{}';",
             escape_value(memory_limit)
         ))?;
 
-        let interrupt = conn.interrupt_handle();
         let state = Arc::new((Mutex::new(false), Condvar::new()));
         let timer_state = state.clone();
         let timer = thread::spawn(move || {
@@ -37,7 +102,9 @@ impl Storage {
             if *done {
                 return false;
             }
-            let (done, wait) = cvar.wait_timeout(done, timeout).unwrap();
+            let (done, wait) = cvar
+                .wait_timeout_while(done, timeout, |done| !*done)
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             if !*done && wait.timed_out() {
                 interrupt.interrupt();
                 return true;
@@ -61,6 +128,9 @@ impl Storage {
         if timed_out {
             return Err(anyhow::Error::new(QueryTimeoutError { timeout }));
         }
+        if let Some(execution) = execution {
+            execution.remaining()?;
+        }
         result
     }
 
@@ -73,5 +143,42 @@ impl Storage {
         };
         configure_base_connection(&cloned)?;
         Ok(cloned)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn request_cancellation_interrupts_active_duckdb_work() {
+        let dir = tempfile::tempdir().unwrap();
+        let storage = Storage::open(&crate::Config::test(dir.path().join("query.duckdb"))).unwrap();
+        let execution = Arc::new(QueryExecution::new(Duration::from_secs(5)));
+        let worker_execution = execution.clone();
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        let worker = thread::spawn(move || {
+            storage.with_query_execution(
+                "128MiB",
+                Duration::from_secs(5),
+                Some(&worker_execution),
+                |conn, _| {
+                    started_tx.send(()).unwrap();
+                    conn.query_row(
+                        "SELECT sum(i::HUGEINT)::VARCHAR FROM range(100000000000) t(i)",
+                        [],
+                        |row| row.get::<_, String>(0),
+                    )
+                    .map_err(Into::into)
+                },
+            )
+        });
+        started_rx.recv_timeout(Duration::from_secs(3)).unwrap();
+        thread::sleep(Duration::from_millis(50));
+        let started = Instant::now();
+        execution.cancel();
+        let err = worker.join().unwrap().unwrap_err();
+        assert!(err.downcast_ref::<QueryTimeoutError>().is_some(), "{err}");
+        assert!(started.elapsed() < Duration::from_secs(2));
     }
 }

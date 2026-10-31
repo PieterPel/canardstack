@@ -13,6 +13,7 @@ mod ducklake;
 mod health;
 mod metadata;
 mod query_conn;
+pub(crate) use query_conn::QueryExecution;
 pub(crate) mod schema;
 
 use ducklake::{

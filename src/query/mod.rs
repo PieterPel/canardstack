@@ -12,15 +12,19 @@ use crate::query::plan::{
 };
 use crate::semantic_labels::{self, LabelScope};
 use crate::signal::StorageSignal;
+use crate::storage::QueryExecution;
 use crate::storage::{QueryTimeoutError, Storage};
 use crate::validation::{ApiError, ApiResult};
 use duckdb::Row;
 use serde_json::{json, Value};
+use std::sync::Arc;
 use std::time::Duration;
 
+#[derive(Clone)]
 pub struct QueryEngine {
     interactive_timeout: Duration,
     interactive_memory_limit: String,
+    execution: Option<Arc<QueryExecution>>,
 }
 
 impl QueryEngine {
@@ -30,6 +34,14 @@ impl QueryEngine {
                 config.operator.query_interactive.timeout_secs,
             ),
             interactive_memory_limit: config.operator.query_interactive.memory_limit.clone(),
+            execution: None,
+        }
+    }
+
+    pub(crate) fn with_execution(&self, execution: Arc<QueryExecution>) -> Self {
+        Self {
+            execution: Some(execution),
+            ..self.clone()
         }
     }
 
@@ -46,7 +58,12 @@ impl QueryEngine {
         f: impl FnOnce(&duckdb::Connection, &str) -> anyhow::Result<T>,
     ) -> ApiResult<T> {
         storage
-            .with_query_conn(&self.interactive_memory_limit, self.interactive_timeout, f)
+            .with_query_execution(
+                &self.interactive_memory_limit,
+                self.interactive_timeout,
+                self.execution.as_deref(),
+                f,
+            )
             .map_err(storage_err)
     }
 
@@ -62,9 +79,10 @@ impl QueryEngine {
             plan.limit + 1,
         );
         let rows = storage
-            .with_query_conn(
+            .with_query_execution(
                 &self.interactive_memory_limit,
                 self.interactive_timeout,
+                self.execution.as_deref(),
                 |conn, prefix| {
                     let mut stmt = conn.prepare(&sql.replace("{prefix}", prefix))?;
                     let mapped = stmt.query_map([], |row| log_row(row, &projected))?;
@@ -110,9 +128,10 @@ impl QueryEngine {
             limit + 1
         );
         let rows = storage
-            .with_query_conn(
+            .with_query_execution(
                 &self.interactive_memory_limit,
                 self.interactive_timeout,
+                self.execution.as_deref(),
                 |conn, prefix| {
                     let mut stmt = conn.prepare(&sql.replace("{prefix}", prefix))?;
                     let rows = stmt.query_map([], |row| {
@@ -206,9 +225,10 @@ impl QueryEngine {
             plan.limit + 1
         );
         let rows = storage
-            .with_query_conn(
+            .with_query_execution(
                 &self.interactive_memory_limit,
                 self.interactive_timeout,
+                self.execution.as_deref(),
                 |conn, prefix| {
                     let mut stmt = conn.prepare(&sql.replace("{prefix}", prefix))?;
                     let mapped = stmt.query_map([], |row| {

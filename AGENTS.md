@@ -6,7 +6,7 @@ This file is durable guidance for coding agents working in this repository. Keep
 
 canardstack is a single-binary, experimental observability query server written in Rust. It attaches DuckDB to DuckLake tables populated by an external writer, usually `duckdb-otlp`, and exposes bounded Prometheus, Loki, and Tempo-compatible HTTP APIs for Grafana-style clients.
 
-There is exactly one binary (`canardstack`), one synchronous std-library HTTP server, and one DuckDB process inside canardstack. There is no async runtime, no OTLP ingest endpoint, no OTLP/gRPC endpoint, no Kafka, no bundled catalog service, and no separate hot store. The optional `tls` cargo feature (deps `rustls` + `rcgen`, off by default, enabled in the Docker image) adds a synchronous in-binary TLS terminator for the public `serve` endpoint.
+There is exactly one binary (`canardstack`), one Axum/Hyper HTTP server on Tokio, and one embedded DuckDB instance inside canardstack. DuckDB execution remains synchronous and runs in bounded blocking tasks. There is no OTLP ingest endpoint, no OTLP/gRPC endpoint, no Kafka, no bundled catalog service, and no separate hot store. The optional `tls` cargo feature (off by default, enabled in the Docker image) serves TLS directly on the public listener through tokio-rustls.
 
 ## Commands
 
@@ -64,7 +64,7 @@ Storage signals are `Logs`, `Spans`, `MetricGauge`, and `MetricSum`. Histograms 
 - `src/lib.rs` - re-exports `AppState` and `Config`; defines `log_event` and `LockExt::lock_or_poisoned`.
 - `src/app.rs` - wires long-lived components into shared `Arc<AppState>`.
 - `src/config.rs` - reads `CANARDSTACK_*` env vars into one `Config`; startup calls `Config::validate()`.
-- `src/http.rs` and `src/http/` - hand-rolled std-library HTTP/1.1 server, routing, auth, parsing, and responses.
+- `src/http.rs` and `src/http/` - Axum/Hyper HTTP/1.1 transport, routing, auth, and responses.
 - `src/validation.rs` - shared auth, request bounds, `ApiError`, and error envelopes.
 - `src/signal.rs` - shared `StorageSignal` physical signal/table vocabulary.
 - `src/admission_control.rs` - cheap/heavy query admission.
@@ -79,8 +79,10 @@ Storage signals are `Logs`, `Spans`, `MetricGauge`, and `MetricSum`. Histograms 
 
 ## Load-Bearing Constraints
 
-- Keep the code synchronous. Do not add `tokio`, `async fn`, gRPC, Kafka, a second binary, or another long-running service unless the task explicitly changes the architecture.
-- Use OS threads plus `Arc<Mutex<_>>`. Prefer `LockExt::lock_or_poisoned()` over `.lock().unwrap()` for shared state.
+- Keep blocking DuckDB/storage work off Tokio runtime workers. Acquire bounded admission before `spawn_blocking`, and keep its owned permit until the blocking operation actually finishes, including after cancellation or an HTTP timeout.
+- Use async semaphores for admission waits. Keep ordinary mutexes for short synchronous state access; never hold a std mutex guard across `.await`. Prefer `LockExt::lock_or_poisoned()` over `.lock().unwrap()` for shared state.
+- Keep hosting-platform adaptation in deployment configuration or launch scripts, not in application configuration or query code.
+- Do not add gRPC, Kafka, a second binary, or another long-running service unless the task explicitly changes the architecture.
 - Keep query routes bounded by time range, row limit, timeout, DuckDB memory limit, and concurrency caps through `QueryEngine`.
 - Do not expose arbitrary SQL through the compatibility APIs. Direct SQL is intentionally an external DuckDB CLI / MotherDuck path.
 - Preserve the Prometheus/Loki error envelope shape: `{"status":"error","errorType":"...","error":"..."}`.
