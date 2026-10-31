@@ -76,8 +76,10 @@ services:
       ducklake-catalog:
         condition: service_started
     command:
-      - OPENSSL-LISTEN:9494,bind=0.0.0.0,reuseaddr,fork,cert=/certs/quack.crt,key=/certs/quack.key,verify=0
-      - TCP:ducklake-catalog:9495
+      # nodelay on both legs: DuckLake makes many small sequential catalog requests
+      # per query, and without it Nagle + delayed ACK adds ~40 ms to each of them.
+      - OPENSSL-LISTEN:9494,bind=0.0.0.0,reuseaddr,fork,cert=/certs/quack.crt,key=/certs/quack.key,verify=0,nodelay
+      - TCP:ducklake-catalog:9495,nodelay
     volumes:
       - quack-certs:/certs:ro
     restart: unless-stopped
