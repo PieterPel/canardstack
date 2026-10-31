@@ -326,3 +326,21 @@ Workload: 5 services x 2,000 records per signal, 100 runs per query at 1 and 4 c
 - The ~310 ms per-query floor was the socat TLS proxy in front of the Quack catalog, not canardstack code. A DuckLake query makes ~8 small sequential catalog requests; without `nodelay` on both socat legs, Nagle plus delayed ACK added ~40 ms to each. Fixed in `compose.yaml` (and `bench/canardstack/compose.yaml`) with `nodelay`. Diagnosis: same native binary on plain loopback Quack 26 ms vs through the proxy 370 ms for an empty Loki query; after `nodelay`, the containerized stack went from 354 ms to 28 ms.
 - Rerun after the fix (same workload): canardstack p50 33-44 ms at 1 client for every intent, 69-160 ms at 4 clients, 0 wrong and 0 errors (the 4-client `sum_last` failures disappeared). Visibility 6-7 s for all signals. Victoria and LGTM remain 15-40x faster on the small queries (0.8-6 ms).
 - Open: the remaining ~30 ms is catalog round trips through the TLS hop (native binary on a plain relay: 13-20 ms; plain loopback: ~2 ms). A freshly created catalog with no data was much slower (200-360 ms per empty query) than the same stack after ingest; not explained. A deployment whose TLS terminator lacks TCP_NODELAY would see the same stall.
+
+### Results after the catalog and query optimizations (2026-10-31)
+
+Same workload (5 services x 2,000 records per signal), 3 trials per stack, 2 CPU / 3 GiB per stack enforced on the pod, 40 runs x 5 rounds per query after a warm-up round. All 36,000 runs were correct (0 wrong, 0 errors). Median p50 in ms at 1 client:
+
+| query | canardstack (Quack) | canardstack (Postgres) | canardstack (SQLite) | LGTM | Victoria |
+| --- | --- | --- | --- | --- | --- |
+| log lines (1,000 rows) | 30.4 | 11.0 | 9.8 | 6.4 | 13.0 |
+| log text filter | 27.1 | 7.5 | 6.5 | 3.1 | 1.2 |
+| gauge latest | 27.5 | 7.2 | 5.8 | 1.2 | 0.7 |
+| gauge range | 27.8 | 8.5 | 8.1 | 1.6 | 1.2 |
+| trace by id | 24.5 | 6.9 | 6.3 | 2.1 | 1.8 |
+
+- Cause of the old ~28 ms floor: not canardstack's Rust code. A query against Parquet-backed data makes 4-9 sequential catalog requests, and each Quack request costs ~2 ms (a trivial `SELECT 1` costs the same), so protocol overhead dominates. Reusing connections or pinning a snapshot does not reduce the request count. Flushing inlined data removes ~2 requests.
+- A Postgres catalog answers the same requests in well under 1 ms each: 3-4x faster end to end. `compose.postgres.yaml` runs the stack that way; `compose.yaml` still defaults to Quack.
+- SQLite is slightly faster than Postgres but needs the catalog created in WAL mode (the default journal mode makes the writer fail with "database is locked" at startup) and only works with writer and reader on the same host and local filesystem.
+- Rust changes: the per-query read transaction (bind and execute share one catalog snapshot), late materialization disabled on query connections (saves round trips on a remote catalog, costs ~3 ms on a 3M-row table), and log queries now project labels after the LIMIT (15.4 -> 10.1 ms on a local catalog). The Rust row collection, adaptation and serialization together cost ~1.3 ms for 1,000 rows.
+- Still open: `|=` log filtering uses ILIKE (case-insensitive, slow); Loki's `|=` is case-sensitive. Victoria's `trace_by_id` failed in 2 of 3 trials in an earlier suite (intermittent, not reproduced since). canardstack remains ~3-6x slower than LGTM/Victoria on small queries even with a local-speed catalog.
