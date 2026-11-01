@@ -15,4 +15,4 @@ site/node_modules/
 
 # benchmark harness
 bench/.venv/
-bench/__pycache__/
+__pycache__/
