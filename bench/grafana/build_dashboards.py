@@ -166,6 +166,100 @@ def results_dashboard(results: Dict[str, List[dict]]) -> dict:
                      time={"from": "now-6h", "to": "now"})
 
 
+
+# ---- side-by-side comparison --------------------------------------------------
+
+COMPARE = [
+    # (benchmark stack name, legend, prometheus uid, label, logs kind/uid, trace kind/uid)
+    ("canardstack-pg", "canardstack (Postgres)", "canardstack-pg-prometheus", "service_name",
+     ("loki", "canardstack-pg-loki"), ("tempo", "canardstack-pg-tempo")),
+    ("lgtm", "LGTM (Mimir)", "lgtm-mimir", "job", ("loki", "lgtm-loki"), ("tempo", "lgtm-tempo")),
+    ("victoria", "Victoria (VictoriaMetrics)", "victoria-metrics", '"service.name"',
+     ("victoria", "victoria-logs"), ("jaeger", "victoria-traces")),
+]
+
+
+def mixed_timeseries(pid: int, title: str, series: List[tuple], x: int, y: int, w: int, h: int) -> dict:
+    """One chart with a query per backend. If the backends agree the lines draw on top of each other."""
+    targets = []
+    for n, (legend, uid, expr) in enumerate(series):
+        d = ds("prometheus", uid)
+        targets.append({"refId": chr(65 + n), "datasource": d, "expr": expr, "range": True, "instant": False,
+                        "legendFormat": legend, "interval": "15s"})
+    return {"id": pid, "type": "timeseries", "title": title,
+            "datasource": {"type": "datasource", "uid": "-- Mixed --"},
+            "gridPos": {"x": x, "y": y, "w": w, "h": h}, "targets": targets,
+            "fieldConfig": {"defaults": {"custom": {"lineWidth": 2, "fillOpacity": 0, "showPoints": "never"}},
+                            "overrides": []}}
+
+
+def compare_dashboard(results: Dict[str, List[dict]]) -> dict:
+    present = [c for c in COMPARE if c[0] in results]
+    stacks = [c[0] for c in present]
+    first = results[stacks[0]][0]
+    queries = list(first["queries"][next(iter(first["queries"]))])
+    client_keys = sorted(first["queries"], key=lambda k: int(k.split("_")[1]))
+
+    def latency_csv(clients: str) -> str:
+        rows = []
+        for q in queries:
+            row = [q]
+            for s in stacks:
+                vals = [r["queries"][clients][q]["latency_ms"]["p50"] for r in results[s] if q in r["queries"].get(clients, {})]
+                row.append(cell(med(vals), 2))
+            rows.append(row)
+        return csv(["name"] + stacks, rows)
+
+    panels: List[dict] = []
+    panels.append({"id": 1, "type": "text", "title": "What this compares", "gridPos": {"x": 0, "y": 0, "w": 24, "h": 4},
+                   "options": {"mode": "markdown", "content":
+                               "The same deterministic workload (run id `demo`) queried from three backends: **canardstack** "
+                               "(Postgres catalog), **LGTM** (Loki, Mimir, Tempo) and **Victoria**. The top charts are the "
+                               "benchmark's measured latency (median across trials). Everything below is live data: where "
+                               "the backends agree, the overlay lines coincide. Grafana panel load time is not shown on "
+                               "purpose: it goes through Grafana's proxy once per refresh and cannot separate a 1 ms backend "
+                               "from a 10 ms one, so latency comes from the benchmark."}})
+    pid = 2
+    for n, ck in enumerate(client_keys[:2]):
+        panels.append(csv_panel(pid, f"Benchmark query latency p50 (ms), {ck.replace('_', ' ')} (log scale)", "barchart",
+                                latency_csv(ck), 12 * n, 4, 12, 8, unit="ms", log=True)); pid += 1
+    # latest values, side by side
+    for n, (_, legend, uid, label, _, _) in enumerate(present):
+        panels.append(stat(pid, f"Latest gauge: {legend}", uid, f'bench_gauge{{{label}="$service"}}', 8 * n, 12, 8, 4)); pid += 1
+    for n, (_, legend, uid, label, _, _) in enumerate(present):
+        panels.append(stat(pid, f"Latest counter: {legend}", uid, f'bench_requests{{{label}="$service"}}', 8 * n, 16, 8, 4)); pid += 1
+    # overlays
+    panels.append(mixed_timeseries(pid, "bench_gauge, all backends overlaid (a 0-6 sawtooth)",
+                                   [(legend, uid, f'bench_gauge{{{label}="$service"}}') for _, legend, uid, label, _, _ in present],
+                                   0, 20, 12, 9)); pid += 1
+    panels.append(mixed_timeseries(pid, "bench_requests, all backends overlaid (a counter reaching 2000)",
+                                   [(legend, uid, f'bench_requests{{{label}="$service"}}') for _, legend, uid, label, _, _ in present],
+                                   12, 20, 12, 9)); pid += 1
+    # logs and traces, one panel per backend
+    for row_y, title, error_only in ((29, "Logs", False), (39, 'Logs containing "error"', True)):
+        for n, (_, legend, _, _, (kind, uid), _) in enumerate(present):
+            if kind == "loki":
+                expr = '{service_name="$service"}' + (' |= "error"' if error_only else "")
+                panels.append(logs_loki(pid, f"{title}: {legend}", uid, expr, 8 * n, row_y, 8, 10))
+            else:
+                expr = '"service.name":"$service"' + (" error" if error_only else "")
+                panels.append(logs_victoria(pid, f"{title}: {legend}", uid, expr, 8 * n, row_y, 8, 10))
+            pid += 1
+    for n, (_, legend, _, _, _, (kind, uid)) in enumerate(present):
+        panels.append(trace_panel(pid, f"Trace by id: {legend}", kind, uid, 8 * n, 49, 8, 12)); pid += 1
+    sample_service, sample_trace = DEMO.service(0), DEMO.trace_id(0, DEMO.records - 1)
+    templating = {"list": [
+        {"type": "textbox", "name": "service", "label": "service", "query": sample_service,
+         "current": {"text": sample_service, "value": sample_service}, "options": []},
+        {"type": "textbox", "name": "trace_id", "label": "trace id", "query": sample_trace,
+         "current": {"text": sample_trace, "value": sample_trace}, "options": []},
+    ]}
+    d = dashboard("bench-compare", "Compare: canardstack vs LGTM vs Victoria", ["bench", "compare"], panels,
+                  templating=templating, time={"from": "now-3h", "to": "now"})
+    d["graphTooltip"] = 2  # shared tooltip across every chart
+    return d
+
+
 # ---- per-stack data dashboards -----------------------------------------------
 
 
@@ -300,6 +394,9 @@ def main() -> None:
         print(f"bench-results.json from {sum(len(v) for v in results.values())} result files")
     else:
         print(f"no results in {args.results}; skipping bench-results.json")
+    if results:
+        (out / "bench-compare.json").write_text(json.dumps(compare_dashboard(results), indent=2) + "\n")
+        print("bench-compare.json")
     for stack in STACKS:
         (out / f"bench-data-{stack}.json").write_text(json.dumps(data_dashboard(stack), indent=2) + "\n")
         print(f"bench-data-{stack}.json")

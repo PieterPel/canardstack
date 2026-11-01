@@ -25,6 +25,11 @@ image: `podman build -t canardstack:local .` from the repo root.
 
 - **Benchmark results**: the five-stack comparison (latency, throughput, ingest, visibility,
   correctness, resource use) from `bench/results/`, embedded as TestData CSV so it needs no plugin.
+- **Compare: canardstack vs LGTM vs Victoria**: the benchmark's latency bars for the three stacks on
+  top, then live panels of the same data from all three backends: latest values side by side,
+  mixed-datasource overlay charts (lines coincide when the backends agree), logs and traces. It does
+  not show Grafana panel load time: that goes through Grafana's proxy once per refresh and cannot
+  separate a 1 ms backend from a 10 ms one, so latency comes from the benchmark.
 - **Benchmark data: <stack>** (one per stack): the demo workload on that backend: logs, a gauge, a
   counter, an error filter and a trace, each queried with the stack's own datasource.
 

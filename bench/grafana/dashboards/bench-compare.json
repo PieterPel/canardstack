@@ -1,0 +1,897 @@
+{
+  "uid": "bench-compare",
+  "title": "Compare: canardstack vs LGTM vs Victoria",
+  "tags": [
+    "bench",
+    "compare"
+  ],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "refresh": "",
+  "panels": [
+    {
+      "id": 1,
+      "type": "text",
+      "title": "What this compares",
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 24,
+        "h": 4
+      },
+      "options": {
+        "mode": "markdown",
+        "content": "The same deterministic workload (run id `demo`) queried from three backends: **canardstack** (Postgres catalog), **LGTM** (Loki, Mimir, Tempo) and **Victoria**. The top charts are the benchmark's measured latency (median across trials). Everything below is live data: where the backends agree, the overlay lines coincide. Grafana panel load time is not shown on purpose: it goes through Grafana's proxy once per refresh and cannot separate a 1 ms backend from a 10 ms one, so latency comes from the benchmark."
+      }
+    },
+    {
+      "id": 2,
+      "type": "barchart",
+      "title": "Benchmark query latency p50 (ms), clients 1 (log scale)",
+      "description": "",
+      "datasource": {
+        "type": "grafana-testdata-datasource",
+        "uid": "testdata"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 4,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-testdata-datasource",
+            "uid": "testdata"
+          },
+          "scenarioId": "csv_content",
+          "csvContent": "name,canardstack-pg,lgtm,victoria\nlog_lines,11.02,4.14,11.69\nlog_error_lines,6.98,2.67,1.39\ngauge_range_max,6.41,1.21,0.84\ngauge_last,6.91,1.09,0.80\nsum_last,7.80,1.11,0.78\ngauge_points,9.73,1.51,1.05\ntrace_by_id,6.93,1.95,1.44"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "custom": {
+            "scaleDistribution": {
+              "type": "log",
+              "log": 10
+            },
+            "axisSoftMin": null,
+            "fillOpacity": 80
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "xField": "name",
+        "orientation": "auto",
+        "showValue": "auto",
+        "groupWidth": 0.75,
+        "barWidth": 0.95,
+        "stacking": "none",
+        "xTickLabelRotation": 0,
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 3,
+      "type": "barchart",
+      "title": "Benchmark query latency p50 (ms), clients 4 (log scale)",
+      "description": "",
+      "datasource": {
+        "type": "grafana-testdata-datasource",
+        "uid": "testdata"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 4,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-testdata-datasource",
+            "uid": "testdata"
+          },
+          "scenarioId": "csv_content",
+          "csvContent": "name,canardstack-pg,lgtm,victoria\nlog_lines,15.94,7.68,22.44\nlog_error_lines,10.24,4.12,3.27\ngauge_range_max,8.85,2.23,1.72\ngauge_last,24.07,2.03,1.64\nsum_last,27.71,1.89,1.69\ngauge_points,13.99,2.71,2.51\ntrace_by_id,8.85,4.07,2.73"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "custom": {
+            "scaleDistribution": {
+              "type": "log",
+              "log": 10
+            },
+            "axisSoftMin": null,
+            "fillOpacity": 80
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "xField": "name",
+        "orientation": "auto",
+        "showValue": "auto",
+        "groupWidth": 0.75,
+        "barWidth": 0.95,
+        "stacking": "none",
+        "xTickLabelRotation": 0,
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Latest gauge: canardstack (Postgres)",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "canardstack-pg-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 12,
+        "w": 8,
+        "h": 4
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "canardstack-pg-prometheus"
+          },
+          "expr": "bench_gauge{service_name=\"$service\"}",
+          "range": true,
+          "instant": false,
+          "legendFormat": "{{__name__}}",
+          "interval": "15s"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area"
+      }
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "Latest gauge: LGTM (Mimir)",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "lgtm-mimir"
+      },
+      "gridPos": {
+        "x": 8,
+        "y": 12,
+        "w": 8,
+        "h": 4
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "lgtm-mimir"
+          },
+          "expr": "bench_gauge{job=\"$service\"}",
+          "range": true,
+          "instant": false,
+          "legendFormat": "{{__name__}}",
+          "interval": "15s"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area"
+      }
+    },
+    {
+      "id": 6,
+      "type": "stat",
+      "title": "Latest gauge: Victoria (VictoriaMetrics)",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoria-metrics"
+      },
+      "gridPos": {
+        "x": 16,
+        "y": 12,
+        "w": 8,
+        "h": 4
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "victoria-metrics"
+          },
+          "expr": "bench_gauge{\"service.name\"=\"$service\"}",
+          "range": true,
+          "instant": false,
+          "legendFormat": "{{__name__}}",
+          "interval": "15s"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area"
+      }
+    },
+    {
+      "id": 7,
+      "type": "stat",
+      "title": "Latest counter: canardstack (Postgres)",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "canardstack-pg-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 16,
+        "w": 8,
+        "h": 4
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "canardstack-pg-prometheus"
+          },
+          "expr": "bench_requests{service_name=\"$service\"}",
+          "range": true,
+          "instant": false,
+          "legendFormat": "{{__name__}}",
+          "interval": "15s"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area"
+      }
+    },
+    {
+      "id": 8,
+      "type": "stat",
+      "title": "Latest counter: LGTM (Mimir)",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "lgtm-mimir"
+      },
+      "gridPos": {
+        "x": 8,
+        "y": 16,
+        "w": 8,
+        "h": 4
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "lgtm-mimir"
+          },
+          "expr": "bench_requests{job=\"$service\"}",
+          "range": true,
+          "instant": false,
+          "legendFormat": "{{__name__}}",
+          "interval": "15s"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area"
+      }
+    },
+    {
+      "id": 9,
+      "type": "stat",
+      "title": "Latest counter: Victoria (VictoriaMetrics)",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoria-metrics"
+      },
+      "gridPos": {
+        "x": 16,
+        "y": 16,
+        "w": 8,
+        "h": 4
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "victoria-metrics"
+          },
+          "expr": "bench_requests{\"service.name\"=\"$service\"}",
+          "range": true,
+          "instant": false,
+          "legendFormat": "{{__name__}}",
+          "interval": "15s"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area"
+      }
+    },
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "bench_gauge, all backends overlaid (a 0-6 sawtooth)",
+      "datasource": {
+        "type": "datasource",
+        "uid": "-- Mixed --"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 20,
+        "w": 12,
+        "h": 9
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "canardstack-pg-prometheus"
+          },
+          "expr": "bench_gauge{service_name=\"$service\"}",
+          "range": true,
+          "instant": false,
+          "legendFormat": "canardstack (Postgres)",
+          "interval": "15s"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "lgtm-mimir"
+          },
+          "expr": "bench_gauge{job=\"$service\"}",
+          "range": true,
+          "instant": false,
+          "legendFormat": "LGTM (Mimir)",
+          "interval": "15s"
+        },
+        {
+          "refId": "C",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "victoria-metrics"
+          },
+          "expr": "bench_gauge{\"service.name\"=\"$service\"}",
+          "range": true,
+          "instant": false,
+          "legendFormat": "Victoria (VictoriaMetrics)",
+          "interval": "15s"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 0,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 11,
+      "type": "timeseries",
+      "title": "bench_requests, all backends overlaid (a counter reaching 2000)",
+      "datasource": {
+        "type": "datasource",
+        "uid": "-- Mixed --"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 20,
+        "w": 12,
+        "h": 9
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "canardstack-pg-prometheus"
+          },
+          "expr": "bench_requests{service_name=\"$service\"}",
+          "range": true,
+          "instant": false,
+          "legendFormat": "canardstack (Postgres)",
+          "interval": "15s"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "lgtm-mimir"
+          },
+          "expr": "bench_requests{job=\"$service\"}",
+          "range": true,
+          "instant": false,
+          "legendFormat": "LGTM (Mimir)",
+          "interval": "15s"
+        },
+        {
+          "refId": "C",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "victoria-metrics"
+          },
+          "expr": "bench_requests{\"service.name\"=\"$service\"}",
+          "range": true,
+          "instant": false,
+          "legendFormat": "Victoria (VictoriaMetrics)",
+          "interval": "15s"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 0,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 12,
+      "type": "logs",
+      "title": "Logs: canardstack (Postgres)",
+      "datasource": {
+        "type": "loki",
+        "uid": "canardstack-pg-loki"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 29,
+        "w": 8,
+        "h": 10
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "canardstack-pg-loki"
+          },
+          "expr": "{service_name=\"$service\"}",
+          "queryType": "range",
+          "maxLines": 200
+        }
+      ],
+      "options": {
+        "showTime": true,
+        "sortOrder": "Ascending",
+        "wrapLogMessage": false,
+        "enableLogDetails": true,
+        "dedupStrategy": "none"
+      }
+    },
+    {
+      "id": 13,
+      "type": "logs",
+      "title": "Logs: LGTM (Mimir)",
+      "datasource": {
+        "type": "loki",
+        "uid": "lgtm-loki"
+      },
+      "gridPos": {
+        "x": 8,
+        "y": 29,
+        "w": 8,
+        "h": 10
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "lgtm-loki"
+          },
+          "expr": "{service_name=\"$service\"}",
+          "queryType": "range",
+          "maxLines": 200
+        }
+      ],
+      "options": {
+        "showTime": true,
+        "sortOrder": "Ascending",
+        "wrapLogMessage": false,
+        "enableLogDetails": true,
+        "dedupStrategy": "none"
+      }
+    },
+    {
+      "id": 14,
+      "type": "logs",
+      "title": "Logs: Victoria (VictoriaMetrics)",
+      "datasource": {
+        "type": "victoriametrics-logs-datasource",
+        "uid": "victoria-logs"
+      },
+      "gridPos": {
+        "x": 16,
+        "y": 29,
+        "w": 8,
+        "h": 10
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "victoriametrics-logs-datasource",
+            "uid": "victoria-logs"
+          },
+          "expr": "\"service.name\":\"$service\"",
+          "queryType": "instant",
+          "editorMode": "code",
+          "maxLines": 200
+        }
+      ],
+      "options": {
+        "showTime": true,
+        "sortOrder": "Ascending",
+        "wrapLogMessage": false
+      }
+    },
+    {
+      "id": 15,
+      "type": "logs",
+      "title": "Logs containing \"error\": canardstack (Postgres)",
+      "datasource": {
+        "type": "loki",
+        "uid": "canardstack-pg-loki"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 39,
+        "w": 8,
+        "h": 10
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "canardstack-pg-loki"
+          },
+          "expr": "{service_name=\"$service\"} |= \"error\"",
+          "queryType": "range",
+          "maxLines": 200
+        }
+      ],
+      "options": {
+        "showTime": true,
+        "sortOrder": "Ascending",
+        "wrapLogMessage": false,
+        "enableLogDetails": true,
+        "dedupStrategy": "none"
+      }
+    },
+    {
+      "id": 16,
+      "type": "logs",
+      "title": "Logs containing \"error\": LGTM (Mimir)",
+      "datasource": {
+        "type": "loki",
+        "uid": "lgtm-loki"
+      },
+      "gridPos": {
+        "x": 8,
+        "y": 39,
+        "w": 8,
+        "h": 10
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "lgtm-loki"
+          },
+          "expr": "{service_name=\"$service\"} |= \"error\"",
+          "queryType": "range",
+          "maxLines": 200
+        }
+      ],
+      "options": {
+        "showTime": true,
+        "sortOrder": "Ascending",
+        "wrapLogMessage": false,
+        "enableLogDetails": true,
+        "dedupStrategy": "none"
+      }
+    },
+    {
+      "id": 17,
+      "type": "logs",
+      "title": "Logs containing \"error\": Victoria (VictoriaMetrics)",
+      "datasource": {
+        "type": "victoriametrics-logs-datasource",
+        "uid": "victoria-logs"
+      },
+      "gridPos": {
+        "x": 16,
+        "y": 39,
+        "w": 8,
+        "h": 10
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "victoriametrics-logs-datasource",
+            "uid": "victoria-logs"
+          },
+          "expr": "\"service.name\":\"$service\" error",
+          "queryType": "instant",
+          "editorMode": "code",
+          "maxLines": 200
+        }
+      ],
+      "options": {
+        "showTime": true,
+        "sortOrder": "Ascending",
+        "wrapLogMessage": false
+      }
+    },
+    {
+      "id": 18,
+      "type": "traces",
+      "title": "Trace by id: canardstack (Postgres)",
+      "datasource": {
+        "type": "tempo",
+        "uid": "canardstack-pg-tempo"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 49,
+        "w": 8,
+        "h": 12
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "tempo",
+            "uid": "canardstack-pg-tempo"
+          },
+          "query": "$trace_id",
+          "queryType": "traceql"
+        }
+      ]
+    },
+    {
+      "id": 19,
+      "type": "traces",
+      "title": "Trace by id: LGTM (Mimir)",
+      "datasource": {
+        "type": "tempo",
+        "uid": "lgtm-tempo"
+      },
+      "gridPos": {
+        "x": 8,
+        "y": 49,
+        "w": 8,
+        "h": 12
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "tempo",
+            "uid": "lgtm-tempo"
+          },
+          "query": "$trace_id",
+          "queryType": "traceql"
+        }
+      ]
+    },
+    {
+      "id": 20,
+      "type": "traces",
+      "title": "Trace by id: Victoria (VictoriaMetrics)",
+      "datasource": {
+        "type": "jaeger",
+        "uid": "victoria-traces"
+      },
+      "gridPos": {
+        "x": 16,
+        "y": 49,
+        "w": 8,
+        "h": 12
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "jaeger",
+            "uid": "victoria-traces"
+          },
+          "query": "$trace_id",
+          "queryType": ""
+        }
+      ]
+    }
+  ],
+  "templating": {
+    "list": [
+      {
+        "type": "textbox",
+        "name": "service",
+        "label": "service",
+        "query": "svc-demo-0",
+        "current": {
+          "text": "svc-demo-0",
+          "value": "svc-demo-0"
+        },
+        "options": []
+      },
+      {
+        "type": "textbox",
+        "name": "trace_id",
+        "label": "trace id",
+        "query": "e3869b4b2e271849cf9a4894690bc958",
+        "current": {
+          "text": "e3869b4b2e271849cf9a4894690bc958",
+          "value": "e3869b4b2e271849cf9a4894690bc958"
+        },
+        "options": []
+      }
+    ]
+  },
+  "time": {
+    "from": "now-3h",
+    "to": "now"
+  },
+  "links": [
+    {
+      "type": "dashboards",
+      "title": "Benchmark dashboards",
+      "tags": [
+        "bench"
+      ],
+      "asDropdown": true,
+      "includeVars": false,
+      "keepTime": false
+    }
+  ],
+  "graphTooltip": 2
+}
