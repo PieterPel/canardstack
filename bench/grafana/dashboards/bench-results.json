@@ -33,7 +33,7 @@
             "uid": "testdata"
           },
           "scenarioId": "csv_content",
-          "csvContent": "name,canardstack,canardstack-pg,canardstack-sqlite,lgtm,victoria\nlog_lines,30.40,11.03,9.80,6.40,13.03\nlog_error_lines,27.09,7.50,6.52,3.06,1.16\ngauge_last,27.51,7.19,5.81,1.21,0.71\nsum_last,30.73,8.16,7.75,1.14,0.97\ngauge_points,27.80,8.49,8.14,1.59,1.25\ntrace_by_id,24.45,6.86,6.34,2.09,1.80"
+          "csvContent": "name,canardstack,canardstack-pg,canardstack-sqlite,lgtm,victoria\nlog_lines,28.74,11.02,10.10,4.14,11.69\nlog_error_lines,25.52,6.98,6.82,2.67,1.39\ngauge_range_max,25.26,6.41,5.88,1.21,0.84\ngauge_last,25.08,6.91,5.64,1.09,0.80\nsum_last,30.31,7.80,7.43,1.11,0.78\ngauge_points,27.94,9.73,9.32,1.51,1.05\ntrace_by_id,24.82,6.93,6.08,1.95,1.44"
         }
       ],
       "fieldConfig": {
@@ -92,7 +92,7 @@
             "uid": "testdata"
           },
           "scenarioId": "csv_content",
-          "csvContent": "name,canardstack,canardstack-pg,canardstack-sqlite,lgtm,victoria\nlog_lines,61.82,19.08,14.62,10.03,26.90\nlog_error_lines,55.15,13.53,9.01,5.25,3.34\ngauge_last,101.95,25.44,19.96,2.12,1.52\nsum_last,111.35,29.31,28.35,1.98,1.43\ngauge_points,66.55,12.85,14.17,2.87,2.42\ntrace_by_id,62.34,9.93,9.98,4.41,2.92"
+          "csvContent": "name,canardstack,canardstack-pg,canardstack-sqlite,lgtm,victoria\nlog_lines,69.63,15.94,15.81,7.68,22.44\nlog_error_lines,62.83,10.24,10.33,4.12,3.27\ngauge_range_max,64.38,8.85,7.84,2.23,1.72\ngauge_last,95.41,24.07,18.32,2.03,1.64\nsum_last,114.51,27.71,26.43,1.89,1.69\ngauge_points,66.44,13.99,15.52,2.71,2.51\ntrace_by_id,63.69,8.85,9.47,4.07,2.73"
         }
       ],
       "fieldConfig": {
@@ -151,7 +151,7 @@
             "uid": "testdata"
           },
           "scenarioId": "csv_content",
-          "csvContent": "name,canardstack,canardstack-pg,canardstack-sqlite,lgtm,victoria\nlog_lines,47.47,14.13,12.69,11.05,16.92\nlog_error_lines,36.75,10.93,8.13,5.34,1.88\ngauge_last,39.78,12.19,8.72,2.13,1.55\nsum_last,41.71,10.30,14.33,1.86,1.91\ngauge_points,41.91,10.68,10.28,2.46,2.03\ntrace_by_id,31.48,9.21,8.63,3.61,3.01"
+          "csvContent": "name,canardstack,canardstack-pg,canardstack-sqlite,lgtm,victoria\nlog_lines,35.42,14.17,11.98,6.55,15.41\nlog_error_lines,32.25,8.92,8.89,4.14,2.39\ngauge_range_max,37.67,9.35,7.42,1.71,1.12\ngauge_last,31.95,9.23,7.46,1.64,1.15\nsum_last,39.61,9.70,9.16,1.74,1.14\ngauge_points,34.07,12.81,12.08,2.47,1.65\ntrace_by_id,30.24,9.35,7.51,3.70,2.05"
         }
       ],
       "fieldConfig": {
@@ -210,7 +210,7 @@
             "uid": "testdata"
           },
           "scenarioId": "csv_content",
-          "csvContent": "name,canardstack,canardstack-pg,canardstack-sqlite,lgtm,victoria\nlog_lines,32,86,98,138,73\nlog_error_lines,35,127,146,287,708\ngauge_last,37,122,161,748,1179\nsum_last,30,121,121,776,864\ngauge_points,34,112,116,522,641\ntrace_by_id,39,140,149,443,533"
+          "csvContent": "name,canardstack,canardstack-pg,canardstack-sqlite,lgtm,victoria\nlog_lines,33,84,94,219,81\nlog_error_lines,38,138,143,328,592\ngauge_range_max,40,146,161,720,1032\ngauge_last,38,144,175,798,1052\nsum_last,32,127,130,796,1114\ngauge_points,35,96,102,523,698\ntrace_by_id,41,137,164,474,636"
         }
       ],
       "fieldConfig": {
@@ -268,7 +268,7 @@
             "uid": "testdata"
           },
           "scenarioId": "csv_content",
-          "csvContent": "name,canardstack,canardstack-pg,canardstack-sqlite,lgtm,victoria\nlogs,71122,71257,67318,81536,75547\nmetrics,174930,177037,165976,166346,165724\ntraces,66514,67786,63834,66357,61209"
+          "csvContent": "name,canardstack,canardstack-pg,canardstack-sqlite,lgtm,victoria\nlogs,74085,86622,79774,75206,25799\nmetrics,164061,169939,156349,155325,164815\ntraces,68306,69424,67833,63129,63965"
         }
       ],
       "fieldConfig": {
@@ -326,7 +326,7 @@
             "uid": "testdata"
           },
           "scenarioId": "csv_content",
-          "csvContent": "name,canardstack,canardstack-pg,canardstack-sqlite,lgtm,victoria\nlogs,6.55,5.30,5.83,0.51,2.09\nmetrics,5.86,5.37,5.82,0.41,10.04\ntraces,5.53,5.06,5.54,0.10,22.19"
+          "csvContent": "name,canardstack,canardstack-pg,canardstack-sqlite,lgtm,victoria\nlogs,5.75,5.53,5.81,0.53,1.97\nmetrics,6.15,5.58,5.80,0.43,13.93\ntraces,4.99,5.00,5.00,0.10,22.71"
         }
       ],
       "fieldConfig": {
@@ -385,7 +385,7 @@
             "uid": "testdata"
           },
           "scenarioId": "csv_content",
-          "csvContent": "clients,stack,ok / runs,wrong,errors\nclients 1,canardstack,3600/3600,0,0\nclients 1,canardstack-pg,3600/3600,0,0\nclients 1,canardstack-sqlite,3600/3600,0,0\nclients 1,lgtm,3600/3600,0,0\nclients 1,victoria,3600/3600,0,0\nclients 4,canardstack,3600/3600,0,0\nclients 4,canardstack-pg,3600/3600,0,0\nclients 4,canardstack-sqlite,3600/3600,0,0\nclients 4,lgtm,3600/3600,0,0\nclients 4,victoria,3600/3600,0,0"
+          "csvContent": "clients,stack,ok / runs,wrong,errors\nclients 1,canardstack,4200/4200,0,0\nclients 1,canardstack-pg,4200/4200,0,0\nclients 1,canardstack-sqlite,4200/4200,0,0\nclients 1,lgtm,4200/4200,0,0\nclients 1,victoria,4200/4200,0,0\nclients 4,canardstack,4200/4200,0,0\nclients 4,canardstack-pg,4200/4200,0,0\nclients 4,canardstack-sqlite,3866/4200,0,334\nclients 4,lgtm,4200/4200,0,0\nclients 4,victoria,4200/4200,0,0"
         }
       ],
       "fieldConfig": {
@@ -420,7 +420,7 @@
             "uid": "testdata"
           },
           "scenarioId": "csv_content",
-          "csvContent": "stack,container,cpu mean %,cpu max %,mem max MB\ncanardstack,canardstack_1,21.3,31.7,74\ncanardstack,ducklake-catalog_1,14.2,20.5,157\ncanardstack,ingest_1,1.4,2.1,82\ncanardstack,quack-tls_1,30.7,47.5,10\ncanardstack-pg,canardstack_1,19.3,42.5,86\ncanardstack-pg,ingest_1,1.1,1.2,84\ncanardstack-pg,postgres_1,2.5,4.0,46\ncanardstack-sqlite,canardstack_1,23.5,40.0,82\ncanardstack-sqlite,ingest_1,2.3,3.0,98\nlgtm,loki_1,6.8,11.0,129\nlgtm,mimir_1,1.2,2.6,72\nlgtm,tempo_1,1.0,2.9,64\nvictoria,victoria-logs_1,2.8,15.3,47\nvictoria,victoria-metrics_1,0.3,0.9,49\nvictoria,victoria-traces_1,0.7,1.6,94"
+          "csvContent": "stack,container,cpu mean %,cpu max %,mem max MB\ncanardstack,canardstack_1,22.6,33.8,54\ncanardstack,ducklake-catalog_1,14.7,21.5,157\ncanardstack,ingest_1,1.2,2.0,85\ncanardstack,quack-tls_1,31.9,50.4,11\ncanardstack-pg,canardstack_1,20.6,43.0,81\ncanardstack-pg,ingest_1,1.1,1.2,81\ncanardstack-pg,postgres_1,2.1,3.4,43\ncanardstack-sqlite,canardstack_1,23.5,40.9,85\ncanardstack-sqlite,ingest_1,2.3,3.0,102\nlgtm,loki_1,4.5,8.2,131\nlgtm,mimir_1,1.3,3.2,76\nlgtm,tempo_1,1.0,2.9,65\nvictoria,victoria-logs_1,2.6,14.4,49\nvictoria,victoria-metrics_1,0.3,0.9,46\nvictoria,victoria-traces_1,0.5,1.4,90"
         }
       ],
       "fieldConfig": {
@@ -444,7 +444,7 @@
       },
       "options": {
         "mode": "markdown",
-        "content": "**Workload** seed 1, 5 services x 2000 records per signal.  \n**Trials** canardstack: 3, canardstack-pg: 3, canardstack-sqlite: 3, lgtm: 3, victoria: 3. Every number is the median across trials.  \n**Budget** 2 CPUs / 3 GiB per stack, enforced on the whole pod (--infra=false --share= --cpus=2 --memory=3g).  \n**Git** `3eb324c196` (dirty).  \n**Background CPU** outside the stack: mean 10.3%, max 44.8%.  \n\nSingle-node local containers; Grafana and collectors are not in the measured path; query languages differ per stack. See `bench/README.md`."
+        "content": "**Workload** seed 1, 5 services x 2000 records per signal.  \n**Trials** canardstack: 3, canardstack-pg: 3, canardstack-sqlite: 3, lgtm: 3, victoria: 3. Every number is the median across trials.  \n**Budget** 2 CPUs / 3 GiB per stack, enforced on the whole pod (--infra=false --share= --cpus=2 --memory=3g).  \n**Git** `f5f11cb46d` (dirty).  \n**Background CPU** outside the stack: mean 5.0%, max 5.0%.  \n\nSingle-node local containers; Grafana and collectors are not in the measured path; query languages differ per stack. See `bench/README.md`."
       }
     }
   ],

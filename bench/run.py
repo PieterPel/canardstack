@@ -221,16 +221,22 @@ def ingest(backend: Backend, workload: Workload, concurrency: int) -> Dict[str, 
     return results
 
 
+# First failure text per query id, so a failed run says why (reset per query in query_suite).
+FIRST_ERROR: Dict[str, str] = {}
+
+
 def run_once(query: Query, workload: Workload, i: int) -> Tuple[str, float, Optional[float]]:
     url, headers = query.build(workload, i)
     started = time.perf_counter()
     status, body = http_get(url, headers)
     latency = (time.perf_counter() - started) * 1000
     if status != 200:
+        FIRST_ERROR.setdefault(query.id, f"HTTP {status}: {body[:200]}")
         return "error", latency, None
     try:
         observed = query.parse(body)
-    except Exception:
+    except Exception as err:
+        FIRST_ERROR.setdefault(query.id, f"unparseable response ({err!r}): {body[:200]}")
         return "error", latency, None
     expected = query.expected(workload, i)
     return ("ok" if observed == expected else "wrong"), latency, observed
@@ -292,6 +298,7 @@ def query_suite(backend: Backend, workload: Workload, repeats: int, clients: int
                 list(pool.map(task, range(repeats)))
             return time.perf_counter() - started
 
+        FIRST_ERROR.pop(query.id, None)
         for _ in range(warmup_rounds):
             one_round([])
         for _ in range(rounds):
@@ -311,6 +318,7 @@ def query_suite(backend: Backend, workload: Workload, repeats: int, clients: int
             "wrong": sum(1 for k, _, _ in outcomes if k == "wrong"),
             "errors": sum(1 for k, _, _ in outcomes if k == "error"),
             "first_wrong": first_wrong[0] if first_wrong else None,
+            "first_error": FIRST_ERROR.get(query.id),
             "latency_ms": summarize(ok),
             "round_p50_ms": round_p50,
             "throughput_qps": statistics.median(

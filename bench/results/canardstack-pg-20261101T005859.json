@@ -1,0 +1,456 @@
+{
+  "stack": "canardstack-pg",
+  "started": "2026-11-01T00:58:59+0100",
+  "workload": {
+    "seed": 1,
+    "services": 5,
+    "records": 2000,
+    "totals": {
+      "logs": 10000,
+      "gauge_points": 10000,
+      "sum_points": 10000,
+      "spans": 20000
+    }
+  },
+  "environment": {
+    "host": "macOS-26.5.1-arm64-arm-64bit",
+    "podman_vm": "applehv 4 CPU / 8 GiB",
+    "images": "# Pinned image tags for the comparison. Bump deliberately and record in results.\nLOKI_IMAGE=docker.io/grafana/loki:3.7.9\nTEMPO_IMAGE=docker.io/grafana/tempo:2.9.5\nMIMIR_IMAGE=docker.io/grafana/mimir:2.17.9\nVM_IMAGE=docker.io/victoriametrics/victoria-metrics:v1.155.0\nVL_IMAGE=docker.io/victoriametrics/victoria-logs:v1.53.0\nVT_IMAGE=docker.io/victoriametrics/victoria-traces:v0.12.1\nDUCKDB_OTLP_IMAGE=ghcr.io/smithclay/duckdb-otlp:0.7.3\nGRAFANA_IMAGE=docker.io/grafana/grafana-oss:12.4.3\nGRAFANA_RENDERER_IMAGE=docker.io/grafana/grafana-image-renderer:v5.12.10\nPOSTGRES_IMAGE=docker.io/library/postgres:17\n",
+    "image_ids": {
+      "bench-canardstack-pg_postgres_1": "bbdfc26f27f4",
+      "bench-canardstack-pg_ingest_1": "8c73ede94eae",
+      "bench-canardstack-pg_canardstack_1": "728e084a6c75"
+    },
+    "git": {
+      "sha": "f5f11cb46db0cb50b9a5310c571d2cc39845dc6f",
+      "dirty": true
+    },
+    "resource_budget": "2 CPUs / 3 GiB per stack, enforced on the whole pod (--infra=false --share= --cpus=2 --memory=3g)",
+    "rounds": {
+      "warmup": 1,
+      "timed": 5,
+      "runs_per_round": 40
+    },
+    "background_cpu_pct_mean": 4.881773835920177,
+    "note": "one benchmark stack at a time on the same VM; containers outside the stack (a developer compose stack) may be running, see background_cpu_pct_mean",
+    "grafana_in_path": false,
+    "collector_in_path": false
+  },
+  "unsupported": {},
+  "ingest": {
+    "logs": {
+      "batches": 50,
+      "statuses": {
+        "202": 50
+      },
+      "seconds": 0.1094447090000017,
+      "accepted_rows_per_s": 91370.33750987309,
+      "finished_at": 1793491111.4428039
+    },
+    "metrics": {
+      "batches": 50,
+      "statuses": {
+        "202": 50
+      },
+      "seconds": 0.13629916600000058,
+      "accepted_rows_per_s": 146736.0409233899,
+      "finished_at": 1793491111.586349
+    },
+    "traces": {
+      "batches": 50,
+      "statuses": {
+        "202": 50
+      },
+      "seconds": 0.2880837499999984,
+      "accepted_rows_per_s": 69424.25596723214,
+      "finished_at": 1793491111.9022982
+    }
+  },
+  "visibility": {
+    "logs": {
+      "visible_seconds_after_accept": 5.641818284988403,
+      "timed_out": false
+    },
+    "metrics": {
+      "visible_seconds_after_accept": 5.662564992904663,
+      "timed_out": false
+    },
+    "traces": {
+      "visible_seconds_after_accept": 5.384706735610962,
+      "timed_out": false
+    }
+  },
+  "queries": {
+    "clients_1": {
+      "log_lines": {
+        "signal": "logs",
+        "clients": 1,
+        "rounds": 5,
+        "runs": 200,
+        "ok": 200,
+        "wrong": 0,
+        "errors": 0,
+        "first_wrong": null,
+        "latency_ms": {
+          "p50": 10.236167000002183,
+          "p95": 12.6197919999953,
+          "p99": 14.771125000009988,
+          "max": 17.698375000009037,
+          "mean": 10.469777960000215
+        },
+        "round_p50_ms": [
+          9.892708499997127,
+          9.939978999994992,
+          10.040166499997838,
+          10.318812499996,
+          11.139249999999379
+        ],
+        "throughput_qps": 95.6306362306215
+      },
+      "log_error_lines": {
+        "signal": "logs",
+        "clients": 1,
+        "rounds": 5,
+        "runs": 200,
+        "ok": 200,
+        "wrong": 0,
+        "errors": 0,
+        "first_wrong": null,
+        "latency_ms": {
+          "p50": 6.7551249999979746,
+          "p95": 8.595999999997161,
+          "p99": 12.387750000002029,
+          "max": 21.948582999996802,
+          "mean": 7.024435000000223
+        },
+        "round_p50_ms": [
+          7.271541500003309,
+          6.70510399999813,
+          6.541896000001657,
+          6.702895999993075,
+          6.622583499996892
+        ],
+        "throughput_qps": 139.4676233513335
+      },
+      "gauge_range_max": {
+        "signal": "metrics",
+        "clients": 1,
+        "rounds": 5,
+        "runs": 200,
+        "ok": 200,
+        "wrong": 0,
+        "errors": 0,
+        "first_wrong": null,
+        "latency_ms": {
+          "p50": 6.409915999995519,
+          "p95": 9.347040999998057,
+          "p99": 15.10720899999285,
+          "max": 18.144458000008967,
+          "mean": 6.782334765000826
+        },
+        "round_p50_ms": [
+          5.475521000008143,
+          5.84527099999832,
+          6.7427709999989816,
+          7.100145500004373,
+          6.571958000009204
+        ],
+        "throughput_qps": 146.4008496695358
+      },
+      "gauge_last": {
+        "signal": "metrics",
+        "clients": 1,
+        "rounds": 5,
+        "runs": 200,
+        "ok": 200,
+        "wrong": 0,
+        "errors": 0,
+        "first_wrong": null,
+        "latency_ms": {
+          "p50": 6.27862500000731,
+          "p95": 8.338082999998164,
+          "p99": 10.391624999996907,
+          "max": 12.22679199999277,
+          "mean": 6.475787074999245
+        },
+        "round_p50_ms": [
+          5.968666500002939,
+          6.471416500005489,
+          6.450354000001823,
+          6.329000000000917,
+          6.170666999999241
+        ],
+        "throughput_qps": 149.1570764446295
+      },
+      "sum_last": {
+        "signal": "metrics",
+        "clients": 1,
+        "rounds": 5,
+        "runs": 200,
+        "ok": 200,
+        "wrong": 0,
+        "errors": 0,
+        "first_wrong": null,
+        "latency_ms": {
+          "p50": 8.235625000011737,
+          "p95": 10.616209000005483,
+          "p99": 12.280917000012437,
+          "max": 15.679166999987615,
+          "mean": 8.42282164500034
+        },
+        "round_p50_ms": [
+          8.719083500004388,
+          8.312895500004913,
+          8.444062000002361,
+          8.293749999992883,
+          7.603187500002662
+        ],
+        "throughput_qps": 114.58817238588746
+      },
+      "gauge_points": {
+        "signal": "metrics",
+        "clients": 1,
+        "rounds": 5,
+        "runs": 200,
+        "ok": 200,
+        "wrong": 0,
+        "errors": 0,
+        "first_wrong": null,
+        "latency_ms": {
+          "p50": 9.845957999999655,
+          "p95": 13.44491599999742,
+          "p99": 17.955083000003924,
+          "max": 28.233875000012176,
+          "mean": 10.293131014999657
+        },
+        "round_p50_ms": [
+          8.93160399999715,
+          9.30047949999846,
+          10.227124499998297,
+          11.009834000006435,
+          10.246312499994303
+        ],
+        "throughput_qps": 93.81366319780832
+      },
+      "trace_by_id": {
+        "signal": "traces",
+        "clients": 1,
+        "rounds": 5,
+        "runs": 200,
+        "ok": 200,
+        "wrong": 0,
+        "errors": 0,
+        "first_wrong": null,
+        "latency_ms": {
+          "p50": 6.294167000007178,
+          "p95": 8.479291000000444,
+          "p99": 10.097291000008113,
+          "max": 10.93270799999857,
+          "mean": 6.477162705000764
+        },
+        "round_p50_ms": [
+          6.799437499999783,
+          6.445291999995106,
+          6.1585624999977995,
+          6.303124999995191,
+          6.0152085000027
+        ],
+        "throughput_qps": 154.92166773175276
+      }
+    },
+    "clients_4": {
+      "log_lines": {
+        "signal": "logs",
+        "clients": 4,
+        "rounds": 5,
+        "runs": 200,
+        "ok": 200,
+        "wrong": 0,
+        "errors": 0,
+        "first_wrong": null,
+        "latency_ms": {
+          "p50": 18.7600419999967,
+          "p95": 31.874541999997064,
+          "p99": 39.77762500001347,
+          "max": 40.94787500000052,
+          "mean": 19.75826766499921
+        },
+        "round_p50_ms": [
+          15.471916500004568,
+          17.84816700000391,
+          21.760125499994842,
+          19.781729499989353,
+          20.034166999998604
+        ],
+        "throughput_qps": 185.36844420514095
+      },
+      "log_error_lines": {
+        "signal": "logs",
+        "clients": 4,
+        "rounds": 5,
+        "runs": 200,
+        "ok": 200,
+        "wrong": 0,
+        "errors": 0,
+        "first_wrong": null,
+        "latency_ms": {
+          "p50": 12.066082999993455,
+          "p95": 21.654959000002805,
+          "p99": 25.692249999991645,
+          "max": 30.164958000000297,
+          "mean": 13.01681439000035
+        },
+        "round_p50_ms": [
+          11.896853500005022,
+          13.24735399999355,
+          11.042063000004987,
+          11.005625000002794,
+          16.320458499997414
+        ],
+        "throughput_qps": 314.70292044313004
+      },
+      "gauge_range_max": {
+        "signal": "metrics",
+        "clients": 4,
+        "rounds": 5,
+        "runs": 200,
+        "ok": 200,
+        "wrong": 0,
+        "errors": 0,
+        "first_wrong": null,
+        "latency_ms": {
+          "p50": 10.60695799999678,
+          "p95": 17.441916999999307,
+          "p99": 20.311040999999364,
+          "max": 21.672749999993357,
+          "mean": 11.29419751999947
+        },
+        "round_p50_ms": [
+          9.949145999996745,
+          10.650374999997325,
+          11.809791499999278,
+          10.058479000001341,
+          10.009604499998659
+        ],
+        "throughput_qps": 335.6206833831116
+      },
+      "gauge_last": {
+        "signal": "metrics",
+        "clients": 4,
+        "rounds": 5,
+        "runs": 200,
+        "ok": 200,
+        "wrong": 0,
+        "errors": 0,
+        "first_wrong": null,
+        "latency_ms": {
+          "p50": 33.511207999993076,
+          "p95": 89.27012499999876,
+          "p99": 208.6697919999949,
+          "max": 247.54283299999713,
+          "mean": 41.153132915000086
+        },
+        "round_p50_ms": [
+          27.891541499997174,
+          47.94656250000173,
+          35.645270499998105,
+          35.1460624999973,
+          27.909624999999494
+        ],
+        "throughput_qps": 112.21824005822097
+      },
+      "sum_last": {
+        "signal": "metrics",
+        "clients": 4,
+        "rounds": 5,
+        "runs": 200,
+        "ok": 200,
+        "wrong": 0,
+        "errors": 0,
+        "first_wrong": null,
+        "latency_ms": {
+          "p50": 29.621208999998316,
+          "p95": 37.60837500000491,
+          "p99": 39.565500000009024,
+          "max": 44.68808299999694,
+          "mean": 29.499004589999842
+        },
+        "round_p50_ms": [
+          30.93147949999775,
+          28.099061999995456,
+          26.63708299999712,
+          31.7744579999939,
+          31.681541499999355
+        ],
+        "throughput_qps": 126.09020427646847
+      },
+      "gauge_points": {
+        "signal": "metrics",
+        "clients": 4,
+        "rounds": 5,
+        "runs": 200,
+        "ok": 200,
+        "wrong": 0,
+        "errors": 0,
+        "first_wrong": null,
+        "latency_ms": {
+          "p50": 13.994624999995153,
+          "p95": 25.83049999999787,
+          "p99": 29.203959000000168,
+          "max": 31.053208000002996,
+          "mean": 15.155636445000198
+        },
+        "round_p50_ms": [
+          16.239000000005888,
+          13.957104499993989,
+          15.520999999999674,
+          12.777145500002973,
+          13.948271000003842
+        ],
+        "throughput_qps": 239.55341255067015
+      },
+      "trace_by_id": {
+        "signal": "traces",
+        "clients": 4,
+        "rounds": 5,
+        "runs": 200,
+        "ok": 200,
+        "wrong": 0,
+        "errors": 0,
+        "first_wrong": null,
+        "latency_ms": {
+          "p50": 9.175833000000466,
+          "p95": 15.122833000006608,
+          "p99": 16.44575000000259,
+          "max": 17.00204200000144,
+          "mean": 9.705784350000286
+        },
+        "round_p50_ms": [
+          8.78535400000402,
+          8.396853999997234,
+          11.796791499996573,
+          9.27666649999992,
+          8.192645999997694
+        ],
+        "throughput_qps": 406.4940803232984
+      }
+    }
+  },
+  "containers": {
+    "bench-canardstack-pg_canardstack_1": {
+      "cpu_mean_pct": 20.280310421286032,
+      "cpu_max_pct": 43.43,
+      "mem_max_mb": 80.65
+    },
+    "bench-canardstack-pg_ingest_1": {
+      "cpu_mean_pct": 1.0931042128603103,
+      "cpu_max_pct": 1.22,
+      "mem_max_mb": 82.06
+    },
+    "bench-canardstack-pg_postgres_1": {
+      "cpu_mean_pct": 2.117560975609756,
+      "cpu_max_pct": 3.42,
+      "mem_max_mb": 43.27
+    }
+  }
+}
