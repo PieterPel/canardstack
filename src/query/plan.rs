@@ -56,6 +56,8 @@ pub struct FieldMatcher {
 pub enum TextFilter {
     BodyContains(String),
     BodyRegex(String),
+    BodyNotContains(String),
+    BodyNotRegex(String),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -161,6 +163,8 @@ pub struct LogPlan {
     pub limit: usize,
     pub direction: SortDirection,
     pub stream_labels: Vec<String>,
+    /// Constant replacement for every returned line (`| line_format "text"`).
+    pub line_format: Option<String>,
 }
 
 #[derive(Clone, Debug)]

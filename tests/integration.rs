@@ -518,6 +518,61 @@ fn app_with_gauge_series() -> (tempfile::TempDir, AppState) {
     (dir, state)
 }
 
+/// Four log lines for service `a` at t0..t0+3 (2026-01-01T00:00:0N Z).
+fn app_with_log_lines() -> (tempfile::TempDir, AppState) {
+    let dir = tempdir().unwrap();
+    let mut config = Config::test(dir.path().join("canardstack.duckdb"));
+    config.operator.local_storage_dir = dir.path().join("storage");
+    let state = AppState::new_with_storage_hook_for_tests(config, |storage| {
+        storage
+            .with_conn(|conn, prefix| {
+                conn.execute_batch(&format!(
+                    "INSERT INTO {prefix}otlp_logs (time_unix_nano, body, service_name, \
+                     resource_attributes, log_attributes) VALUES \
+                     (TIMESTAMP_NS '2026-01-01 00:00:00', 'event 0 error', 'a', '{{}}', '{{}}'), \
+                     (TIMESTAMP_NS '2026-01-01 00:00:01', 'event 1', 'a', '{{}}', '{{}}'), \
+                     (TIMESTAMP_NS '2026-01-01 00:00:02', 'event 2 warn', 'a', '{{}}', '{{}}'), \
+                     (TIMESTAMP_NS '2026-01-01 00:00:03', 'event 3', 'a', '{{}}', '{{}}');"
+                ))?;
+                Ok(())
+            })
+            .unwrap();
+    })
+    .unwrap();
+    (dir, state)
+}
+
+fn loki_lines(state: &AppState, query: &str) -> Vec<String> {
+    let body = prom_get(
+        state,
+        "/loki/api/v1/query_range",
+        &[
+            ("query", query),
+            ("start", "1767225599"),
+            ("end", "1767225610"),
+        ],
+    );
+    body["data"]["result"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|stream| stream["values"].as_array().unwrap().iter())
+        .map(|v| v[1].as_str().unwrap().to_string())
+        .collect()
+}
+
+#[test]
+fn loki_line_filters_chain_negate_and_format() {
+    let (_dir, state) = app_with_log_lines();
+    let mut lines = loki_lines(&state, r#"{service_name="a"} |= "event" != "error""#);
+    lines.sort();
+    assert_eq!(lines, ["event 1", "event 2 warn", "event 3"]);
+    let lines = loki_lines(&state, r#"{service_name="a"} !~ "error|warn" != "3""#);
+    assert_eq!(lines, ["event 1"]);
+    let lines = loki_lines(&state, r#"{service_name="a"} |= "warn" | line_format "L""#);
+    assert_eq!(lines, ["L"]);
+}
+
 fn prom_get(state: &AppState, path: &str, query: &[(&str, &str)]) -> Value {
     let params = query
         .iter()

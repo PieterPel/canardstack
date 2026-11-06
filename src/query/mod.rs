@@ -330,6 +330,13 @@ fn log_where_sql(plan: &LogPlan) -> ApiResult<Vec<String>> {
                 "regexp_matches(coalesce(body, ''), {})",
                 sql_quote(pattern)
             )),
+            TextFilter::BodyNotContains(text) => {
+                where_sql.push(format!("NOT ({})", text_terms("coalesce(body, '')", text)?))
+            }
+            TextFilter::BodyNotRegex(pattern) => where_sql.push(format!(
+                "NOT regexp_matches(coalesce(body, ''), {})",
+                sql_quote(pattern)
+            )),
         }
     }
     Ok(where_sql)

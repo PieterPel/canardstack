@@ -93,11 +93,14 @@ pub(super) fn loki_query_inner(
             .unwrap_or(plan.time_bounds.to)
             .timestamp_nanos_opt()
             .unwrap_or_else(|| plan.time_bounds.to.timestamp_micros() * 1000);
-        let line = row
-            .get("body")
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .to_string();
+        let line = match &plan.line_format {
+            Some(text) => text.clone(),
+            None => row
+                .get("body")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string(),
+        };
         streams
             .entry(key)
             .or_insert_with(|| (labels, Vec::new()))
