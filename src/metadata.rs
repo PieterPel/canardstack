@@ -24,7 +24,11 @@ use chrono::{DateTime, Utc};
 use serde_json::{json, Map, Value};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
+/// An external writer adds rows without telling canardstack, so a cached discovery answer is
+/// only trusted for this long; the storage generation alone changes only on catalog re-attach.
+const CACHE_TTL: Duration = Duration::from_secs(10);
 const MAX_CACHE_ENTRIES: usize = 128;
 const MAX_CACHE_VALUE_BYTES: usize = 128 * 1024;
 const DISCOVERY_LIMIT: usize = 1000;
@@ -378,6 +382,7 @@ struct CacheEntry {
     /// Monotonic insertion counter; the smallest `seq` is the oldest entry.
     seq: u64,
     value: Value,
+    created: Instant,
 }
 
 #[derive(Default)]
@@ -390,7 +395,10 @@ impl DiscoveryCache {
     fn get(&self, key: &CacheKey, generation: u64) -> Option<Value> {
         self.entries
             .get(key)
-            .and_then(|entry| (entry.generation == generation).then(|| entry.value.clone()))
+            .and_then(|entry| {
+                (entry.generation == generation && entry.created.elapsed() < CACHE_TTL)
+                    .then(|| entry.value.clone())
+            })
     }
 
     fn insert(&mut self, key: CacheKey, generation: u64, value: Value) {
@@ -416,6 +424,7 @@ impl DiscoveryCache {
                 generation,
                 seq,
                 value,
+                created: Instant::now(),
             },
         );
     }
@@ -604,5 +613,26 @@ fn string_array(value: Value) -> Vec<String> {
 fn insert_opt(labels: &mut Map<String, Value>, name: &str, value: Option<String>) {
     if let Some(value) = value.filter(|v| !v.is_empty()) {
         labels.insert(name.to_string(), json!(value));
+    }
+}
+
+#[cfg(test)]
+mod ttl_tests {
+    use super::*;
+
+    #[test]
+    fn expired_entries_are_not_served() {
+        let mut cache = DiscoveryCache::default();
+        let key = CacheKey::window(
+            Api::Loki,
+            Discovery::LabelValue,
+            "service_name",
+            Utc::now(),
+            Utc::now(),
+        );
+        cache.insert(key.clone(), 0, json!(["a"]));
+        assert!(cache.get(&key, 0).is_some());
+        cache.entries.get_mut(&key).unwrap().created = Instant::now() - CACHE_TTL * 2;
+        assert!(cache.get(&key, 0).is_none());
     }
 }
