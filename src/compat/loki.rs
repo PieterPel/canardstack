@@ -1,11 +1,14 @@
 use super::params::{
-    optional_range, optional_time, parse_any_time_to_utc, parse_usize, required_param, result_rows,
-    validate_range,
+    optional_range, optional_time, parse_any_time_to_utc, parse_step, parse_usize, required_param,
+    result_rows, validate_range,
 };
+use super::prometheus::{prom_value, ts_json};
 use crate::query::log::parse_loki_query;
+use crate::query::logmetric;
+use crate::query::promql::Grid;
 use crate::query::plan::{LogPlan, TimeBounds};
 use crate::semantic_labels;
-use crate::validation::ApiResult;
+use crate::validation::{ApiError, ApiResult};
 use crate::AppState;
 use chrono::Utc;
 use serde_json::{json, Map, Value};
@@ -17,7 +20,62 @@ pub fn loki_query(state: &AppState, params: &HashMap<String, String>) -> ApiResu
     if let Some(probe) = loki_probe_vector(params) {
         return Ok(probe);
     }
+    if let Some(metric) = logmetric::parse(required_param(params, "query")?)? {
+        let at = optional_time(params, "time")?
+            .or(optional_time(params, "end")?)
+            .unwrap_or_else(Utc::now);
+        let grid = Grid {
+            start_ms: at.timestamp_millis(),
+            step_ms: 1000,
+            steps: 1,
+        };
+        let series = logmetric::evaluate(&state.queries, &state.storage, &metric, grid)?;
+        let result = series.into_iter().filter_map(|s| {
+            let v = s.vals[0]?;
+            Some(json!({"metric": s.labels, "value": [ts_json(grid.start_ms), prom_value(v)]}))
+        });
+        return Ok(loki_success(
+            json!({"resultType": "vector", "result": result.collect::<Vec<_>>()}),
+        ));
+    }
     loki_query_inner(state, params, false)
+}
+
+fn loki_metric_range(
+    state: &AppState,
+    params: &HashMap<String, String>,
+    metric: &logmetric::Metric,
+) -> ApiResult<Value> {
+    let end = optional_time(params, "end")?.unwrap_or_else(Utc::now);
+    let start = optional_time(params, "start")?.unwrap_or(end - chrono::Duration::hours(1));
+    validate_range(start, end, INTERACTIVE_RANGE_SECS)?;
+    let step = parse_step(params.get("step").map(String::as_str).unwrap_or("60"))?.max(1);
+    let steps = (end - start).num_seconds() / step + 1;
+    if steps > 11_000 {
+        return Err(ApiError::new(
+            400,
+            "bad_data",
+            "exceeded maximum resolution of 11,000 points per timeseries; try decreasing the query resolution (?step=XX)",
+        ));
+    }
+    let grid = Grid {
+        start_ms: start.timestamp_millis(),
+        step_ms: step * 1000,
+        steps: steps as usize,
+    };
+    let series = logmetric::evaluate(&state.queries, &state.storage, metric, grid)?;
+    let result = series.into_iter().filter_map(|s| {
+        let values: Vec<Value> = s
+            .vals
+            .iter()
+            .enumerate()
+            .filter_map(|(i, v)| Some(json!([ts_json(grid.ts(i)), prom_value((*v)?)])))
+            .collect();
+        (!values.is_empty()).then(|| json!({"metric": s.labels, "values": values}))
+    });
+    Ok(loki_success(
+        json!({"resultType": "matrix", "result": result.collect::<Vec<_>>()}),
+    ))
 }
 
 /// Grafana's Loki "Save & test" runs the metric query `vector(1)+vector(1)` and expects a
@@ -38,6 +96,9 @@ fn loki_probe_vector(params: &HashMap<String, String>) -> Option<Value> {
 }
 
 pub fn loki_query_range(state: &AppState, params: &HashMap<String, String>) -> ApiResult<Value> {
+    if let Some(metric) = logmetric::parse(required_param(params, "query")?)? {
+        return loki_metric_range(state, params, &metric);
+    }
     loki_query_inner(state, params, true)
 }
 

@@ -578,6 +578,50 @@ fn loki_line_filters_chain_negate_and_format() {
     assert_eq!(loki_lines(&state, r#"{service_name="a"} != "EVENT""#).len(), 4);
 }
 
+#[test]
+fn loki_metric_queries_count_rate_and_aggregate() {
+    let (_dir, state) = app_with_log_lines();
+    let value = |query: &str| {
+        let body = prom_get(
+            &state,
+            "/loki/api/v1/query",
+            &[("query", query), ("time", "1767225603")],
+        );
+        assert_eq!(body["data"]["resultType"], "vector", "{body}");
+        body["data"]["result"][0]["value"][1]
+            .as_str()
+            .map(str::to_string)
+    };
+    assert_eq!(value(r#"sum(count_over_time({service_name="a"}[10m]))"#).as_deref(), Some("4"));
+    assert_eq!(
+        value(r#"sum by (service_name) (count_over_time({service_name="a"} != "error" [10m]))"#).as_deref(),
+        Some("3")
+    );
+    assert_eq!(value(r#"sum(rate({service_name="a"}[10m]))"#).as_deref(), Some(&*(4.0f64 / 600.0).to_string()));
+    // "event 0 error" + "event 1" + "event 2 warn" + "event 3"
+    assert_eq!(value(r#"sum(bytes_over_time({service_name="a"}[10m]))"#).as_deref(), Some("39"));
+    assert_eq!(value(r#"count_over_time({service_name="nobody"}[10m])"#), None);
+
+    let body = prom_get(
+        &state,
+        "/loki/api/v1/query_range",
+        &[
+            ("query", r#"sum(count_over_time({service_name="a"}[2s]))"#),
+            ("start", "1767225600"),
+            ("end", "1767225603"),
+            ("step", "1"),
+        ],
+    );
+    let values: Vec<String> = body["data"]["result"][0]["values"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v[1].as_str().unwrap().to_string())
+        .collect();
+    // windows (t-2s, t]: t0 -> 1 line, t1 -> 2, t2 -> 2, t3 -> 2
+    assert_eq!(values, ["1", "2", "2", "2"], "{body}");
+}
+
 fn prom_get(state: &AppState, path: &str, query: &[(&str, &str)]) -> Value {
     let params = query
         .iter()

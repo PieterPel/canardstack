@@ -89,7 +89,7 @@ pub fn prometheus_query_range(
     ))
 }
 
-fn ts_json(ms: i64) -> Value {
+pub(super) fn ts_json(ms: i64) -> Value {
     if ms % 1000 == 0 {
         json!(ms / 1000)
     } else {
@@ -132,7 +132,7 @@ pub fn prometheus_metadata(state: &AppState) -> ApiResult<Value> {
     Ok(prom_success(metadata))
 }
 
-fn prom_value(value: f64) -> String {
+pub(super) fn prom_value(value: f64) -> String {
     if value.is_nan() {
         "NaN".to_string()
     } else if value.is_infinite() {

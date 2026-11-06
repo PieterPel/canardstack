@@ -1,4 +1,5 @@
 pub mod log;
+pub mod logmetric;
 pub mod plan;
 pub mod promql;
 pub mod prometheus;
