@@ -104,7 +104,8 @@ mod transport {
             .await
             .unwrap();
         assert_eq!(response["status"], "success");
-        assert_eq!(response["data"]["result"][0]["value"][1], "2");
+        assert_eq!(response["data"]["resultType"], "scalar");
+        assert_eq!(response["data"]["result"][1], "2");
         let response = client
             .get(server.url("/api/admin/health/queries"))
             .bearer_auth("test-key")
@@ -608,10 +609,10 @@ fn prometheus_instant_query_falls_back_to_sum_and_returns_empty_for_no_match() {
 }
 
 #[test]
-fn prometheus_range_query_returns_the_latest_sample_in_each_step_not_the_average() {
+fn prometheus_range_query_returns_the_sample_at_each_step_not_a_bucket_aggregate() {
     let (_dir, state) = app_with_gauge_series();
-    // Series `a` is 1, 9, 2 at t0, t0+1, t0+2. With step=2 the first bucket holds 1 and 9:
-    // the newest is 9, where an average would be 5.
+    // Series `a` is 1, 9, 2 at t0, t0+1, t0+2. With step=2 the steps are t0 and t0+2, and each
+    // reports the newest sample at or before it (1 and 2), not the 9 in between or an average.
     let body = prom_get(
         &state,
         "/api/v1/query_range",
@@ -627,7 +628,7 @@ fn prometheus_range_query_returns_the_latest_sample_in_each_step_not_the_average
         .iter()
         .map(|v| (v[0].as_i64().unwrap(), v[1].as_str().unwrap()))
         .collect();
-    assert_eq!(points, vec![(1767225600, "9"), (1767225602, "2")], "{body}");
+    assert_eq!(points, vec![(1767225600, "1"), (1767225602, "2")], "{body}");
 }
 
 #[test]

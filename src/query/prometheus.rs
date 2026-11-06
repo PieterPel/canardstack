@@ -264,7 +264,7 @@ const METRIC_NAME_OVERRIDES: &[(&str, &str)] = &[
     ),
 ];
 
-fn resolve_metric_name(raw: &str) -> String {
+pub(crate) fn resolve_metric_name(raw: &str) -> String {
     if let Some((_, resolved)) = METRIC_NAME_OVERRIDES
         .iter()
         .find(|(prometheus, _)| *prometheus == raw)
