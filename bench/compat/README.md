@@ -15,7 +15,8 @@ The target must be running (`bench/demo.py`, or `bench/run.py --manage --keep-up
 ingests its own small deterministic dataset under a fresh run id (unique service names and metric
 names, so data left by other runs never mixes in), waits until it is queryable, then runs every
 case in `cases.py` and prints a table plus a per-language score. `results/<target>.json` keeps the
-latest run.
+latest run locally; it is not committed because timings, run ids and some phase-dependent values
+vary from run to run (the baselines are the contract).
 
 ## How a case is judged
 

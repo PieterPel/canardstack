@@ -16,3 +16,6 @@ site/node_modules/
 # benchmark harness
 bench/.venv/
 __pycache__/
+
+# per-run compatibility results vary (timings, run ids, phase-dependent values); baselines are the contract
+bench/compat/results/
