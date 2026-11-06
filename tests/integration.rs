@@ -571,6 +571,11 @@ fn loki_line_filters_chain_negate_and_format() {
     assert_eq!(lines, ["event 1"]);
     let lines = loki_lines(&state, r#"{service_name="a"} |= "warn" | line_format "L""#);
     assert_eq!(lines, ["L"]);
+    // Literal and case-sensitive: no AND/OR operators, no parenthesis restriction.
+    assert!(loki_lines(&state, r#"{service_name="a"} |= "WARN""#).is_empty());
+    assert!(loki_lines(&state, r#"{service_name="a"} |= "event 1 AND event 2""#).is_empty());
+    assert!(loki_lines(&state, r#"{service_name="a"} |= "(x)""#).is_empty());
+    assert_eq!(loki_lines(&state, r#"{service_name="a"} != "EVENT""#).len(), 4);
 }
 
 fn prom_get(state: &AppState, path: &str, query: &[(&str, &str)]) -> Value {

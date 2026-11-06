@@ -325,13 +325,13 @@ fn log_where_sql(plan: &LogPlan) -> ApiResult<Vec<String>> {
     }
     for filter in &plan.selector.text_filters {
         match filter {
-            TextFilter::BodyContains(text) => where_sql.push(text_terms("body", text)?),
+            TextFilter::BodyContains(text) => where_sql.push(body_contains(text)),
             TextFilter::BodyRegex(pattern) => where_sql.push(format!(
                 "regexp_matches(coalesce(body, ''), {})",
                 sql_quote(pattern)
             )),
             TextFilter::BodyNotContains(text) => {
-                where_sql.push(format!("NOT ({})", text_terms("coalesce(body, '')", text)?))
+                where_sql.push(format!("NOT {}", body_contains(text)))
             }
             TextFilter::BodyNotRegex(pattern) => where_sql.push(format!(
                 "NOT regexp_matches(coalesce(body, ''), {})",
@@ -419,35 +419,9 @@ fn push_matcher(
     Ok(())
 }
 
-fn text_terms(column: &str, query: &str) -> ApiResult<String> {
-    let mut clauses = Vec::new();
-    let upper = query.to_ascii_uppercase();
-    if upper.contains('(') || upper.contains(')') {
-        return Err(ApiError::new(
-            400,
-            "unsupported_query",
-            "parentheses are not implemented in v0 text search",
-        ));
-    }
-    let op = if upper.contains(" OR ") {
-        " OR "
-    } else {
-        " AND "
-    };
-    for term in query.split(op) {
-        let term = term.trim();
-        if !term.is_empty() {
-            clauses.push(format!(
-                "{column} ILIKE {}",
-                sql_quote(&format!("%{term}%"))
-            ));
-        }
-    }
-    if clauses.is_empty() {
-        Ok("TRUE".to_string())
-    } else {
-        Ok(format!("({})", clauses.join(op)))
-    }
+/// LogQL `|=`: a literal, case-sensitive substring match.
+fn body_contains(text: &str) -> String {
+    format!("contains(coalesce(body, ''), {})", sql_quote(text))
 }
 
 fn storage_err(err: anyhow::Error) -> ApiError {
