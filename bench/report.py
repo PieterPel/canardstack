@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Render result JSONs as Markdown, aggregating trials per stack.
 
-    bench/.venv/bin/python bench/report.py [results/a.json results/b.json ...]
+    uv run --project bench bench/report.py [results/a.json results/b.json ...]
 
 With several result files for one stack (trials), every number is the median
 across trials and the [min-max] range shows the spread between trials.

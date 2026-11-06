@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Generate the Grafana dashboards under bench/grafana/dashboards/.
 
-    bench/.venv/bin/python bench/grafana/build_dashboards.py [--results DIR]
+    uv run --project bench bench/grafana/build_dashboards.py [--results DIR]
 
 * bench-results.json: the benchmark results (median across trials) as bar charts and
   tables. The numbers are embedded as TestData CSV, so the dashboard needs no plugin and

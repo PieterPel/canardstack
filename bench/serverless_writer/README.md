@@ -15,11 +15,13 @@ in one transaction, and exits. `writer.py` is exactly that.
 ## Run it
 
 ```bash
-uv venv --python 3.14 .venv-sw && uv pip install --python .venv-sw/bin/python -r requirements.txt
-.venv-sw/bin/python experiment.py                  # 40 cold invocations, two modes, ~1 minute
-.venv-sw/bin/python bake_extensions.py ./ext       # bake extensions and prove they load offline
-.venv-sw/bin/python test_eventhub_ingest.py        # needs `opentelemetry-proto` for the protobuf check
+uv run --project bench bench/serverless_writer/experiment.py            # 40 cold invocations, two modes, ~1 minute
+uv run --project bench bench/serverless_writer/bake_extensions.py ./ext  # bake extensions and prove they load offline
+uv run --project bench bench/serverless_writer/test_eventhub_ingest.py   # JSON and protobuf events, redelivery, rollback
 ```
+
+The `serverless` dependency group in `bench/pyproject.toml` pins `duckdb==1.5.6`, which is installed
+by default; it must match the DuckDB the stack uses because extension binaries are version-specific.
 
 ## What it showed (local SQLite catalog, extensions cached, one laptop)
 

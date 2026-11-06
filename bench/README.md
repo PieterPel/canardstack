@@ -8,12 +8,12 @@ Status and open work live in `docs/work-log.md` section 6.
 ## Run
 
 ```bash
-python3 -m venv bench/.venv && bench/.venv/bin/pip install -r bench/requirements.txt
+uv sync --project bench      # optional: `uv run` syncs on demand; the lockfile is bench/uv.lock
 # one stack at a time; --manage wipes volumes, boots the stack and tears it down after
-bench/.venv/bin/python bench/run.py --stack victoria --manage --services 5 --records 2000
+uv run --project bench bench/run.py --stack victoria --manage --services 5 --records 2000
 # all stacks, several trials, stack order rotated per trial (arguments after -- go to run.py)
-bench/.venv/bin/python bench/suite.py --trials 3 -- --services 5 --records 2000 --clients 1 4
-bench/.venv/bin/python bench/report.py   # median [min-max] across trials per stack
+uv run --project bench bench/suite.py --trials 3 -- --services 5 --records 2000 --clients 1 4
+uv run --project bench bench/report.py   # median [min-max] across trials per stack
 ```
 
 Images are pinned in `bench/versions.env`. The canardstack profile uses a locally built
@@ -34,8 +34,8 @@ image: `podman build -t canardstack:local .` from the repo root.
   counter, an error filter and a trace, each queried with the stack's own datasource.
 
 ```bash
-bench/.venv/bin/python bench/demo.py          # wipe, start and load the "demo" data into every stack
-bench/.venv/bin/python bench/grafana/build_dashboards.py   # regenerate dashboards from bench/results/
+uv run --project bench bench/demo.py          # wipe, start and load the "demo" data into every stack
+uv run --project bench bench/grafana/build_dashboards.py   # regenerate dashboards from bench/results/
 cd bench/grafana && podman-compose -p bench-grafana up -d   # http://localhost:13030
 ```
 

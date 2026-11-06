@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Run every stack for several trials, rotating the stack order each trial.
 
-    bench/.venv/bin/python bench/suite.py --trials 3 -- --services 5 --records 2000
+    uv run --project bench bench/suite.py --trials 3 -- --services 5 --records 2000
 
 Everything after `--` is passed to run.py. Each run starts from freshly wiped
 volumes (`--manage`), so trials are independent; rotating the order keeps one

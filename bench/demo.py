@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Start stacks, load the deterministic demo workload (run id "demo"), and leave them up.
 
-    bench/.venv/bin/python bench/demo.py [--stacks canardstack lgtm victoria]
+    uv run --project bench bench/demo.py [--stacks canardstack lgtm victoria]
 
 Service names are svc-demo-0..4 and trace ids are fixed, so the Grafana dashboards under
 bench/grafana work without any lookup. Do not run this while the benchmark suite is

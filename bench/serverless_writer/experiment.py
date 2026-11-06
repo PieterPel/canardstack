@@ -8,7 +8,7 @@ SQLite catalog: once with DuckLake's default inlining limit (10 rows) and once w
 After each it counts live files, snapshots and inlined rows, times three queries, runs the
 maintenance that fits (merge + expire + cleanup, or flush), and measures again.
 
-Needs the interpreter from requirements.txt. Cold-start numbers are for the machine you run it on
+Run it with `uv run --project bench bench/serverless_writer/experiment.py`. Cold-start numbers are for the machine you run it on
 with extensions already installed; a real function adds a remote catalog and object-store latency.
 """
 

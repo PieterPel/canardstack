@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Local test for eventhub_ingest.py: no Azure needed.
 
-    python test_eventhub_ingest.py
+    uv run --project bench bench/serverless_writer/test_eventhub_ingest.py
 
 Checks that JSON and protobuf events ingest, that redelivering a batch (same partition and
 sequence numbers) writes nothing, and that a bad batch rolls back rows and offsets together.
@@ -54,7 +54,7 @@ assert (count("otlp_logs"), count("ingest_offsets")) == before
 print("bad batch: raised, rows and offsets unchanged")
 
 try:
-    from otlp import encode  # needs opentelemetry-proto (bench/requirements.txt)
+    from otlp import encode  # opentelemetry-proto is in bench/pyproject.toml
 except ImportError:
     print("protobuf check skipped: opentelemetry-proto is not installed in this interpreter")
 else:

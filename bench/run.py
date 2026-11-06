@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Run the shared workload against one stack and write a result JSON.
 
-    bench/.venv/bin/python bench/run.py --stack lgtm --services 5 --records 1000
+    uv run --project bench bench/run.py --stack lgtm --services 5 --records 1000
 
 Phases: ingest -> visibility (poll until every expected row is queryable) ->
 query suite (latency, throughput, correctness against workload-derived answers).
