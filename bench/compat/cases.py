@@ -20,6 +20,7 @@ A case's `check(ctx, observed)` returns (ok, detail); the default compares `obse
 from __future__ import annotations
 
 import re
+import statistics
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
@@ -112,6 +113,19 @@ PROMQL: List[Case] = [
     Case("abs_unary_minus", "promql", "instant", "abs(-$GAUGE)", _gauge_all),
     Case("label_replace", "promql", "instant", 'label_replace($GAUGE, "x", "$1", "$LBLPLAIN", "(.*)")', _gauge_all),
     Case("sort_desc", "promql", "instant", "sort_desc($GAUGE)", _gauge_all),
+    Case("stddev", "promql", "instant", "stddev($GAUGE)", lambda c: {"_": statistics.pstdev(c.g(i) for i in range(c.S))}, tol=1e-6),
+    Case("group", "promql", "instant", "group($GAUGE)", lambda c: {"_": 1.0}),
+    Case("agg_by_trailing", "promql", "instant", "avg($GAUGE) by ($LBL)", _gauge_all),
+    Case("agg_div", "promql", "instant", "sum($GAUGE) / count($GAUGE)", lambda c: {"_": sum(c.g(i) for i in range(c.S)) / c.S}, tol=1e-6),
+    Case("count_of_filter", "promql", "instant", "count($GAUGE > 12)", lambda c: {"_": float(sum(1 for i in range(c.S) if c.g(i) > 12))}),
+    Case("set_and", "promql", "instant", "$GAUGE and $COUNTER", _gauge_all,
+         note="both metrics carry the same label set per service, so every gauge series has a match"),
+    Case("set_unless", "promql", "instant", "$GAUGE unless $COUNTER", lambda c: {}),
+    Case("vector_match_on", "promql", "instant", "$GAUGE + on($LBL) $COUNTER", lambda c: per_service(c, lambda i: c.g(i) + c.R),
+         note="on() keeps only the matching label on the result"),
+    Case("sum_over_time", "promql", "instant", "sum_over_time($COUNTER[3500ms])", lambda c: per_service(c, lambda i: 4.0 * c.R - 6),
+         note="3.5 s covers four one-second samples whichever way the window edge is treated"),
+    Case("resets", "promql", "instant", "resets($COUNTER[10500ms])", lambda c: per_service(c, lambda i: 0.0)),
 ]
 
 
@@ -175,6 +189,12 @@ RANGE_STEP10 = {"start_back": 240, "step": 10, "align": True}
 RANGE_INTERIOR = {"start_back": 240, "step": 15, "align": True, "end_back": 1}
 # End exactly on the grid: the last bucket holds a single sample (the one at T).
 RANGE_EDGE = {"start_back": 240, "step": 15, "align": True}
+def check_range_sum_rate(ctx: Ctx, obs) -> Tuple[bool, str]:
+    values = [v for s in obs.values() for _, v in s]
+    bad = [v for v in values if abs(v - ctx.S) > 0.05 * ctx.S]
+    return list(obs) == ["_"] and bool(values) and not bad, f"series {list(obs)}, {len(values)} points, {len(bad)} outside {ctx.S} +/- 5%"
+
+
 PROMQL_RANGE: List[Case] = [
     Case("range_peak", "promql", "range", '$GAUGE{$LBL="$S0"}', check=check_range_peak, params=RANGE_PARAMS,
          note="a smoothed gauge cannot reach the sawtooth peak"),
@@ -185,6 +205,8 @@ PROMQL_RANGE: List[Case] = [
     Case("range_rate", "promql", "range", "rate($COUNTER[1m])", check=check_range_rate, params=RANGE_INTERIOR),
     Case("range_rate_last_step_single_sample", "promql", "range", "rate($COUNTER[1m])", check=check_range_rate, params=RANGE_EDGE,
          note="the last step falls where only one sample is inside the step; Prometheus still looks back 1m"),
+    Case("range_sum_rate", "promql", "range", "sum(rate($COUNTER[1m]))", check=check_range_sum_rate, params=RANGE_INTERIOR,
+         note="one collapsed series whose every point is the number of services (each counter grows 1/s)"),
     Case("range_arith_peak", "promql", "range", "$GAUGE * 2", check=check_range_mul_peak, params=RANGE_PARAMS),
     Case("range_value_at_step", "promql", "range", '$GAUGE{$LBL="$S0"}', check=check_range_exact_values, params=RANGE_STEP10,
          note="the value reported at step time t is the sample at t, not the last sample of a bucket"),
@@ -239,6 +261,13 @@ LOGQL: List[Case] = [
     Case("line_regex", "logql", "logs", '{service_name="$S0"} |~ "event 1[0-9]( |$)"',
          check=logs_n(lambda c: _count_matching(c, r"event 1[0-9]( |$)", True, [0]))),
     Case("line_not_regex", "logql", "logs", '{service_name="$S0"} !~ "error"', check=logs_n(lambda c: _count_matching(c, "error", False, [0]))),
+    Case("line_case_sensitive", "logql", "logs", '{service_name="$S0"} |= "ERROR"', check=logs_n(lambda c: 0),
+         note="line filters are case-sensitive; the lines only contain lowercase 'error'"),
+    Case("line_contains_substring", "logql", "logs", '{service_name="$S0"} |= "event 1"',
+         check=logs_n(lambda c: _count_matching(c, "event 1", True, [0]))),
+    Case("line_literal_keywords", "logql", "logs", '{service_name="$S0"} |= "event 1 AND event 2"', check=logs_n(lambda c: 0),
+         note="the filter is one literal string, not a boolean expression"),
+    Case("line_literal_parens", "logql", "logs", '{service_name="$S0"} |= "(event)"', check=logs_n(lambda c: 0)),
     Case("label_regex", "logql", "logs", '{service_name=~"$S0|$S1"}', check=logs_n(lambda c: 2 * c.R)),
     Case("label_not_equal", "logql", "logs", '{service_name=~"svc-$RUN-.+", service_name!="$S0"}', check=logs_n(lambda c: (c.S - 1) * c.R)),
     Case("chained_filters", "logql", "logs", '{service_name="$S0"} |= "event" != "error"', check=logs_n(lambda c: _count_matching(c, "error", False, [0]))),
@@ -251,6 +280,12 @@ LOGQL: List[Case] = [
          lambda c: per_service(c, lambda i: float(c.R))),
     Case("metric_bytes_over_time", "logql", "logs_instant", 'sum(bytes_over_time({service_name="$S0"}[10m]))',
          lambda c: {"_": float(sum(len(l) for l in c.lines(0)))}),
+    Case("metric_bytes_rate", "logql", "logs_instant", 'sum(bytes_rate({service_name="$S0"}[10m]))',
+         lambda c: {"_": float(sum(len(l) for l in c.lines(0))) / 600.0}, tol=1e-6),
+    Case("metric_negated_filter", "logql", "logs_instant", 'sum(count_over_time({service_name="$S0"} !~ "error" [10m]))',
+         lambda c: {"_": float(_count_matching(c, "error", False, [0]))}),
+    Case("metric_max_by", "logql", "logs_instant", 'max by (service_name) (count_over_time({service_name=~"svc-$RUN-.+"}[10m]))',
+         lambda c: per_service(c, lambda i: float(c.R))),
     Case("metric_filtered_count", "logql", "logs_instant", 'sum(count_over_time({service_name=~"svc-$RUN-.+"} |= "error" [10m]))',
          lambda c: {"_": float(_count_matching(c, "error", True))}),
 ]
@@ -280,6 +315,8 @@ TEMPO: List[Case] = [
     Case("traceql_duration_gt_none", "traceql", "search", '{ duration > 1h }', check=count_is(lambda c: 0),
          note="a filter nothing can satisfy must return no traces, not every trace"),
     Case("traceql_duration_lt_all", "traceql", "search", '{ duration < 1h && resource.service.name = "$S0" }', check=count_is(lambda c: c.R)),
+    Case("traceql_duration_name_service", "traceql", "search",
+         '{ name = "bench.child" && duration < 1h && resource.service.name = "$S0" }', check=count_is(lambda c: c.R)),
     Case("traceql_and", "traceql", "search", '{ resource.service.name = "$S0" && name = "bench.child" }', check=count_is(lambda c: c.R)),
     Case("meta_tag_names", "traceql", "names", "/api/search/tags", check=check_contains, params={"wanted": ["service.name"]}),
 ]

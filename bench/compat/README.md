@@ -31,9 +31,16 @@ backend. Each case ends as one of:
 | ERROR | 5xx, timeout, or an unparseable response |
 
 The goldens are validated by running the same cases against **Mimir, Loki and Tempo** (`--target
-lgtm`), which pass all of them. A case the reference engines fail has a wrong golden or tests
+lgtm`), which passed the original 74. A case the reference engines fail has a wrong golden or tests
 something outside the language; fix the case before trusting results for canardstack. Victoria
-(`--target victoria`) runs the PromQL cases as a second opinion and passes all 48.
+(`--target victoria`) runs the PromQL cases as a second opinion and passes all 59 of the current ones.
+
+**Not yet validated against a reference engine:** the LogQL cases (`line_case_sensitive`,
+`line_contains_substring`, `line_literal_keywords`, `line_literal_parens`, `metric_bytes_rate`,
+`metric_negated_filter`, `metric_max_by`) and the TraceQL case `traceql_duration_name_service`
+were added with the evaluator work and have only been checked against their goldens by hand. Run
+them with `--target lgtm` before baselining them. A PromQL `changes()` case was dropped because
+VictoriaMetrics and Prometheus count the change into the window differently.
 
 The runs are deterministic: the dataset's last sample is aligned to a 60 s boundary so time buckets
 are the same on every run, and Tempo search is unwindowed because a windowed Tempo search only sees
