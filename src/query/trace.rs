@@ -1,9 +1,11 @@
 use crate::query::plan::{
-    normalize_matchers, FieldMatcher, MatchOp, SelectorPlan, TimeBounds, TracePlan, TraceSort,
+    normalize_matchers, DurationFilter, FieldMatcher, MatchOp, SelectorPlan, TimeBounds, TracePlan, TraceSort,
 };
 use crate::semantic_labels::{self, LabelScope};
 use crate::validation::ApiResult;
+use regex::Regex;
 use std::collections::HashMap;
+use std::sync::OnceLock;
 
 pub fn plan_tempo_search(
     params: &HashMap<String, String>,
@@ -28,6 +30,11 @@ pub fn plan_tempo_search(
         extract_traceql_matchers(tags, &mut matchers);
     }
     let matchers = normalize_matchers(matchers, &aliases, "unsupported_selector")?;
+    let durations = params
+        .get("q")
+        .or_else(|| params.get("query"))
+        .map(|q| extract_durations(q))
+        .unwrap_or_default();
     Ok(TracePlan {
         selector: SelectorPlan {
             resource: None,
@@ -37,7 +44,39 @@ pub fn plan_tempo_search(
         time_bounds,
         limit,
         sort: TraceSort::TimestampDesc,
+        durations,
     })
+}
+
+/// `duration > 1s`, `duration <= 250ms`, ... outside quoted strings.
+fn extract_durations(raw: &str) -> Vec<DurationFilter> {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    let re = RE.get_or_init(|| {
+        Regex::new(r"(?:^|[^\w.])duration\s*(>=|<=|!=|=|>|<)\s*([0-9]+(?:\.[0-9]+)?)(ns|us|µs|ms|s|m|h)\b")
+            .expect("static regex")
+    });
+    re.captures_iter(raw)
+        .filter_map(|c| {
+            let unit = match &c[3] {
+                "ns" => 1.0,
+                "us" | "µs" => 1e3,
+                "ms" => 1e6,
+                "s" => 1e9,
+                "m" => 6e10,
+                _ => 3.6e12,
+            };
+            let op = match &c[1] {
+                ">=" => ">=",
+                "<=" => "<=",
+                "!=" => "<>",
+                "=" => "=",
+                ">" => ">",
+                _ => "<",
+            };
+            let nanos = (c[2].parse::<f64>().ok()? * unit).round() as i64;
+            Some(DurationFilter { op, nanos })
+        })
+        .collect()
 }
 
 fn extract_traceql_matchers(raw: &str, labels: &mut Vec<FieldMatcher>) {
@@ -117,6 +156,23 @@ mod tests {
         assert_eq!(selector.matcher_value("service_name"), Some("checkout"));
         assert_eq!(selector.matcher_value("span_name"), Some("GET /smoke"));
         assert_eq!(selector.matcher_value("http_route"), Some("/smoke"));
+    }
+
+    #[test]
+    fn traceql_duration_filters_become_nanosecond_conditions() {
+        let params = HashMap::from([(
+            "q".to_string(),
+            r#"{ duration > 1.5s && resource.service.name = "a" && duration <= 250ms }"#.to_string(),
+        )]);
+        let plan = plan_tempo_search(&params, bounds(), 20).unwrap();
+        assert_eq!(
+            plan.durations,
+            vec![
+                DurationFilter { op: ">", nanos: 1_500_000_000 },
+                DurationFilter { op: "<=", nanos: 250_000_000 },
+            ]
+        );
+        assert_eq!(plan.selector.matcher_value("service_name"), Some("a"));
     }
 
     #[test]

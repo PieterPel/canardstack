@@ -101,6 +101,7 @@ impl QueryEngine {
             time_bounds,
             limit,
             sort,
+            durations,
         } = plan;
         let timer = Timer::start();
         let mut where_sql = vec![time_predicate(
@@ -115,6 +116,9 @@ impl QueryEngine {
                 LabelScope::Spans,
                 "unsupported_selector",
             )?;
+        }
+        for d in durations {
+            where_sql.push(format!("duration_time_unix_nano {} {}", d.op, d.nanos));
         }
         let order = match sort {
             TraceSort::DurationDesc => "7 DESC",

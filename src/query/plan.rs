@@ -173,6 +173,15 @@ pub struct TracePlan {
     pub time_bounds: TimeBounds,
     pub limit: usize,
     pub sort: TraceSort,
+    /// Span duration conditions from a TraceQL `{ duration > 1s }` filter, all ANDed.
+    pub durations: Vec<DurationFilter>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DurationFilter {
+    /// A SQL comparison operator.
+    pub op: &'static str,
+    pub nanos: i64,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

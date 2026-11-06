@@ -622,6 +622,40 @@ fn loki_metric_queries_count_rate_and_aggregate() {
     assert_eq!(values, ["1", "2", "2", "2"], "{body}");
 }
 
+#[test]
+fn tempo_search_applies_traceql_duration_filters() {
+    let dir = tempdir().unwrap();
+    let mut config = Config::test(dir.path().join("canardstack.duckdb"));
+    config.operator.local_storage_dir = dir.path().join("storage");
+    let state = AppState::new_with_storage_hook_for_tests(config, |storage| {
+        storage
+            .with_conn(|conn, prefix| {
+                // Two single-span traces: 100 ms and 3 s.
+                conn.execute_batch(&format!(
+                    "INSERT INTO {prefix}otlp_traces (start_time_unix_nano, duration_time_unix_nano, \
+                     trace_id, span_id, name, service_name, resource_attributes, span_attributes) VALUES \
+                     (TIMESTAMP_NS '2026-01-01 00:00:00', 100000000, 'aa', '01', 'fast', 'a', '{{}}', '{{}}'), \
+                     (TIMESTAMP_NS '2026-01-01 00:00:01', 3000000000, 'bb', '02', 'slow', 'a', '{{}}', '{{}}');"
+                ))?;
+                Ok(())
+            })
+            .unwrap();
+    })
+    .unwrap();
+    let count = |q: &str| {
+        let body = prom_get(
+            &state,
+            "/api/search",
+            &[("q", q), ("start", "1767225500"), ("end", "1767225700")],
+        );
+        body["traces"].as_array().unwrap().len()
+    };
+    assert_eq!(count("{ duration > 1s }"), 1);
+    assert_eq!(count("{ duration < 1s }"), 1);
+    assert_eq!(count("{ duration > 1h }"), 0);
+    assert_eq!(count("{ duration >= 100ms }"), 2);
+}
+
 fn prom_get(state: &AppState, path: &str, query: &[(&str, &str)]) -> Value {
     let params = query
         .iter()
