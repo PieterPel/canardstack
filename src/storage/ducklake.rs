@@ -321,6 +321,10 @@ pub(super) fn configure_base_connection(conn: &Connection) -> Result<()> {
     conn.execute_batch(&format!(
         "SET preserve_insertion_order=false;\nSET disabled_optimizers='late_materialization';\nPRAGMA threads={DUCKDB_THREADS};"
     ))?;
+    // A DuckDB with the ICU extension (every prebuilt libduckdb) converts TIMESTAMPTZ through the
+    // host's local zone; pin UTC so results do not depend on where the server runs. A build
+    // without ICU has no such setting and is already UTC, so a failure here is expected.
+    let _ = conn.execute_batch("SET TimeZone='UTC';");
     Ok(())
 }
 
