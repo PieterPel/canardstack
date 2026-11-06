@@ -46,6 +46,17 @@ pick up changes through the bind mount. Screenshots from the image renderer are 
 The demo stacks use the same host ports as the benchmark profiles, so do not run `demo.py` while a
 benchmark is running.
 
+## Query compatibility
+
+`bench/compat/` scores how much of PromQL, LogQL and Tempo's search API each stack answers
+correctly, with golden values computed from the workload and validated against Mimir, Loki and
+Tempo. Wrong answers count against a stack, and a committed baseline per target fails the run when
+a passing case regresses. See `bench/compat/README.md` for the scoreboard and what is failing.
+
+```bash
+uv run --project bench bench/compat/run.py --target canardstack-pg --check-baseline
+```
+
 ## What is measured
 
 | Phase | What it records |

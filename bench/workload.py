@@ -21,6 +21,7 @@ class Workload:
     records: int  # per service, per signal
     base_ns: int
     run: str = ""  # unique per run so a reused stack never mixes datasets
+    metric_prefix: str = "bench"  # metrics are <prefix>_gauge and <prefix>_requests
 
     @property
     def query_limit(self) -> int:
@@ -131,9 +132,9 @@ class Workload:
                             "scopeMetrics": [
                                 {
                                     "metrics": [
-                                        {"name": "bench_gauge", "gauge": {"dataPoints": gauge}},
+                                        {"name": f"{self.metric_prefix}_gauge", "gauge": {"dataPoints": gauge}},
                                         {
-                                            "name": "bench_requests",
+                                            "name": f"{self.metric_prefix}_requests",
                                             "sum": {
                                                 "aggregationTemporality": 2,
                                                 "isMonotonic": True,

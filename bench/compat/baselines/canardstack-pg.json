@@ -1,0 +1,31 @@
+{
+  "pass": [
+    "logql.label_not_equal",
+    "logql.label_regex",
+    "logql.line_contains",
+    "logql.line_regex",
+    "logql.meta_label_names",
+    "logql.selector",
+    "promql.agg_avg",
+    "promql.agg_count",
+    "promql.agg_max",
+    "promql.agg_min",
+    "promql.agg_sum",
+    "promql.meta_label_names",
+    "promql.meta_label_values",
+    "promql.meta_metric_names",
+    "promql.range_counter_last",
+    "promql.range_peak",
+    "promql.range_rate",
+    "promql.range_sum_by",
+    "traceql.meta_tag_names",
+    "traceql.search_by_tag",
+    "traceql.search_tag_no_match",
+    "traceql.trace_by_id",
+    "traceql.traceql_and",
+    "traceql.traceql_duration_lt_all",
+    "traceql.traceql_service",
+    "traceql.traceql_service_no_match",
+    "traceql.traceql_span_name"
+  ]
+}
