@@ -5,7 +5,9 @@ use crate::db::sql::{quote, time_predicate};
 use crate::query::prom_labels::{labels_from_row, INSTANCE_SQL, JOB_SQL, SERIES_COLUMNS};
 use crate::query::prom_names::{le_text, prom_name, stored_name_candidates, Kind, ESCAPED_NAME_SQL, HISTOGRAM_COMPONENTS};
 use crate::signal::StorageSignal;
+use crate::query::native_histogram::Hist;
 use chrono::{TimeZone, Utc};
+use std::sync::Arc;
 
 pub(super) struct Req {
     pub(super) key: String,
@@ -13,9 +15,11 @@ pub(super) struct Req {
     window_ms: i64,
 }
 
+/// One stored series: float samples, or native histogram samples (never both).
 pub(super) struct Raw {
     pub(super) labels: Labels,
     pub(super) samples: Vec<(i64, f64)>,
+    pub(super) hists: Vec<(i64, Arc<Hist>)>,
 }
 
 pub(super) fn offset_ms(vs: &VectorSelector) -> i64 {
@@ -128,6 +132,9 @@ struct Compiled {
     /// Whether the selector can match a histogram series (`_bucket`, `_sum`, `_count`), which are
     /// read from the histogram table: only then is that table scanned.
     histogram: bool,
+    /// Whether the selector can match a native histogram (any name that is not `_bucket`, `_sum` or
+    /// `_count`).
+    native: bool,
 }
 
 fn compile(vs: &VectorSelector) -> ApiResult<Compiled> {
@@ -150,11 +157,13 @@ fn compile(vs: &VectorSelector) -> ApiResult<Compiled> {
         matchers: Vec::new(),
         names: Vec::new(),
         histogram: true,
+        native: true,
     };
     for (label, op, value) in raw {
         if label == METRIC_NAME && matches!(op, MatchOp::Equal) && compiled.names.is_empty() {
             compiled.names = stored_name_candidates(&value);
             compiled.histogram = HISTOGRAM_COMPONENTS.iter().any(|c| value.ends_with(c));
+            compiled.native = !compiled.histogram;
         }
         let test = match op {
             MatchOp::Equal => Test::Eq(value),
@@ -176,8 +185,11 @@ pub(super) fn fetch(
     struct Plan {
         key: String,
         sql: String,
+        /// Reads the native histograms; `None` when the selector cannot match one or none are stored.
+        native_sql: Option<String>,
         compiled: Compiled,
     }
+    let has_native = engine.has_exp_histograms(storage);
     let mut plans = Vec::new();
     for req in reqs {
         let compiled = compile(&req.vs)?;
@@ -246,9 +258,18 @@ pub(super) fn fetch(
             ));
         }
         let sql = format!("{} LIMIT {}", parts.join(" UNION ALL "), MAX_SAMPLES + 1);
+        let native_sql = (has_native && compiled.native).then(|| {
+            format!(
+                "SELECT name, concat_ws(chr(31), coalesce(service_name, ''), coalesce(service_namespace, ''), coalesce(service_instance_id, ''), coalesce(CAST(resource_attributes AS VARCHAR), ''), coalesce(scope_name, ''), coalesce(CAST(metric_attributes AS VARCHAR), '')) AS sid, epoch_ms(time_unix_nano) AS t, scale, count, sum, zero_count, positive_offset, to_json(positive_bucket_counts), negative_offset, to_json(negative_bucket_counts), {SERIES_COLUMNS}, unit, zero_threshold FROM {{prefix}}{} WHERE {} LIMIT {}",
+                StorageSignal::MetricExpHistogram.as_str(),
+                filters.join(" AND "),
+                MAX_SAMPLES + 1
+            )
+        });
         plans.push(Plan {
             key: req.key.clone(),
             sql,
+            native_sql,
             compiled,
         });
     }
@@ -313,10 +334,47 @@ pub(super) fn fetch(
                         e.insert(Raw {
                             labels,
                             samples: Vec::new(),
+                            hists: Vec::new(),
                         })
                     }
                 };
                 raw.samples.push((t, v));
+            }
+            if let Some(native_sql) = &plan.native_sql {
+                let mut stmt = conn.prepare(&native_sql.replace("{prefix}", prefix))?;
+                let mut rows = stmt.query([])?;
+                while let Some(row) = rows.next()? {
+                    total += 1;
+                    if total > MAX_SAMPLES {
+                        return Ok(Err(exec_err(format!(
+                            "query selects more than {MAX_SAMPLES} samples; narrow the selector or the time range"
+                        ))));
+                    }
+                    let counts = |i: usize| -> Vec<f64> {
+                        row.get::<_, Option<String>>(i).ok().flatten().and_then(|j| serde_json::from_str::<Vec<f64>>(&j).ok()).unwrap_or_default()
+                    };
+                    let (pos, neg) = (counts(8), counts(10));
+                    let Some(scale) = row.get::<_, Option<i32>>(3)? else { continue };
+                    let count = row.get::<_, Option<i64>>(4)?.unwrap_or(0) as f64;
+                    let sum = row.get::<_, Option<f64>>(5)?.unwrap_or(0.0);
+                    let zero = row.get::<_, Option<i64>>(6)?.unwrap_or(0) as f64;
+                    let Some(hist) = Hist::from_otlp(scale, row.get::<_, Option<f64>>(18)?.unwrap_or(0.0), zero, count, sum, row.get::<_, Option<i32>>(7)?.unwrap_or(0), &pos, row.get::<_, Option<i32>>(9)?.unwrap_or(0), &neg) else {
+                        // A scale below Prometheus' smallest schema cannot be represented.
+                        continue;
+                    };
+                    let name: String = row.get(0)?;
+                    let sid: String = row.get(1)?;
+                    let t: i64 = row.get(2)?;
+                    let unit: Option<String> = row.get(17)?;
+                    let name = prom_name(&name, unit.as_deref(), Kind::Histogram, suffixes);
+                    let raw = by_series.entry((name.clone(), sid)).or_insert_with(|| {
+                        let col = |i: usize| row.get::<_, Option<String>>(11 + i).ok().flatten();
+                        let mut labels = labels_from_row(col(0).as_deref(), col(1).as_deref(), col(2).as_deref(), col(3).as_deref(), col(4).as_deref(), col(5).as_deref());
+                        labels.insert(METRIC_NAME.to_string(), name);
+                        Raw { labels, samples: Vec::new(), hists: Vec::new() }
+                    });
+                    raw.hists.push((t, Arc::new(hist)));
+                }
             }
             let mut series: Vec<Raw> = by_series
                 .into_values()
@@ -329,6 +387,7 @@ pub(super) fn fetch(
                 .collect();
             for raw in &mut series {
                 raw.samples.sort_by_key(|s| s.0);
+                raw.hists.sort_by_key(|s| s.0);
             }
             series.sort_by(|a, b| a.labels.cmp(&b.labels));
             out.insert(plan.key.clone(), series);

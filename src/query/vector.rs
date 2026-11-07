@@ -158,7 +158,7 @@ pub fn vector_scalar(
 }
 
 /// The labels two series are matched on.
-fn signature(labels: &Labels, on: &Option<(bool, Vec<String>)>) -> Labels {
+pub fn signature(labels: &Labels, on: &Option<(bool, Vec<String>)>) -> Labels {
     let base = labels.iter().filter(|(k, _)| k.as_str() != METRIC_NAME);
     match on {
         None => base.map(|(k, v)| (k.clone(), v.clone())).collect(),

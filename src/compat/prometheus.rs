@@ -1,7 +1,8 @@
 use super::params::{
     optional_range, optional_time, parse_step, required_param, required_time, validate_range,
 };
-use crate::query::promql::{self, Grid, Value as PromValue};
+use crate::query::native_histogram::Hist;
+use crate::query::promql::{self, Grid, Sample, Value as PromValue};
 use crate::validation::{ApiError, ApiResult, MULTI_VALUE_SEPARATOR};
 use crate::AppState;
 use chrono::Utc;
@@ -34,6 +35,15 @@ pub fn prometheus_query(state: &AppState, params: &HashMap<String, String>) -> A
             "result": series.into_iter().filter_map(|s| {
                 let v = s.vals[0]?;
                 Some(json!({"metric": s.labels, "value": [ts_json(grid.start_ms), prom_value(v)]}))
+            }).collect::<Vec<_>>()
+        }),
+        PromValue::Samples(series) => json!({
+            "resultType": "vector",
+            "result": series.into_iter().filter_map(|s| {
+                Some(match s.vals[0].as_ref()? {
+                    Sample::F(v) => json!({"metric": s.labels, "value": [ts_json(grid.start_ms), prom_value(*v)]}),
+                    Sample::H(h) => json!({"metric": s.labels, "histogram": [ts_json(grid.start_ms), hist_json(h)]}),
+                })
             }).collect::<Vec<_>>()
         }),
     };
@@ -69,6 +79,30 @@ pub fn prometheus_query_range(
             vals: v.into_iter().map(Some).collect(),
         }],
         PromValue::Vector(series) => series,
+        PromValue::Samples(series) => {
+            let result = series
+                .into_iter()
+                .filter_map(|s| {
+                    let (mut values, mut histograms) = (Vec::new(), Vec::new());
+                    for (i, v) in s.vals.iter().enumerate() {
+                        match v {
+                            Some(Sample::F(x)) => values.push(json!([ts_json(grid.ts(i)), prom_value(*x)])),
+                            Some(Sample::H(h)) => histograms.push(json!([ts_json(grid.ts(i)), hist_json(h)])),
+                            None => {}
+                        }
+                    }
+                    let mut series = json!({"metric": s.labels});
+                    if !values.is_empty() {
+                        series["values"] = json!(values);
+                    }
+                    if !histograms.is_empty() {
+                        series["histograms"] = json!(histograms);
+                    }
+                    (!values.is_empty() || !histograms.is_empty()).then_some(series)
+                })
+                .collect::<Vec<_>>();
+            return Ok(prom_success(json!({"resultType": "matrix", "result": result})));
+        }
         PromValue::Str(_) => return Err(ApiError::new(400, "bad_data", "string result in a range query")),
     };
     let result = series
@@ -140,14 +174,49 @@ pub fn prometheus_metadata(state: &AppState) -> ApiResult<Value> {
     Ok(prom_success(metadata))
 }
 
+/// A float the way Prometheus' API prints it: plain decimal notation, except for very small and
+/// very large magnitudes, which use an exponent.
 pub(super) fn prom_value(value: f64) -> String {
     if value.is_nan() {
-        "NaN".to_string()
-    } else if value.is_infinite() {
-        if value > 0.0 { "+Inf" } else { "-Inf" }.to_string()
-    } else {
-        value.to_string()
+        return "NaN".to_string();
     }
+    if value.is_infinite() {
+        return if value > 0.0 { "+Inf" } else { "-Inf" }.to_string();
+    }
+    let abs = value.abs();
+    if abs != 0.0 && (abs < 1e-6 || abs >= 1e21) {
+        // Rust prints `1.5e-7`; Go prints `1.5e-07` (a sign and at least two exponent digits).
+        let text = format!("{value:e}");
+        let (mantissa, exponent) = text.split_once('e').unwrap_or((&text, "0"));
+        let exponent: i32 = exponent.parse().unwrap_or(0);
+        return format!("{mantissa}e{}{:02}", if exponent < 0 { '-' } else { '+' }, exponent.abs());
+    }
+    value.to_string()
+}
+
+/// A native histogram sample as Prometheus' API prints it: count, sum and the non-empty buckets as
+/// `[boundaries, lower, upper, count]` (0: lower exclusive, upper inclusive; 1: the reverse; 2: both
+/// exclusive; 3: both inclusive).
+fn hist_json(h: &Hist) -> Value {
+    let mut out = json!({"count": prom_value(h.count), "sum": prom_value(h.sum)});
+    let buckets: Vec<Value> = h
+        .all_buckets()
+        .into_iter()
+        .filter(|b| b.count != 0.0)
+        .map(|b| {
+            let boundaries = match (b.lower_inclusive, b.upper_inclusive) {
+                (true, true) => 3,
+                (true, false) => 1,
+                (false, true) => 0,
+                (false, false) => 2,
+            };
+            json!([boundaries, prom_value(b.lower), prom_value(b.upper), prom_value(b.count)])
+        })
+        .collect();
+    if !buckets.is_empty() {
+        out["buckets"] = json!(buckets);
+    }
+    out
 }
 
 fn prom_success(data: Value) -> Value {

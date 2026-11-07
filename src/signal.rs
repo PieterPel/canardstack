@@ -15,15 +15,17 @@ pub enum StorageSignal {
     MetricGauge,
     MetricSum,
     MetricHistogram,
+    MetricExpHistogram,
 }
 
 impl StorageSignal {
-    pub const ALL: [StorageSignal; 5] = [
+    pub const ALL: [StorageSignal; 6] = [
         StorageSignal::Logs,
         StorageSignal::Spans,
         StorageSignal::MetricGauge,
         StorageSignal::MetricSum,
         StorageSignal::MetricHistogram,
+        StorageSignal::MetricExpHistogram,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -33,6 +35,7 @@ impl StorageSignal {
             StorageSignal::MetricGauge => "otlp_metrics_gauge",
             StorageSignal::MetricSum => "otlp_metrics_sum",
             StorageSignal::MetricHistogram => "otlp_metrics_histogram",
+            StorageSignal::MetricExpHistogram => "otlp_metrics_exp_histogram",
         }
     }
 }

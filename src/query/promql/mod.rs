@@ -23,6 +23,7 @@ mod eval;
 mod fetch;
 mod functions;
 mod histogram;
+mod native;
 mod regression;
 mod subquery;
 
@@ -42,8 +43,12 @@ pub use crate::query::vector::{Grid, Series};
 pub enum Value {
     Scalar(Vec<f64>),
     Vector(Vec<Series>),
+    /// A vector that holds native histogram samples, alone or next to float ones.
+    Samples(Vec<native::SSeries>),
     Str(String),
 }
+
+pub use native::{SSeries, Sample};
 
 fn bad(msg: impl Into<String>) -> ApiError {
     ApiError::new(400, "bad_data", msg)
@@ -109,12 +114,25 @@ fn unescape(name: &str) -> String {
 }
 
 
+/// Prometheus' strings can hold any byte, so `"\xff"` is invalid UTF-8 and it refuses it as a label
+/// name; the parser used here turns the escape into the character `ÿ`. A byte escape of 0x80 or more in
+/// a query that renames labels is therefore rejected the way Prometheus does.
+fn reject_invalid_utf8_labels(query: &str) -> ApiResult<()> {
+    static ESCAPE: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
+    let escape = ESCAPE.get_or_init(|| Regex::new(r"\\x[89a-fA-F][0-9a-fA-F]").expect("static regex"));
+    if (query.contains("label_replace") || query.contains("label_join")) && escape.is_match(query) {
+        return Err(bad("invalid label name: it is not valid UTF-8"));
+    }
+    Ok(())
+}
+
 pub fn evaluate(
     engine: &QueryEngine,
     storage: &Storage,
     query: &str,
     grid: Grid,
 ) -> ApiResult<Value> {
+    reject_invalid_utf8_labels(query)?;
     let expr = parser::parse(&escape_dots(query)).map_err(bad)?;
     let mut reqs = Vec::new();
     collect(&expr, &mut reqs)?;
@@ -134,6 +152,15 @@ pub fn evaluate(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn byte_escapes_that_are_not_utf8_are_rejected_in_label_functions() {
+        assert!(reject_invalid_utf8_labels(r#"label_replace(up, "\xff", "", "src", "(.*)")"#).is_err());
+        assert!(reject_invalid_utf8_labels(r#"label_join(up, "\xff", "-", "instance")"#).is_err());
+        assert!(reject_invalid_utf8_labels(r#"label_replace(up, "dst", "", "src", "(.*)")"#).is_ok());
+        assert!(reject_invalid_utf8_labels(r#"up{a="\xff"}"#).is_ok());
+        assert!(reject_invalid_utf8_labels(r#"label_replace(up, "a\x41", "", "src", "(.*)")"#).is_ok());
+    }
 
     #[test]
     fn dotted_names_are_escaped_outside_strings_and_numbers() {

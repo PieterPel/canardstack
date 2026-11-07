@@ -56,7 +56,7 @@ OpenTelemetry producers
   -> bounded Prometheus / Loki / Tempo compatibility APIs
 ```
 
-Storage signals are `Logs`, `Spans`, `MetricGauge`, `MetricSum`, and `MetricHistogram`. Explicit-bucket histograms are read as Prometheus `_bucket{le}`, `_sum` and `_count` series (the histogram table is only scanned for selectors that can match them). Exponential histograms (Prometheus native histograms) and summaries are not part of the query surface.
+Storage signals are `Logs`, `Spans`, `MetricGauge`, `MetricSum`, `MetricHistogram` and `MetricExpHistogram`. Explicit-bucket histograms are read as Prometheus `_bucket{le}`, `_sum` and `_count` series (the histogram table is only scanned for selectors that can match them). Exponential histograms are read as Prometheus native histograms (`src/query/native_histogram.rs`, `src/query/promql/native.rs`); that table is only scanned once it has data, checked every 30 seconds. Summaries are not part of the query surface.
 
 ## Source Map
 
@@ -69,7 +69,7 @@ Storage signals are `Logs`, `Spans`, `MetricGauge`, `MetricSum`, and `MetricHist
 - `src/signal.rs` - shared `StorageSignal` physical signal/table vocabulary.
 - `src/admission_control.rs` - cheap/heavy query admission.
 - `src/storage/` - DuckDB/DuckLake attach, schema fencing, health probes, metadata helpers, and scoped query connections.
-- `src/query/` - bounded query helpers, shared query plans, and Prometheus/Loki/Tempo selector parsing.
+- `src/query/` - bounded query helpers, shared query plans, and Prometheus/Loki/Tempo selector parsing; `native_histogram.rs` holds the native histogram type and arithmetic, ported from Prometheus.
 - `src/compat/` - Prometheus/Loki/Tempo route adapters and the v0 public query surface.
 - `src/metadata.rs` - bounded discovery-metadata adapters over visible DuckLake rows, with an in-process cache.
 - `src/metrics.rs` - Prometheus-style operator metrics at `/metrics`.

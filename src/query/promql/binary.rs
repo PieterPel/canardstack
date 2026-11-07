@@ -28,6 +28,9 @@ impl Ev<'_> {
         let lhs = self.eval(&b.lhs)?;
         let rhs = self.eval(&b.rhs)?;
         let n = self.n();
+        if matches!(lhs, Value::Samples(_)) || matches!(rhs, Value::Samples(_)) {
+            return self.binary_samples(b, lhs, rhs);
+        }
         match (lhs, rhs) {
             (Value::Scalar(a), Value::Scalar(c)) => {
                 if comparison && !as_bool {

@@ -1,4 +1,6 @@
+pub mod exponential_bounds;
 pub mod logql;
+pub mod native_histogram;
 pub mod plan;
 pub mod prom_discovery;
 pub mod prom_labels;
@@ -31,6 +33,7 @@ pub struct QueryEngine {
     interactive_memory_limit: String,
     execution: Option<Arc<QueryExecution>>,
     prom_name_suffixes: bool,
+    exp_histograms: Arc<std::sync::Mutex<Option<(std::time::Instant, bool)>>>,
 }
 
 impl QueryEngine {
@@ -42,7 +45,30 @@ impl QueryEngine {
             interactive_memory_limit: config.operator.query_interactive.memory_limit.clone(),
             execution: None,
             prom_name_suffixes: config.operator.prometheus_name_suffixes,
+            exp_histograms: Default::default(),
         }
+    }
+
+    /// Whether any native (exponential) histogram has been stored. Checked at most every 30 seconds,
+    /// so metric queries only scan that table once it has data. A histogram that arrives is seen
+    /// within that time.
+    pub fn has_exp_histograms(&self, storage: &Storage) -> bool {
+        use crate::LockExt;
+        const TTL: Duration = Duration::from_secs(30);
+        if let Some((at, present)) = *self.exp_histograms.lock_or_poisoned() {
+            if at.elapsed() < TTL {
+                return present;
+            }
+        }
+        let present = self
+            .run_interactive(storage, |conn, prefix| {
+                let sql = format!("SELECT count(*) FROM (SELECT 1 FROM {prefix}{} LIMIT 1)", StorageSignal::MetricExpHistogram.as_str());
+                Ok(conn.query_row(&sql, [], |row| row.get::<_, i64>(0))? > 0)
+            })
+            // When in doubt, look.
+            .unwrap_or(true);
+        *self.exp_histograms.lock_or_poisoned() = Some((std::time::Instant::now(), present));
+        present
     }
 
     /// Whether Prometheus metric names carry unit and `_total` suffixes (see `prom_names`).

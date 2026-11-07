@@ -43,6 +43,8 @@ impl Ev<'_> {
             };
             let series = match inner.eval(&sq.expr)? {
                 Value::Vector(series) => series,
+                // Subqueries over native histograms are not supported; their float part is used.
+                Value::Samples(samples) => super::native::split(samples).0,
                 Value::Scalar(values) => vec![Series {
                     labels: Labels::new(),
                     vals: values.into_iter().map(Some).collect(),

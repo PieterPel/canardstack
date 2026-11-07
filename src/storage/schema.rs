@@ -27,6 +27,7 @@ pub(super) fn create_tables_on(conn: &Connection, prefix: &str) -> Result<()> {
         StorageSignal::MetricGauge,
         StorageSignal::MetricSum,
         StorageSignal::MetricHistogram,
+        StorageSignal::MetricExpHistogram,
     ] {
         ddl.push_str(&create_table_sql(
             prefix,
@@ -53,6 +54,7 @@ pub(super) fn configure_telemetry_partitioning_on(conn: &Connection, prefix: &st
         StorageSignal::MetricGauge,
         StorageSignal::MetricSum,
         StorageSignal::MetricHistogram,
+        StorageSignal::MetricExpHistogram,
     ] {
         let ts = table_timestamp_column(table);
         conn.execute_batch(&format!(
@@ -73,7 +75,7 @@ pub(crate) fn table_timestamp_column(signal: StorageSignal) -> &'static str {
     match signal {
         StorageSignal::Logs => "time_unix_nano",
         StorageSignal::Spans => "start_time_unix_nano",
-        StorageSignal::MetricGauge | StorageSignal::MetricSum | StorageSignal::MetricHistogram => "time_unix_nano",
+        StorageSignal::MetricGauge | StorageSignal::MetricSum | StorageSignal::MetricHistogram | StorageSignal::MetricExpHistogram => "time_unix_nano",
     }
 }
 // The read-side table contract follows duckdb-otlp's DuckDB-facing schema.
@@ -196,6 +198,38 @@ pub(super) const METRIC_HISTOGRAM_COLUMNS: &[(&str, &str)] = &[
     ("aggregation_temporality", "INTEGER"),
 ];
 
+/// Exponential histograms (Prometheus native histograms). Each of `positive_bucket_counts` and
+/// `negative_bucket_counts` starts at the bucket with index `*_offset`.
+pub(super) const METRIC_EXP_HISTOGRAM_COLUMNS: &[(&str, &str)] = &[
+    ("time_unix_nano", "TIMESTAMP_NS"),
+    ("start_time_unix_nano", "TIMESTAMP_NS"),
+    ("name", "VARCHAR"),
+    ("description", "VARCHAR"),
+    ("unit", "VARCHAR"),
+    ("count", "UBIGINT"),
+    ("sum", "DOUBLE"),
+    ("min", "DOUBLE"),
+    ("max", "DOUBLE"),
+    ("scale", "INTEGER"),
+    ("zero_count", "UBIGINT"),
+    ("zero_threshold", "DOUBLE"),
+    ("positive_offset", "INTEGER"),
+    ("positive_bucket_counts", "UBIGINT[]"),
+    ("negative_offset", "INTEGER"),
+    ("negative_bucket_counts", "UBIGINT[]"),
+    ("service_name", "VARCHAR"),
+    ("service_namespace", "VARCHAR"),
+    ("service_instance_id", "VARCHAR"),
+    ("resource_attributes", "VARCHAR"),
+    ("scope_name", "VARCHAR"),
+    ("scope_version", "VARCHAR"),
+    ("scope_attributes", "VARCHAR"),
+    ("metric_attributes", "VARCHAR"),
+    ("flags", "UINTEGER"),
+    ("exemplars_json", "VARCHAR"),
+    ("aggregation_temporality", "INTEGER"),
+];
+
 pub(super) const METADATA_SUMMARY_COLUMNS: &[(&str, &str)] = &[
     ("signal", "VARCHAR"),
     ("event_date", "DATE"),
@@ -222,6 +256,7 @@ pub(super) fn table_columns(
         StorageSignal::MetricGauge => METRIC_GAUGE_COLUMNS,
         StorageSignal::MetricSum => METRIC_SUM_COLUMNS,
         StorageSignal::MetricHistogram => METRIC_HISTOGRAM_COLUMNS,
+        StorageSignal::MetricExpHistogram => METRIC_EXP_HISTOGRAM_COLUMNS,
     }
 }
 
@@ -241,9 +276,10 @@ pub(super) fn create_table_sql(prefix: &str, name: &str, cols: &[(&str, &str)]) 
 /// names use the `otlp_*` prefix, trace/span IDs are hex VARCHAR, and
 /// canardstack no longer owns `ingested_at`/`source_format` bookkeeping columns.
 ///
-/// v4 adds the `otlp_metrics_histogram` table. It is additive (an older catalog is read as is and
-/// gets the table created), so the minimum compatible version stays at v3.
-pub(super) const SCHEMA_VERSION: u32 = 4;
+/// v4 adds the `otlp_metrics_histogram` table and v5 the `otlp_metrics_exp_histogram` table. Both are
+/// additive (an older catalog is read as is and gets the table created), so the minimum compatible
+/// version stays at v3.
+pub(super) const SCHEMA_VERSION: u32 = 5;
 /// The oldest catalog schema generation this binary can safely operate on. Keep
 /// it equal to [`SCHEMA_VERSION`] for a breaking change; an additive,
 /// schema-on-read-tolerant (expand/contract) change can leave this low so a
@@ -441,6 +477,7 @@ mod tests {
             StorageSignal::MetricGauge => "gauge",
             StorageSignal::MetricSum => "sum",
             StorageSignal::MetricHistogram => "histogram",
+            StorageSignal::MetricExpHistogram => "exp_histogram",
         }
     }
 

@@ -14,7 +14,11 @@ fn grouping(modifier: &Option<LabelModifier>) -> Option<Grouping> {
 impl Ev<'_> {
     pub(super) fn aggregate(&self, agg: &parser::AggregateExpr) -> ApiResult<Value> {
         let op = agg.op.to_string();
-        let input = self.vector_arg(&agg.expr)?;
+        let (input, hists) = match self.eval(&agg.expr)? {
+            Value::Vector(v) => (v, Vec::new()),
+            Value::Samples(samples) => super::native::split(samples),
+            _ => return Err(bad("expected an instant vector")),
+        };
         let grouping = grouping(&agg.modifier);
         if op == "count_values" {
             let label = match &agg.param {
@@ -34,9 +38,10 @@ impl Ev<'_> {
         ) {
             return Err(unsupported(format!("aggregation `{op}` is not supported")));
         }
-        vector::aggregate(&op, self.n(), input, &grouping, param.as_deref())
+        let floats = vector::aggregate(&op, self.n(), input, &grouping, param.as_deref())
             .map(Value::Vector)
-            .map_err(bad)
+            .map_err(bad)?;
+        self.aggregate_samples(&op, floats, hists, &grouping)
     }
 
     /// `count_values("label", v)`: per group and step, how many series hold each distinct value.

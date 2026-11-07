@@ -22,6 +22,7 @@ impl Ev<'_> {
             Expr::StringLiteral(s) => Ok(Value::Str(s.val.clone())),
             Expr::Paren(p) => self.eval(&p.expr),
             Expr::Unary(u) => Ok(match self.eval(&u.expr)? {
+                Value::Samples(samples) => Value::Samples(super::native::negate(samples)),
                 Value::Scalar(v) => Value::Scalar(v.into_iter().map(|x| -x).collect()),
                 Value::Vector(series) => Value::Vector(
                     series
@@ -35,7 +36,11 @@ impl Ev<'_> {
                 ),
                 Value::Str(_) => return Err(bad("unary minus on a string")),
             }),
-            Expr::VectorSelector(vs) => Ok(Value::Vector(self.instant_selector(vs, false)?)),
+            Expr::VectorSelector(vs) => {
+                let floats = self.instant_selector(vs, false)?;
+                let hists = self.hist_instant(vs)?;
+                Ok(if hists.is_empty() { Value::Vector(floats) } else { Value::Samples(super::native::combine(floats, hists)) })
+            }
             Expr::MatrixSelector(_) => Err(unsupported(
                 "range vectors are only supported as function arguments",
             )),
@@ -133,6 +138,8 @@ impl Ev<'_> {
     pub(super) fn vector_arg(&self, expr: &Expr) -> ApiResult<Vec<Series>> {
         match self.eval(expr)? {
             Value::Vector(v) => Ok(v),
+            // Functions that know nothing of histograms see only the float samples.
+            Value::Samples(samples) => Ok(super::native::split(samples).0),
             _ => Err(bad("expected an instant vector")),
         }
     }

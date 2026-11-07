@@ -13,7 +13,7 @@ fn valid_label_names(names: &[&str]) -> ApiResult<()> {
 impl Ev<'_> {
     /// `absent()` / `absent_over_time()`: one series with value 1 at every step where `input` has
     /// no samples. Labels come from the equality matchers of the selector.
-    fn absent(&self, selector: &Expr, input: &[Series]) -> Value {
+    pub(super) fn absent(&self, selector: &Expr, input: &[Series]) -> Value {
         let mut labels = Labels::new();
         if let Expr::VectorSelector(vs) = selector {
             for m in &vs.matchers.matchers {
@@ -28,7 +28,7 @@ impl Ev<'_> {
         Value::Vector(vec![Series { labels, vals }])
     }
 
-    pub(super) fn call(&self, name: &str, args: &[Box<Expr>]) -> ApiResult<Value> {
+    pub(super) fn call_floats(&self, name: &str, args: &[Box<Expr>]) -> ApiResult<Value> {
         let arg = |i: usize| -> ApiResult<&Expr> {
             args.get(i)
                 .map(|b| b.as_ref())

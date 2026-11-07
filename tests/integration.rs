@@ -713,6 +713,95 @@ fn promql_reads_explicit_histograms_as_classic_bucket_sum_and_count_series() {
     assert_eq!(metadata["http_server_duration_seconds"][0]["type"], "histogram");
 }
 
+/// One native (exponential) histogram series `lat` in seconds, scale 0, scraped twice ten seconds
+/// apart. First scrape: 1 in the zero bucket, 2 in (1, 2], 3 in (2, 4]; second: 2, 4 and 6.
+fn app_with_native_histogram() -> (tempfile::TempDir, AppState) {
+    let dir = tempdir().unwrap();
+    let mut config = Config::test(dir.path().join("canardstack.duckdb"));
+    config.operator.local_storage_dir = dir.path().join("storage");
+    let state = AppState::new_with_storage_hook_for_tests(config, |storage| {
+        storage
+            .with_conn(|conn, prefix| {
+                conn.execute_batch(&format!(
+                    "INSERT INTO {prefix}otlp_metrics_exp_histogram \
+                     (time_unix_nano, start_time_unix_nano, name, unit, count, sum, scale, zero_count, zero_threshold, \
+                      positive_offset, positive_bucket_counts, negative_offset, negative_bucket_counts, \
+                      service_name, service_instance_id, resource_attributes, metric_attributes, aggregation_temporality) VALUES \
+                     (TIMESTAMP_NS '2026-01-01 00:00:00', TIMESTAMP_NS '2025-12-31 23:59:00', 'lat', 's', 6, 10.0, 0, 1, 0.0, \
+                      0, [2, 3], 0, [], 'web', 'h1', '{{}}', '{{\"route\":\"/a\"}}', 2), \
+                     (TIMESTAMP_NS '2026-01-01 00:00:10', TIMESTAMP_NS '2025-12-31 23:59:00', 'lat', 's', 12, 20.0, 0, 2, 0.0, \
+                      0, [4, 6], 0, [], 'web', 'h1', '{{}}', '{{\"route\":\"/a\"}}', 2);"
+                ))?;
+                Ok(())
+            })
+            .unwrap();
+    })
+    .unwrap();
+    (dir, state)
+}
+
+#[test]
+fn promql_evaluates_native_histograms() {
+    let (_dir, state) = app_with_native_histogram();
+    let at = |q: &str, t: &str| prom_get(&state, "/api/v1/query", &[("query", q), ("time", t)])["data"]["result"].clone();
+    let float = |q: &str, t: &str| -> f64 { at(q, t)[0]["value"][1].as_str().unwrap_or_else(|| panic!("no float for {q}: {}", at(q, t))).parse().unwrap() };
+    // 2026-01-01T00:00:00Z = 1767225600. The sample is a histogram with its non-empty buckets.
+    let sample = at("lat_seconds", "1767225600");
+    assert_eq!(sample[0]["metric"]["__name__"], "lat_seconds");
+    assert_eq!(sample[0]["metric"]["job"], "web");
+    assert_eq!(sample[0]["metric"]["route"], "/a");
+    let h = &sample[0]["histogram"][1];
+    assert_eq!((h["count"].as_str(), h["sum"].as_str()), (Some("6"), Some("10")));
+    // `1e-128` is how Prometheus prints the default zero threshold.
+    assert_eq!(
+        h["buckets"],
+        serde_json::json!([[3, "-1e-128", "1e-128", "1"], [0, "1", "2", "2"], [0, "2", "4", "3"]])
+    );
+    assert_eq!(float("histogram_count(lat_seconds)", "1767225600"), 6.0);
+    assert_eq!(float("histogram_sum(lat_seconds)", "1767225610"), 20.0);
+    assert_eq!(float("histogram_avg(lat_seconds)", "1767225610"), 20.0 / 12.0);
+    // 6 more observations in 10 s, extrapolated to the start of the 1 m window like a float rate:
+    // (6 * (10 + 5) / 10) / 60.
+    let rate = float("histogram_count(rate(lat_seconds[1m]))", "1767225610");
+    assert!((rate - 6.0 * 1.5 / 60.0).abs() < 1e-12, "{rate}");
+    assert_eq!(float("histogram_quantile(0.5, lat_seconds)", "1767225600"), 2.0);
+    assert!(at("histogram_quantile(0.5, lat_seconds)", "1767225600")[0]["metric"].get("__name__").is_none());
+    // Aggregation sums histograms; count counts series; arithmetic scales them and rejects floats.
+    assert_eq!(at("sum(lat_seconds)", "1767225610")[0]["histogram"][1]["count"], "12");
+    assert_eq!(float("count(lat_seconds)", "1767225610"), 1.0);
+    assert_eq!(at("lat_seconds * 2", "1767225610")[0]["histogram"][1]["count"], "24");
+    assert_eq!(at("lat_seconds / 4", "1767225610")[0]["histogram"][1]["sum"], "5");
+    assert_eq!(at("lat_seconds + 1", "1767225610"), serde_json::json!([]));
+    assert_eq!(at("lat_seconds == lat_seconds", "1767225610").as_array().unwrap().len(), 1);
+    assert_eq!(at("lat_seconds != lat_seconds", "1767225610"), serde_json::json!([]));
+    assert_eq!(at("absent_over_time(lat_seconds[1m])", "1767225610"), serde_json::json!([]));
+    assert_eq!(at("absent_over_time(lat_seconds[1m])", "1767226610").as_array().unwrap().len(), 1);
+    // A range query returns the histograms under `histograms`.
+    let range = prom_get(
+        &state,
+        "/api/v1/query_range",
+        &[("query", "lat_seconds"), ("start", "1767225600"), ("end", "1767225610"), ("step", "10")],
+    )["data"]["result"]
+        .clone();
+    assert!(range[0].get("values").is_none());
+    assert_eq!(range[0]["histograms"].as_array().unwrap().len(), 2);
+    // A counter reset is detected from the buckets: the third scrape is lower than the second.
+    state
+        .storage
+        .with_conn(|conn, prefix| {
+            conn.execute_batch(&format!(
+                "INSERT INTO {prefix}otlp_metrics_exp_histogram \
+                 (time_unix_nano, name, unit, count, sum, scale, zero_count, zero_threshold, positive_offset, \
+                  positive_bucket_counts, negative_offset, negative_bucket_counts, service_name, service_instance_id, \
+                  resource_attributes, metric_attributes) VALUES \
+                 (TIMESTAMP_NS '2026-01-01 00:00:20', 'lat', 's', 3, 4.0, 0, 0, 0.0, 0, [1, 2], 0, [], 'web', 'h1', '{{}}', '{{\"route\":\"/a\"}}');"
+            ))?;
+            Ok(())
+        })
+        .unwrap();
+    assert_eq!(float("resets(lat_seconds[1m])", "1767225620"), 1.0);
+}
+
 #[test]
 fn prometheus_discovery_endpoints_honour_match_selectors() {
     let (_dir, state) = app_with_attribute_labels();
