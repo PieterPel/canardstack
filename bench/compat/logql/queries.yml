@@ -1,0 +1,364 @@
+# Query templates from oteldb (github.com/oteldb/oteldb, dev/local/ch-logql-compliance/logql-test-queries.yml),
+# Apache-2.0. Variants such as {{ .range }} are expanded by expand.go.
+test_cases:
+  # Scalar literals.
+  - query: "42"
+  - query: "1.234"
+  - query: ".123"
+  - query: "1.23e-3"
+  - query: "1 + 2 / 3"
+  - query: "2 * 3 % 2"
+  # Binary operators.
+  - query: "vector(1) + vector(2) / vector(3)"
+  - query: "vector(2) * vector(3) % vector(2)"
+  - query: "vector(4) % vector(3) * vector(2)"
+  - query: "vector(1) * vector(2) + vector(4) / vector(6) - vector(10) % vector(2) ^ vector(2)"
+  # Parens.
+  - query: "( vector(1) + vector(2) ) / vector(3)"
+  - query: "( vector(2) * vector(3) ) % vector(2)"
+  - query: "vector(2) * ( vector(3) % vector(2) )"
+
+  # Log queries.
+  #
+  # Log selector.
+  - query: '{this_label_clearly_not_exist=".+"}'
+    should_be_empty: true
+  - query: '{job="varlogs", this_label_clearly_not_exist="varlogs"}'
+    should_be_empty: true
+  - query: '{job="varlogs"}'
+  - query: '{job=~".*varlogs.*"}'
+  - query: '{job="varlogs", this_label_clearly_not_exist!="varlogs"}'
+  # Comment.
+  - query: '{job="varlogs"} # anything that comes after will not be interpreted in your query'
+  # Line filters.
+  #
+  - query: '{job="varlogs"} |= "no way line would contain this message"'
+    should_be_empty: true
+  - query: '{job="varlogs"} |= "HEAD"'
+  - query: '{job="varlogs"} != "HEAD"'
+  - query: '{job="varlogs"} |~ "(HEAD|GET)"'
+  - query: '{job="varlogs"} !~ "(HEAD|GET)"'
+  - query: '{job="varlogs"} |= "HEAD" or "GET"'
+  - query: '{job="varlogs"} != "HEAD" or "GET"'
+  # IP line filter.
+  - query: '{job="varlogs"} |= ip("127.0.0.1")'
+  - query: '{job="varlogs"} |= ip("127.0.0.1") or ip("192.168.1.0/24")'
+  - query: '{job="varlogs"} != ip("127.0.0.1")'
+    should_be_empty: true
+  - query: '{job="varlogs"} |= ip("127.0.0.0/24")'
+  - query: '{job="varlogs"} |= ip("127.0.0.1-127.0.0.6")'
+  # Pattern line filter.
+  - query: '{job="varlogs"} |> "no way line would contain <_> pattern"'
+    should_be_empty: true
+  - query: '{job="varlogs"} !> "no way line would contain <_> pattern"'
+  # Extractors.
+  #
+  # JSON extractor.
+  - query: '{job="varlogs"} | json'
+  - query: '{job="varlogs"} | json method'
+  - query: '{job="varlogs"} | json method_name="method"'
+  # Regexp extractor.
+  - query: '{job="varlogs"} | regexp `\{.*"method":"(?P<method>\w+)".*\}` | method = "HEAD"'
+  # Pattern extractor.
+  - query: '{job="varlogs"} | pattern `<_>"method":"<method>"<_>` | method = "HEAD"'
+  # Label filters.
+  #
+  # String label filter.
+  - query: '{job="varlogs"} | json | method = "HEAD"'
+  - query: '{job="varlogs"} | json | method != "HEAD"'
+  - query: '{job="varlogs"} | json | method =~ "(HEAD|GET)"'
+  - query: '{job="varlogs"} | json | method !~ "(HEAD|GET)"'
+  # Number label filter.
+  - query: '{job="varlogs"} | json | status >= 400'
+  # Duration/bytes label filter.
+  - query: '{job="varlogs"} | json | took >= 1ms'
+  - query: '{job="varlogs"} | json | size >= 1KB'
+  # IP label filter.
+  - query: '{job="varlogs"} | json | remote_ip = ip("127.0.0.1")'
+  - query: '{job="varlogs"} | json | remote_ip = ip("127.0.0.0/24")'
+  - query: '{job="varlogs"} | json | remote_ip = ip("127.0.0.1-127.0.0.6")'
+  # OR/AND label filter.
+  - query: '{job="varlogs"} | json | status > 400 or took >= 1ms'
+  - query: '{job="varlogs"} | json | took >= 1ms and size >= 1KB'
+  - query: '{job="varlogs"} | json | took >= 1ms, size >= 1KB'
+  - query: '{job="varlogs"} | json | took >= 1ms size >= 1KB'
+  - query: '{job="varlogs"} | json status | status > 0 and status < 0'
+    should_be_empty: true
+  # Ensure precedence.
+  #
+  # (false AND false) OR true => false OR true => true
+  - query: '{job="varlogs"} | json | status > 1000 and status < 0 or method != "HEAD"'
+  - query: '{job="varlogs"} | json | (status > 1000, status < 0) or method != "HEAD"'
+  - query: '{job="varlogs"} | json | (status > 1000 status < 0) or method != "HEAD"'
+  # false AND (false OR true) => false AND true => false
+  - query: '{job="varlogs"} | json | status > 1000 and (status < 0 or method != "HEAD")'
+    should_be_empty: true
+  # Decolorize.
+  #
+  - query: '{job="varlogs"} | decolorize'
+  # Templates.
+  #
+  # Line format.
+  # NOTE(tdakkota): since logqlcompliance, as promcompliance uses text/template
+  #   to expand and generate queries, we need to escape `line_format` template too.
+  - query: '{job="varlogs"} | line_format {{ "{{ __timestamp__ }}" | quote }}'
+  - query: '{job="varlogs"} | json | line_format {{ "{{ .method }}" | quote }}'
+  # Label format.
+  - query: '{job="varlogs"} | json | label_format status_code=status | status_code >= 400'
+  - query: '{job="varlogs"} | json | label_format method_lower={{ "{{ .method | ToLower }}" | quote }}'
+
+  # Metric queries.
+  #
+  # Range aggregation.
+  - query: |-
+      {{ .simpleRangeAggOp }}(
+        {job="varlogs"} [{{ .range }}]
+      )
+  # Offset.
+  - query: |-
+      {{ .simpleRangeAggOp }}(
+        {job="varlogs"} [{{ .range }}]
+        offset {{ .offset }}
+      )
+  # Absent over time range aggregation.
+  # NOTE(tdakkota): We do a separate test because `absent_over_time` returns non-empty result
+  #   only if there is NO samples in step and vice versa.
+  - query: |-
+      absent_over_time(
+        {job="varlogs"} [{{ .range }}]
+      )
+    should_be_empty: true
+  - query: |-
+      absent_over_time(
+        {job="varlogs"} |= "no way line would contain this message" [{{ .range }}]
+      )
+  # Unwrap sampler.
+  - query: |-
+      {{ .unwrapRangeAggOp }}(
+        {job="varlogs"} | json | {{ .unwrapExpr }}
+        [{{ .range }}]
+      )
+  # Range aggregation grouping.
+  #
+  # Grouping by.
+  - query: |-
+      {{ .groupRangeAggOp }} (
+        {job="varlogs"} | json | {{ .unwrapExpr }} [{{ .range }}]
+      ) by (method)
+  - query: |-
+      {{ .groupRangeAggOp }} (
+        {job="varlogs"} | json {{ .unwrapLabels }} | {{ .unwrapExpr }} [{{ .range }}]
+      ) by (filename)
+  - query: |-
+      {{ .groupRangeAggOp }} (
+        {job="varlogs"} | json {{ .unwrapLabels }} | {{ .unwrapExpr }} [{{ .range }}]
+      ) by (method)
+  - query: |-
+      {{ .groupRangeAggOp }} (
+        {job="varlogs"} | json {{ .unwrapLabels }} | {{ .unwrapExpr }} [{{ .range }}]
+      ) by (method, status)
+  # Grouping without.
+  - query: |-
+      min_over_time (
+        {job="varlogs"} | json {{ .unwrapLabels }} | {{ .unwrapExpr }} [{{ .range }}]
+      ) without (filename)
+  - query: |-
+      min_over_time (
+        {job="varlogs"} | json method, {{ .unwrapLabels }} | {{ .unwrapExpr }} [{{ .range }}]
+      ) without (method)
+  # Quantile over time range aggregation.
+  - query: |-
+      quantile_over_time(
+        {{ .quantile }},
+        {job="varlogs"} | json {{ .unwrapLabels }} | {{ .unwrapExpr }}
+        [{{ .range }}]
+      )
+  # Quantile over time grouping.
+  #
+  # Grouping by.
+  - query: |-
+      quantile_over_time(
+        {{ .quantile }},
+        {job="varlogs"} | json {{ .unwrapLabels }} | {{ .unwrapExpr }}
+        [{{ .range }}]
+      ) by (filename)
+  # Grouping without.
+  - query: |-
+      quantile_over_time(
+        {{ .quantile }},
+        {job="varlogs"} | json {{ .unwrapLabels }} | {{ .unwrapExpr }}
+        [{{ .range }}]
+      ) without (job)
+
+  # Vector aggregation.
+  #
+  - query: |-
+      {{ .simpleVecAggOp }}(
+        {{ .simpleRangeAggOp }}(
+          {job="varlogs"}
+          [{{ .range }}]
+        )
+      )
+  # Vector aggregation grouping.
+  #
+  # Grouping by.
+  - query: |-
+      {{ .simpleVecAggOp }} by (filename) (
+        {{ .simpleRangeAggOp }}(
+          {job="varlogs"}
+          [{{ .range }}]
+        )
+      )
+  - query: |-
+      {{ .simpleVecAggOp }} by (method) (
+        {{ .simpleRangeAggOp }}(
+          {job="varlogs"} | json
+          [{{ .range }}]
+        )
+      )
+  - query: |-
+      {{ .simpleVecAggOp }} by (method, status) (
+        {{ .simpleRangeAggOp }}(
+          {job="varlogs"} | json method, status
+          [{{ .range }}]
+        )
+      )
+  # Grouping without.
+  - query: |-
+      {{ .simpleVecAggOp }} without (job, filename) (
+        {{ .simpleRangeAggOp }}(
+          {job="varlogs"} | json method, status
+          [{{ .range }}]
+        )
+      )
+  # Top K/Bottom K vector aggregation.
+  #
+  - query: |-
+      {{ .topBottomVecAggOp }} (
+        {{ .topN }},
+        bytes_over_time(
+          {job="varlogs"}
+          [{{ .range }}]
+        )
+      )
+  # Grouping by.
+  - query: |-
+      {{ .topBottomVecAggOp }} by (method) (
+        {{ .topN }},
+        bytes_over_time(
+          {job="varlogs"} | json method
+          [{{ .range }}]
+        )
+      )
+  # Grouping without.
+  - query: |-
+      {{ .topBottomVecAggOp }} without (filename) (
+        {{ .topN }},
+        bytes_over_time(
+          {job="varlogs"}
+          [{{ .range }}]
+        )
+      )
+  # Sorting.
+  - query: |-
+      {{ .sortVecAggOp }} (
+        bytes_over_time(
+          {job="varlogs"} | json method
+          [{{ .range }}]
+        )
+      )
+
+  # Label replace.
+  - query: |-
+      label_replace(
+        bytes_over_time( {job="varlogs"} [5s] ),
+        "replace_label",
+        "$0",
+        "filename",
+        ".+"
+      )
+  - query: |-
+      label_replace(
+        bytes_over_time( {job="varlogs"} [5s] ),
+        "job",
+        "$0",
+        "filename",
+        ".+"
+      )
+  - query: |-
+      label_replace(
+        bytes_over_time( {job="varlogs"} | json method [5s] ),
+        "http_method",
+        "$0",
+        "method",
+        ".+"
+      )
+
+  # Binary operations.
+  #
+  # Arithmetic.
+  - query: |-
+      count_over_time( {job="varlogs"} [{{ .range }}] ) * 2
+  - query: |-
+      bytes_over_time( {job="varlogs"} [{{ .range }}] )
+      /
+      count_over_time( {job="varlogs"} [{{ .range }}] )
+  # Logic.
+  #
+  - query: |-
+      count_over_time( {job="varlogs"} [{{ .range }}] ) > 0
+  - query: |-
+      count_over_time( {job="varlogs"} [{{ .range }}] ) > 1000000000
+    should_be_empty: true
+  - query: |-
+      count_over_time( {job="varlogs"} [{{ .range }}] ) {{ .cmpBinOp }} bool 0
+  - query: |-
+      count_over_time( {job="varlogs"} [{{ .range }}] ) {{ .cmpBinOp }} bool 1000000000
+  # Set.
+  - query: |-
+      count_over_time(
+        {job="varlogs"} != "POST" | json method, status
+        [30s]
+      )
+      or
+      count_over_time(
+        {job="varlogs"} |= "(POST|PUT|GET)" | json method, status
+        [30s]
+      )
+  - query: |-
+      count_over_time(
+        {job="varlogs"}
+        [30s]
+      )
+      and
+      count_over_time(
+        {job="varlogs"}
+        [30s]
+      )
+  - query: |-
+      count_over_time(
+        {job="varlogs"} | json method, status
+        [30s]
+      )
+      unless
+      count_over_time(
+        {job="varlogs"} |= "(POST|PUT)" | json method, status
+        [30s]
+      )
+  # Joins and grouping.
+  - query: |-
+      sum by (filename, status) (
+        rate(
+          {job="varlogs"}
+            | json status
+            [{{ .range }}]
+        )
+      )
+      / on (filename) group_left
+      sum by (filename) (
+        rate(
+          {job="varlogs"}
+            | json status
+            [{{ .range }}]
+        )
+      )
