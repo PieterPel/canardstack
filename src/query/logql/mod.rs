@@ -3,8 +3,17 @@
 
 pub use logql_syntax::ast;
 
+mod eval;
+mod extract;
+mod fetch;
+mod labels;
+mod pipeline;
+mod values;
+
 use crate::validation::{ApiError, ApiResult};
 
 pub fn parse(input: &str) -> ApiResult<ast::Expr> {
     logql_syntax::parse(input).map_err(|e| ApiError::new(400, "bad_data", e.to_string()))
 }
+
+pub use eval::{log_streams, Stream};

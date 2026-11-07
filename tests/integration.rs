@@ -718,6 +718,59 @@ fn prometheus_metric_names_follow_the_otel_translation() {
 }
 
 #[test]
+fn loki_pipelines_select_on_resource_attributes_and_parse_json() {
+    let dir = tempdir().unwrap();
+    let mut config = Config::test(dir.path().join("canardstack.duckdb"));
+    config.operator.local_storage_dir = dir.path().join("storage");
+    let state = AppState::new_with_storage_hook_for_tests(config, |storage| {
+        storage
+            .with_conn(|conn, prefix| {
+                conn.execute_batch(&format!(
+                    "INSERT INTO {prefix}otlp_logs (time_unix_nano, body, resource_attributes, log_attributes) VALUES \
+                     (TIMESTAMP_NS '2026-01-01 00:00:00', '{{\"method\":\"GET\",\"status\":200,\"took\":\"5ms\"}}', '{{\"job\":\"varlogs\",\"filename\":\"/a.log\"}}', '{{}}'), \
+                     (TIMESTAMP_NS '2026-01-01 00:00:01', '{{\"method\":\"POST\",\"status\":503,\"took\":\"2s\"}}', '{{\"job\":\"varlogs\",\"filename\":\"/a.log\"}}', '{{}}'), \
+                     (TIMESTAMP_NS '2026-01-01 00:00:02', 'plain text, not json', '{{\"job\":\"varlogs\",\"filename\":\"/b.log\"}}', '{{\"user\":\"bob\"}}');"
+                ))?;
+                Ok(())
+            })
+            .unwrap();
+    })
+    .unwrap();
+    let streams = |query: &str| -> Vec<(Value, Vec<String>)> {
+        let body = prom_get(
+            &state,
+            "/loki/api/v1/query_range",
+            &[("query", query), ("start", "1767225599"), ("end", "1767225610"), ("direction", "forward")],
+        );
+        body["data"]["result"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|s| {
+                let lines = s["values"].as_array().unwrap().iter().map(|v| v[1].as_str().unwrap().to_string()).collect();
+                (s["stream"].clone(), lines)
+            })
+            .collect()
+    };
+    // Any resource attribute is a stream label; log attributes join them.
+    let all = streams(r#"{job="varlogs"}"#);
+    assert_eq!(all.len(), 2, "{all:?}"); // /a.log's two lines share one stream
+    assert!(all.iter().any(|(l, _)| l["filename"] == "/b.log" && l["user"] == "bob"));
+    assert_eq!(streams(r#"{job=~"var.*", filename!="/b.log"}"#).len(), 1);
+    assert_eq!(streams(r#"{filename="/a.log"} | json"#).len(), 2); // parsed labels split the stream
+    // json adds parsed labels, so each distinct status becomes its own stream.
+    let parsed = streams(r#"{filename="/a.log"} | json | status >= 500 and took > 1s"#);
+    assert_eq!(parsed.len(), 1);
+    assert_eq!(parsed[0].0["method"], "POST");
+    assert_eq!(parsed[0].0["status"], "503");
+    assert!(parsed[0].1[0].contains("503"));
+    // A line that is not JSON keeps flowing with an error label unless it is filtered on.
+    let errors = streams(r#"{filename="/b.log"} | json"#);
+    assert_eq!(errors[0].0["__error__"], "JSONParserErr");
+    assert!(streams(r#"{filename="/b.log"} | json | __error__ = """#).is_empty());
+}
+
+#[test]
 fn loki_label_values_fall_back_to_raw_logs_when_the_summary_is_empty() {
     let (_dir, state) = app_with_log_lines();
     let body = prom_get(
