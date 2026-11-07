@@ -171,7 +171,7 @@ def results_dashboard(results: Dict[str, List[dict]]) -> dict:
 
 COMPARE = [
     # (benchmark stack name, legend, prometheus uid, label, logs kind/uid, trace kind/uid)
-    ("canardstack-pg", "canardstack (Postgres)", "canardstack-pg-prometheus", "service_name",
+    ("canardstack-pg", "canardstack (Postgres)", "canardstack-pg-prometheus", "job",
      ("loki", "canardstack-pg-loki"), ("tempo", "canardstack-pg-tempo")),
     ("lgtm", "LGTM (Mimir)", "lgtm-mimir", "job", ("loki", "lgtm-loki"), ("tempo", "lgtm-tempo")),
     ("victoria", "Victoria (VictoriaMetrics)", "victoria-metrics", '"service.name"',
@@ -323,7 +323,7 @@ def data_dashboard(stack: str) -> dict:
     sample_trace = DEMO.trace_id(0, DEMO.records - 1)
     if stack in CANARDSTACK_VARIANTS:
         prefix, title = CANARDSTACK_VARIANTS[stack]
-        prom, label = f"{prefix}-prometheus", "service_name"
+        prom, label = f"{prefix}-prometheus", "job"
         logs = lambda pid, t, e, x, y, w, h: logs_loki(pid, t, f"{prefix}-loki", e, x, y, w, h)  # noqa: E731
         err = '{service_name="$service"} |= "error"'
         all_logs = '{service_name="$service"}'

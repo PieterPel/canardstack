@@ -165,7 +165,7 @@
             "type": "prometheus",
             "uid": "canardstack-pg-prometheus"
           },
-          "expr": "bench_gauge{service_name=\"$service\"}",
+          "expr": "bench_gauge{job=\"$service\"}",
           "range": true,
           "instant": false,
           "legendFormat": "{{__name__}}",
@@ -315,7 +315,7 @@
             "type": "prometheus",
             "uid": "canardstack-pg-prometheus"
           },
-          "expr": "bench_requests{service_name=\"$service\"}",
+          "expr": "bench_requests{job=\"$service\"}",
           "range": true,
           "instant": false,
           "legendFormat": "{{__name__}}",
@@ -465,7 +465,7 @@
             "type": "prometheus",
             "uid": "canardstack-pg-prometheus"
           },
-          "expr": "bench_gauge{service_name=\"$service\"}",
+          "expr": "bench_gauge{job=\"$service\"}",
           "range": true,
           "instant": false,
           "legendFormat": "canardstack (Postgres)",
@@ -528,7 +528,7 @@
             "type": "prometheus",
             "uid": "canardstack-pg-prometheus"
           },
-          "expr": "bench_requests{service_name=\"$service\"}",
+          "expr": "bench_requests{job=\"$service\"}",
           "range": true,
           "instant": false,
           "legendFormat": "canardstack (Postgres)",

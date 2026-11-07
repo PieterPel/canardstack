@@ -56,7 +56,7 @@ class Target:
 
 def canardstack(name: str, port: int) -> Target:
     base = f"http://localhost:{port}"
-    return Target(name, name, base, base, base, BEARER, "service_name", "service_name")
+    return Target(name, name, base, base, base, BEARER, "job", "job")
 
 
 TARGETS: Dict[str, Target] = {

@@ -180,7 +180,7 @@ def canardstack() -> Backend:
         ingest={s: (f"{ingest}/v1/{s}", otlp) for s in ("logs", "metrics", "traces")},
         ready=[f"{query}/healthz"],
         queries=_loki_queries(query, auth)
-        + _prom_queries(query, "service_name", "", auth)
+        + _prom_queries(query, "job", "", auth)
         + [Query("trace_by_id", "traces", trace, tempo_spans, lambda w, i: 2)],
         compose_dir="canardstack",
         project="bench-canardstack",
@@ -203,7 +203,7 @@ def canardstack_pg() -> Backend:
         ingest={s: (f"{ingest}/v1/{s}", otlp) for s in ("logs", "metrics", "traces")},
         ready=[f"{query}/healthz"],
         queries=_loki_queries(query, auth)
-        + _prom_queries(query, "service_name", "", auth)
+        + _prom_queries(query, "job", "", auth)
         + [Query("trace_by_id", "traces", trace, tempo_spans, lambda w, i: 2)],
         compose_dir="canardstack-pg",
         project="bench-canardstack-pg",
@@ -226,7 +226,7 @@ def canardstack_sqlite() -> Backend:
         ingest={s: (f"{ingest}/v1/{s}", otlp) for s in ("logs", "metrics", "traces")},
         ready=[f"{query}/healthz"],
         queries=_loki_queries(query, auth)
-        + _prom_queries(query, "service_name", "", auth)
+        + _prom_queries(query, "job", "", auth)
         + [Query("trace_by_id", "traces", trace, tempo_spans, lambda w, i: 2)],
         compose_dir="canardstack-sqlite",
         project="bench-canardstack-sqlite",
