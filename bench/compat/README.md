@@ -67,15 +67,17 @@ pass rate. The goal is to keep `canardstack-pg`'s baseline at every case in the 
 **PromQL is covered by the upstream suite.** The 18 PromQL cases here are a smoke test and the
 checks specific to canardstack (labels, discovery endpoints, resource caps). Breadth comes from
 [`promql/`](promql/README.md), which runs prometheus/compliance (546 of 548 queries pass without
-native histograms). There is no comparable upstream suite for LogQL or TraceQL, so those cases stay
-the main coverage and should grow.
+native histograms). LogQL and TraceQL have no upstream suite, so [`logql/`](logql/README.md)
+(2,406 of 2,408 queries) and [`traceql/`](traceql/README.md) (256 of 262) run the same queries
+against a real Loki and Tempo and compare the answers.
 
 ## What the suite does not cover
 
 Histograms (the storage layer has none), subqueries, `@` modifiers, recording and alerting rules,
 `| json` / `| logfmt` parsers, `label_format`, `line_format` templates, LogQL `topk`/`offset`
-and per-stream (unaggregated) metric queries, TraceQL structural operators, aggregates and
-span-level `||`, and the exemplar, log-volume and tail endpoints. canardstack rejects the
+and per-stream (unaggregated) metric queries, TraceQL metrics queries (`rate()`,
+`*_over_time`, `compare()`), `select()` attributes in search results, and the exemplar,
+log-volume and tail endpoints. canardstack rejects the
 unsupported ones with an explicit `unsupported_promql` / `unsupported_logql` error rather than a
 wrong answer. Known semantic gaps: `changes()` follows Prometheus (the change into the window is
 not counted), and Loki streams split by severity, so unaggregated log metric queries differ from

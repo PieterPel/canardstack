@@ -2,6 +2,7 @@ use super::params::{optional_range, parse_any_time_to_utc, parse_usize, result_r
 use crate::db::sql::{quote as sql_quote, span_row, time_predicate};
 use crate::query::plan::TimeBounds;
 use crate::query::trace::plan_tempo_search;
+use crate::query::traceql;
 use crate::semantic_labels::{self, LabelScope};
 use crate::signal::StorageSignal;
 use crate::validation::{ApiError, ApiResult};
@@ -161,6 +162,9 @@ pub fn tempo_trace_proto(state: &AppState, trace_id: &str) -> ApiResult<Vec<u8>>
 pub fn tempo_search(state: &AppState, params: &HashMap<String, String>) -> ApiResult<Value> {
     let (from, to) = optional_range(params, INTERACTIVE_RANGE_SECS)?;
     let limit = parse_usize(params.get("limit"), 20, 1000)?;
+    if let Some(q) = params.get("q").or_else(|| params.get("query")).filter(|q| !q.trim().is_empty()) {
+        return traceql_search(state, params, q, from, to, limit);
+    }
     let plan = plan_tempo_search(params, TimeBounds { from, to }, limit)?;
     let rows = state.queries.execute_trace_search(&state.storage, &plan)?;
     let traces = result_rows(&rows)
@@ -192,6 +196,71 @@ pub fn tempo_search(state: &AppState, params: &HashMap<String, String>) -> ApiRe
         })
         .collect::<Vec<_>>();
     Ok(json!({"traces": traces, "metrics": {"inspectedTraces": traces.len(), "completedJobs": 1}}))
+}
+
+/// Tempo prints trace IDs without leading zeros.
+fn trimmed_id(id: &str) -> &str {
+    let trimmed = id.trim_start_matches('0');
+    if trimmed.is_empty() {
+        "0"
+    } else {
+        trimmed
+    }
+}
+
+fn traceql_search(
+    state: &AppState,
+    params: &HashMap<String, String>,
+    q: &str,
+    from: chrono::DateTime<Utc>,
+    to: chrono::DateTime<Utc>,
+    limit: usize,
+) -> ApiResult<Value> {
+    let spss = parse_usize(params.get("spss"), 3, 1000)?;
+    let query = traceql::parse(q)?;
+    let hits = traceql::search(&state.queries, &state.storage, &query, from, to, limit, spss)?;
+    let traces: Vec<Value> = hits
+        .iter()
+        .map(|hit| {
+            let sets: Vec<Value> = hit
+                .sets
+                .iter()
+                .map(|set| {
+                    let spans: Vec<Value> = set
+                        .spans
+                        .iter()
+                        .map(|s| {
+                            let mut span = json!({
+                                "spanID": s.span_id,
+                                "startTimeUnixNano": s.start_ns.to_string(),
+                                "durationNanos": s.duration_ns.to_string(),
+                            });
+                            if !s.name.is_empty() {
+                                span["name"] = json!(s.name);
+                            }
+                            span
+                        })
+                        .collect();
+                    json!({"spans": spans, "matched": set.matched})
+                })
+                .collect();
+            let mut trace = json!({
+                "traceID": trimmed_id(&hit.trace_id),
+                "startTimeUnixNano": hit.start_ns.to_string(),
+                "durationMs": hit.duration_ns / 1_000_000,
+                "spanSet": sets.first(),
+                "spanSets": sets,
+            });
+            if !hit.root_service.is_empty() {
+                trace["rootServiceName"] = json!(hit.root_service);
+            }
+            if !hit.root_name.is_empty() {
+                trace["rootTraceName"] = json!(hit.root_name);
+            }
+            trace
+        })
+        .collect();
+    Ok(json!({"traces": traces, "metrics": {"inspectedTraces": traces.len(), "completedJobs": 1, "totalJobs": 1}}))
 }
 
 pub fn tempo_tags() -> Value {

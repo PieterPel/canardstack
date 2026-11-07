@@ -418,6 +418,7 @@ dependencies = [
  "tokio-rustls",
  "tokio-util",
  "toml_edit",
+ "traceql-syntax",
  "tracing",
  "url",
 ]

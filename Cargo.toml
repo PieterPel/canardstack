@@ -42,6 +42,7 @@ rustls-pemfile = { version = "2", optional = true }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"], optional = true }
 rcgen = { version = "0.13", default-features = false, features = ["ring"], optional = true }
 logql-syntax = { version = "0.1.0", path = "crates/logql-syntax" }
+traceql-syntax = { version = "0.1.0", path = "crates/traceql-syntax" }
 promql-parser = "0.11.1"
 regex = "1.13.1"
 
