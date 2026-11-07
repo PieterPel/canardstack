@@ -58,14 +58,17 @@ pass rate. The goal is to keep `canardstack-pg`'s baseline at every case in the 
 
 | language | pass | wrong | unsupported | pass rate |
 | --- | --- | --- | --- | --- |
-| PromQL | 59 | 0 | 0 | 100% (59/59) |
+| PromQL | 18 | 0 | 0 | 100% (18/18) |
 | LogQL | 22 | 0 | 0 | 100% (22/22) |
 | Tempo / TraceQL | 11 | 0 | 0 | 100% (11/11) |
 
-`baselines/canardstack-pg.json` now lists all 92 cases. The first PromQL cases (12 of 48 at the
-start) were failing because the old single-selector parser could not express the language; the
-PromQL evaluator in `src/query/promql/` replaced it. Treat 100% as "matches this suite", not "is
-PromQL": the suite is small and the cases were chosen to cover what dashboards use.
+`baselines/canardstack-pg.json` lists all 51 cases.
+
+**PromQL is covered by the upstream suite.** The 18 PromQL cases here are a smoke test and the
+checks specific to canardstack (labels, discovery endpoints, resource caps). Breadth comes from
+[`promql/`](promql/README.md), which runs prometheus/compliance (546 of 548 queries pass without
+native histograms). There is no comparable upstream suite for LogQL or TraceQL, so those cases stay
+the main coverage and should grow.
 
 ## What the suite does not cover
 
