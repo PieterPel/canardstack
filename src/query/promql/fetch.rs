@@ -2,7 +2,6 @@
 
 use super::*;
 use crate::db::sql::{quote, time_predicate};
-use crate::query::prometheus::resolve_metric_name;
 use crate::query::prom_labels::{labels_from_row, INSTANCE_SQL, JOB_SQL, SERIES_COLUMNS};
 use crate::signal::StorageSignal;
 use chrono::{TimeZone, Utc};
@@ -128,12 +127,8 @@ fn compile(vs: &VectorSelector) -> ApiResult<Compiled> {
     for (label, op, value) in raw {
         if label == METRIC_NAME {
             if let MatchOp::Equal = op {
-                let resolved = resolve_metric_name(&value);
                 if compiled.names.is_empty() {
                     compiled.names.push(value.clone());
-                    if resolved != value {
-                        compiled.names.push(resolved);
-                    }
                     compiled.display_name = Some(value);
                 }
                 continue;

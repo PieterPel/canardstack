@@ -4,14 +4,13 @@ pub mod plan;
 pub mod prom_discovery;
 pub mod prom_labels;
 pub mod promql;
-pub mod prometheus;
 pub mod trace;
 
 use crate::config::Config;
 use crate::db::sql::{quote as sql_quote, time_predicate};
 use crate::metrics::Timer;
 use crate::query::plan::{
-    FieldMatcher, LogPlan, MatchOp, MetricAggregation, MetricPlan, MetricSignal, TextFilter,
+    FieldMatcher, LogPlan, MatchOp, TextFilter,
     TracePlan, TraceSort,
 };
 use crate::semantic_labels::{self, LabelScope};
@@ -160,141 +159,6 @@ impl QueryEngine {
         Ok(wrap_rows(rows, *limit, timer.elapsed_ms()))
     }
 
-    pub fn execute_metric(&self, storage: &Storage, plan: &MetricPlan) -> ApiResult<Value> {
-        let timer = Timer::start();
-        let table = plan.signal.table();
-        // v2 gauge/sum tables store both `int_value BIGINT` and
-        // `double_value DOUBLE`; coalesce to a single DOUBLE for aggregation
-        // so downstream value handling is uniform. The double channel wins
-        // when both are populated, matching OTLP semantics.
-        let value_expr = "coalesce(double_value, int_value::DOUBLE)";
-        let agg_sql: String = match plan.aggregation {
-            MetricAggregation::Avg => format!("avg({value_expr})"),
-            MetricAggregation::Min => format!("min({value_expr})"),
-            MetricAggregation::Max => format!("max({value_expr})"),
-            MetricAggregation::Sum => format!("sum({value_expr})"),
-            MetricAggregation::Count => "count(*)".to_string(),
-            MetricAggregation::Rate if plan.signal == MetricSignal::Sum => {
-                format!("case when epoch(max(time_unix_nano)-min(time_unix_nano)) > 0 then (max({value_expr})-min({value_expr}))/epoch(max(time_unix_nano)-min(time_unix_nano)) else null end")
-            }
-            MetricAggregation::Rate => {
-                return Err(ApiError::new(
-                    400,
-                    "unsupported_aggregation",
-                    "unsupported aggregation",
-                ))
-            }
-        };
-        let step = plan.step_seconds.clamp(1, 86_400);
-        let metric_name =
-            plan.selector.resource.as_deref().ok_or_else(|| {
-                ApiError::new(400, "missing_metric_name", "metric_name is required")
-            })?;
-        let mut where_sql = vec![
-            time_predicate("time_unix_nano", plan.time_bounds.from, plan.time_bounds.to),
-            format!("name = {}", sql_quote(metric_name)),
-        ];
-        for matcher in &plan.selector.matchers {
-            push_matcher(
-                &mut where_sql,
-                matcher,
-                LabelScope::Metrics,
-                "unsupported_promql",
-            )?;
-        }
-        let group_by = &plan.group_by;
-        let group_selects = group_by
-            .iter()
-            .filter_map(|label| {
-                semantic_labels::label_expr(LabelScope::Metrics, label)
-                    .map(|expr| (label.as_str(), expr))
-            })
-            .collect::<Vec<_>>();
-        let group_select_clause = if group_selects.is_empty() {
-            String::new()
-        } else {
-            group_selects
-                .iter()
-                .map(|(label, expr)| format!(", {expr} AS {label}"))
-                .collect::<String>()
-        };
-        let group_clause = if group_selects.is_empty() {
-            String::new()
-        } else {
-            group_selects
-                .iter()
-                .map(|(_, expr)| format!(", {expr}"))
-                .collect::<String>()
-        };
-        let sql = if plan.aggregation != MetricAggregation::Rate {
-            // Latest sample per series, then aggregate across series. Aggregating raw
-            // samples would make max()/count() span the whole window, and averaging a
-            // bucket would flatten a gauge; PromQL takes the newest sample per series.
-            let latest_agg = match plan.aggregation {
-                MetricAggregation::Avg => "avg(v)",
-                MetricAggregation::Min => "min(v)",
-                MetricAggregation::Max => "max(v)",
-                MetricAggregation::Sum => "sum(v)",
-                MetricAggregation::Count => "count(*)",
-                MetricAggregation::Rate => unreachable!("rate keeps the windowed query"),
-            };
-            let group_aliases = group_selects
-                .iter()
-                .map(|(label, _)| format!(", {label}"))
-                .collect::<String>();
-            let series = "service_name, service_namespace, service_instance_id, resource_attributes, scope_name, metric_attributes";
-            if plan.instant {
-                format!(
-                    "WITH latest AS (SELECT arg_max({value_expr}, time_unix_nano) AS v, max(time_unix_nano) AS ts{group_select_clause} FROM {{prefix}}{table} WHERE {} GROUP BY {series}) SELECT max(ts)::VARCHAR AS bucket{group_aliases}, {latest_agg} AS value FROM latest GROUP BY ALL HAVING count(*) > 0 ORDER BY bucket {} LIMIT {}",
-                    where_sql.join(" AND "),
-                    plan.order.sql(),
-                    plan.limit + 1
-                )
-            } else {
-                // Range: the newest sample of each series inside each step bucket.
-                format!(
-                    "WITH latest AS (SELECT floor(epoch(time_unix_nano)/{step})*{step} AS b, arg_max({value_expr}, time_unix_nano) AS v{group_select_clause} FROM {{prefix}}{table} WHERE {} GROUP BY b, {series}) SELECT to_timestamp(b)::VARCHAR AS bucket{group_aliases}, {latest_agg} AS value FROM latest GROUP BY ALL ORDER BY bucket {} LIMIT {}",
-                    where_sql.join(" AND "),
-                    plan.order.sql(),
-                    plan.limit + 1
-                )
-            }
-        } else {
-            format!(
-                "SELECT to_timestamp(floor(epoch(time_unix_nano)/{step})*{step})::VARCHAR AS bucket{group_select_clause}, {agg_sql} AS value FROM {{prefix}}{table} WHERE {} GROUP BY bucket{group_clause} ORDER BY bucket {} LIMIT {}",
-                where_sql.join(" AND "),
-                plan.order.sql(),
-                plan.limit + 1
-            )
-        };
-        let rows = storage
-            .with_query_execution(
-                &self.interactive_memory_limit,
-                self.interactive_timeout,
-                self.execution.as_deref(),
-                |conn, prefix| {
-                    let mut stmt = conn.prepare(&sql.replace("{prefix}", prefix))?;
-                    let mapped = stmt.query_map([], |row| {
-                        let mut value = serde_json::Map::new();
-                        value.insert("timestamp".to_string(), json!(row.get::<_, String>(0)?));
-                        for (idx, column) in group_by.iter().enumerate() {
-                            value.insert(
-                                (*column).to_string(),
-                                json!(row.get::<_, Option<String>>(idx + 1)?),
-                            );
-                        }
-                        value.insert(
-                            "value".to_string(),
-                            json!(row.get::<_, Option<f64>>(group_by.len() + 1)?),
-                        );
-                        Ok(Value::Object(value))
-                    })?;
-                    Ok(collect_rows(mapped)?)
-                },
-            )
-            .map_err(storage_err)?;
-        Ok(wrap_rows(rows, plan.limit, timer.elapsed_ms()))
-    }
 }
 
 fn log_row(row: &Row<'_>, projected: &[(&str, String)]) -> duckdb::Result<Value> {

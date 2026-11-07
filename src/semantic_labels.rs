@@ -35,10 +35,6 @@ pub struct LabelDef {
     pub sources: &'static [ScopedLabelSource],
     pub loki_stream: bool,
     pub tempo_tag: Option<&'static str>,
-    /// Promoted to a first-class Prometheus discovery label (`/labels`,
-    /// `/label/<name>/values`, metric metadata). Most metric labels are
-    /// filter/group-only and stay `false`.
-    pub prom_promoted: bool,
     /// Scopes whose result projection is sourced from this registry. Currently
     /// only `Logs` (its query projection is registry-derived); span and metric
     /// projections remain explicit in their adapters.
@@ -137,24 +133,12 @@ pub fn projected_labels(scope: LabelScope) -> Vec<(&'static str, String)> {
         .collect()
 }
 
-pub fn prometheus_label_names() -> Vec<String> {
-    std::iter::once("__name__".to_string())
-        .chain(
-            LABELS
-                .iter()
-                .filter(|label| has_scope(label, LabelScope::Metrics))
-                .filter(|label| label.prom_promoted)
-                .map(|label| label.canonical.to_string()),
-        )
-        .collect()
-}
-
 /// Labels whose values are effectively unbounded (per-event or per-replica
 /// identifiers). They stay selectable as filters and discoverable as label
 /// *names*, but their distinct *values* are never materialized into
 /// `metadata_summary` — enumerating them is expensive and no client value
 /// dropdown wants the result. This is the cost axis, kept orthogonal to the
-/// per-protocol surface flags (`loki_stream` / `tempo_tag` / `prom_promoted`):
+/// per-protocol surface flags (`loki_stream` / `tempo_tag`):
 /// protocol membership decides what is selectable and name-discoverable;
 /// `HIGH_CARDINALITY` independently vetoes value materialization.
 #[cfg(test)]
@@ -171,16 +155,9 @@ fn metadata_label_allowed(scope: LabelScope, label: &LabelDef) -> bool {
     match scope {
         LabelScope::Logs => label.loki_stream,
         LabelScope::Spans => label.tempo_tag.is_some(),
-        LabelScope::Metrics => label.prom_promoted,
+        // Prometheus labels are derived from the stored series, not from this registry.
+        LabelScope::Metrics => false,
     }
-}
-
-pub fn prometheus_grouping_labels() -> Vec<&'static str> {
-    LABELS
-        .iter()
-        .filter(|label| has_scope(label, LabelScope::Metrics))
-        .map(|label| label.canonical)
-        .collect()
 }
 
 pub fn tempo_tag_names() -> Vec<String> {
@@ -585,7 +562,6 @@ pub const LABELS: &[LabelDef] = &[
             "service-name",
         ],
         sources: SERVICE_NAME_SOURCES,
-        prom_promoted: true,
         project: &[LabelScope::Logs],
         loki_stream: true,
         tempo_tag: Some("service.name"),
@@ -598,7 +574,6 @@ pub const LABELS: &[LabelDef] = &[
             "service-namespace",
         ],
         sources: SERVICE_NAMESPACE_SOURCES,
-        prom_promoted: false,
         project: &[LabelScope::Logs],
         loki_stream: true,
         tempo_tag: Some("service.namespace"),
@@ -611,7 +586,6 @@ pub const LABELS: &[LabelDef] = &[
             "service-instance-id",
         ],
         sources: SERVICE_INSTANCE_SOURCES,
-        prom_promoted: false,
         project: &[LabelScope::Logs],
         loki_stream: true,
         tempo_tag: Some("service.instance.id"),
@@ -624,7 +598,6 @@ pub const LABELS: &[LabelDef] = &[
             "deployment-environment",
         ],
         sources: DEPLOYMENT_ENV_SOURCES,
-        prom_promoted: true,
         project: &[LabelScope::Logs],
         loki_stream: true,
         tempo_tag: Some("deployment.environment"),
@@ -633,7 +606,6 @@ pub const LABELS: &[LabelDef] = &[
         canonical: "host_name",
         aliases: &["host.name", "resource.host.name", "host-name"],
         sources: HOST_NAME_SOURCES,
-        prom_promoted: false,
         project: &[LabelScope::Logs],
         loki_stream: true,
         tempo_tag: Some("host.name"),
@@ -642,7 +614,6 @@ pub const LABELS: &[LabelDef] = &[
         canonical: "k8s_cluster_name",
         aliases: &["k8s.cluster.name"],
         sources: K8S_CLUSTER_SOURCES,
-        prom_promoted: false,
         project: &[],
         loki_stream: false,
         tempo_tag: None,
@@ -651,7 +622,6 @@ pub const LABELS: &[LabelDef] = &[
         canonical: "k8s_node_name",
         aliases: &["k8s.node.name"],
         sources: K8S_NODE_SOURCES,
-        prom_promoted: false,
         project: &[],
         loki_stream: false,
         tempo_tag: None,
@@ -660,7 +630,6 @@ pub const LABELS: &[LabelDef] = &[
         canonical: "k8s_statefulset_name",
         aliases: &["k8s.statefulset.name"],
         sources: K8S_STATEFULSET_SOURCES,
-        prom_promoted: false,
         project: &[],
         loki_stream: false,
         tempo_tag: None,
@@ -669,7 +638,6 @@ pub const LABELS: &[LabelDef] = &[
         canonical: "k8s_deployment_name",
         aliases: &["k8s.deployment.name"],
         sources: K8S_DEPLOYMENT_SOURCES,
-        prom_promoted: false,
         project: &[],
         loki_stream: false,
         tempo_tag: Some("k8s.deployment.name"),
@@ -678,7 +646,6 @@ pub const LABELS: &[LabelDef] = &[
         canonical: "scope_name",
         aliases: &["instrumentationScope.name", "instrumentation_scope_name"],
         sources: LOG_SCOPE_SOURCES,
-        prom_promoted: false,
         project: &[LabelScope::Logs],
         loki_stream: true,
         tempo_tag: None,
@@ -687,7 +654,6 @@ pub const LABELS: &[LabelDef] = &[
         canonical: "severity_text",
         aliases: &["severity.text"],
         sources: LOG_SEVERITY_SOURCES,
-        prom_promoted: false,
         project: &[LabelScope::Logs],
         loki_stream: true,
         tempo_tag: None,
@@ -696,7 +662,6 @@ pub const LABELS: &[LabelDef] = &[
         canonical: "trace_id",
         aliases: &["traceID"],
         sources: TRACE_ID_SOURCES,
-        prom_promoted: false,
         project: &[LabelScope::Logs],
         loki_stream: true,
         tempo_tag: Some("traceID"),
@@ -705,7 +670,6 @@ pub const LABELS: &[LabelDef] = &[
         canonical: "span_id",
         aliases: &["spanID"],
         sources: SPAN_ID_SOURCES,
-        prom_promoted: false,
         project: &[LabelScope::Logs],
         loki_stream: true,
         tempo_tag: Some("spanID"),
@@ -714,7 +678,6 @@ pub const LABELS: &[LabelDef] = &[
         canonical: "http_route",
         aliases: &["http.route", "http-route"],
         sources: HTTP_ROUTE_SOURCES,
-        prom_promoted: false,
         project: &[LabelScope::Logs],
         loki_stream: true,
         tempo_tag: Some("http.route"),
@@ -723,7 +686,6 @@ pub const LABELS: &[LabelDef] = &[
         canonical: "http_method",
         aliases: &["http.method", "http.request.method", "http-method"],
         sources: HTTP_METHOD_SOURCES,
-        prom_promoted: false,
         project: &[LabelScope::Logs],
         loki_stream: true,
         tempo_tag: Some("http.method"),
@@ -736,7 +698,6 @@ pub const LABELS: &[LabelDef] = &[
             "http-status-code",
         ],
         sources: HTTP_STATUS_SOURCES,
-        prom_promoted: false,
         project: &[LabelScope::Logs],
         loki_stream: false,
         tempo_tag: Some("http.status_code"),
@@ -745,7 +706,6 @@ pub const LABELS: &[LabelDef] = &[
         canonical: "http_response_status_code",
         aliases: &["http.response.status_code"],
         sources: HTTP_RESPONSE_STATUS_METRIC_SOURCES,
-        prom_promoted: false,
         project: &[],
         loki_stream: false,
         tempo_tag: None,
@@ -754,7 +714,6 @@ pub const LABELS: &[LabelDef] = &[
         canonical: "span_name",
         aliases: &["span.name", "span-name", "name"],
         sources: SPAN_NAME_SOURCES,
-        prom_promoted: false,
         project: &[],
         loki_stream: false,
         tempo_tag: Some("span.name"),
@@ -763,7 +722,6 @@ pub const LABELS: &[LabelDef] = &[
         canonical: "status_code",
         aliases: &["status.code", "status"],
         sources: STATUS_CODE_SOURCES,
-        prom_promoted: false,
         project: &[],
         loki_stream: false,
         tempo_tag: Some("status.code"),
@@ -772,7 +730,6 @@ pub const LABELS: &[LabelDef] = &[
         canonical: "job",
         aliases: &[],
         sources: JOB_SOURCES,
-        prom_promoted: false,
         project: &[],
         loki_stream: false,
         tempo_tag: None,
@@ -781,7 +738,6 @@ pub const LABELS: &[LabelDef] = &[
         canonical: "instance",
         aliases: &[],
         sources: INSTANCE_SOURCES,
-        prom_promoted: false,
         project: &[],
         loki_stream: false,
         tempo_tag: None,
@@ -790,7 +746,6 @@ pub const LABELS: &[LabelDef] = &[
         canonical: "state",
         aliases: &[],
         sources: METRIC_STATE_SOURCES,
-        prom_promoted: false,
         project: &[],
         loki_stream: false,
         tempo_tag: None,
@@ -799,7 +754,6 @@ pub const LABELS: &[LabelDef] = &[
         canonical: "type",
         aliases: &[],
         sources: METRIC_TYPE_SOURCES,
-        prom_promoted: false,
         project: &[],
         loki_stream: false,
         tempo_tag: None,
@@ -808,7 +762,6 @@ pub const LABELS: &[LabelDef] = &[
         canonical: "cpu",
         aliases: &[],
         sources: METRIC_CPU_SOURCES,
-        prom_promoted: false,
         project: &[],
         loki_stream: false,
         tempo_tag: None,
@@ -817,7 +770,6 @@ pub const LABELS: &[LabelDef] = &[
         canonical: "exporter",
         aliases: &[],
         sources: METRIC_EXPORTER_SOURCES,
-        prom_promoted: false,
         project: &[],
         loki_stream: false,
         tempo_tag: None,
@@ -826,7 +778,6 @@ pub const LABELS: &[LabelDef] = &[
         canonical: "receiver",
         aliases: &[],
         sources: METRIC_RECEIVER_SOURCES,
-        prom_promoted: false,
         project: &[],
         loki_stream: false,
         tempo_tag: None,
@@ -835,7 +786,6 @@ pub const LABELS: &[LabelDef] = &[
         canonical: "processor",
         aliases: &[],
         sources: METRIC_PROCESSOR_SOURCES,
-        prom_promoted: false,
         project: &[],
         loki_stream: false,
         tempo_tag: None,
@@ -844,7 +794,6 @@ pub const LABELS: &[LabelDef] = &[
         canonical: "otel_signal",
         aliases: &[],
         sources: OTEL_SIGNAL_SOURCES,
-        prom_promoted: false,
         project: &[],
         loki_stream: false,
         tempo_tag: None,
@@ -853,7 +802,6 @@ pub const LABELS: &[LabelDef] = &[
         canonical: "data_type",
         aliases: &[],
         sources: DATA_TYPE_SOURCES,
-        prom_promoted: false,
         project: &[],
         loki_stream: false,
         tempo_tag: None,
@@ -862,7 +810,6 @@ pub const LABELS: &[LabelDef] = &[
         canonical: "postgresql_database_name",
         aliases: &["postgresql.database.name"],
         sources: POSTGRES_DB_SOURCES,
-        prom_promoted: false,
         project: &[],
         loki_stream: false,
         tempo_tag: None,
@@ -871,7 +818,6 @@ pub const LABELS: &[LabelDef] = &[
         canonical: "rpc_service",
         aliases: &["rpc.service"],
         sources: RPC_SERVICE_SOURCES,
-        prom_promoted: false,
         project: &[],
         loki_stream: false,
         tempo_tag: Some("rpc.service"),
@@ -880,7 +826,6 @@ pub const LABELS: &[LabelDef] = &[
         canonical: "rpc_method",
         aliases: &["rpc.method"],
         sources: RPC_METHOD_SOURCES,
-        prom_promoted: false,
         project: &[],
         loki_stream: false,
         tempo_tag: Some("rpc.method"),
@@ -889,7 +834,6 @@ pub const LABELS: &[LabelDef] = &[
         canonical: "rpc_grpc_status_code",
         aliases: &["rpc.grpc.status_code"],
         sources: RPC_GRPC_STATUS_SOURCES,
-        prom_promoted: false,
         project: &[],
         loki_stream: false,
         tempo_tag: Some("rpc.grpc.status_code"),
@@ -898,7 +842,6 @@ pub const LABELS: &[LabelDef] = &[
         canonical: "server_address",
         aliases: &["server.address"],
         sources: SERVER_ADDRESS_SOURCES,
-        prom_promoted: false,
         project: &[],
         loki_stream: false,
         tempo_tag: Some("server.address"),
@@ -907,7 +850,6 @@ pub const LABELS: &[LabelDef] = &[
         canonical: "url_template",
         aliases: &["url.template"],
         sources: URL_TEMPLATE_SOURCES,
-        prom_promoted: false,
         project: &[],
         loki_stream: false,
         tempo_tag: None,
@@ -916,7 +858,6 @@ pub const LABELS: &[LabelDef] = &[
         canonical: "db_namespace",
         aliases: &["db.namespace"],
         sources: DB_NAMESPACE_SOURCES,
-        prom_promoted: false,
         project: &[],
         loki_stream: false,
         tempo_tag: Some("db.namespace"),
@@ -925,7 +866,6 @@ pub const LABELS: &[LabelDef] = &[
         canonical: "exception_type",
         aliases: &["exception.type"],
         sources: EXCEPTION_TYPE_SOURCES,
-        prom_promoted: false,
         project: &[],
         loki_stream: false,
         tempo_tag: Some("exception.type"),
