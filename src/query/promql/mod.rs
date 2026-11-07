@@ -11,7 +11,7 @@ use crate::storage::Storage;
 use crate::validation::{ApiError, ApiResult};
 use promql_parser::label::{MatchOp, METRIC_NAME};
 use promql_parser::parser::{
-    self, Expr, LabelModifier, Offset, VectorMatchCardinality, VectorSelector,
+    self, Expr, LabelModifier, Offset, SubqueryExpr, VectorMatchCardinality, VectorSelector,
 };
 use regex::Regex;
 use std::collections::{BTreeMap, HashMap};
@@ -24,6 +24,7 @@ mod fetch;
 mod functions;
 mod histogram;
 mod regression;
+mod subquery;
 
 use eval::{Ev, Samples};
 use fetch::{collect, fetch, selector_key, offset_ms, Raw};
@@ -144,6 +145,7 @@ pub fn evaluate(
     Ev {
         grid: &grid,
         data: &data,
+        extra_ms: 0,
     }
     .eval(&expr)
 }

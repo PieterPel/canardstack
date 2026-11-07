@@ -29,23 +29,46 @@ pub(super) fn selector_key(vs: &VectorSelector, window_ms: i64) -> String {
     format!("{vs}#{window_ms}")
 }
 
+/// Subquery step used when `[range:]` leaves it out (Prometheus' default evaluation interval).
+pub(super) const DEFAULT_SUBQUERY_STEP_MS: i64 = 60_000;
+
+/// How much further back than the outer grid the selectors inside a subquery must be fetched: the
+/// subquery range, its offset, and one step for the alignment of its evaluation times.
+pub(super) fn subquery_extra_ms(sq: &SubqueryExpr) -> i64 {
+    let off = match &sq.offset {
+        Some(Offset::Pos(d)) => d.as_millis() as i64,
+        _ => 0,
+    };
+    let step = sq.step.map_or(DEFAULT_SUBQUERY_STEP_MS, |d| d.as_millis() as i64);
+    sq.range.as_millis() as i64 + off + step
+}
+
 pub(super) fn collect(expr: &Expr, out: &mut Vec<Req>) -> ApiResult<()> {
+    collect_with(expr, out, 0)
+}
+
+fn collect_with(expr: &Expr, out: &mut Vec<Req>, extra: i64) -> ApiResult<()> {
     match expr {
-        Expr::VectorSelector(vs) => push_req(vs, LOOKBACK_MS, out),
-        Expr::MatrixSelector(ms) => push_req(&ms.vs, ms.range.as_millis() as i64, out),
-        Expr::Call(call) => call.args.args.iter().try_for_each(|a| collect(a, out)),
+        Expr::VectorSelector(vs) => push_req(vs, LOOKBACK_MS + extra, out),
+        Expr::MatrixSelector(ms) => push_req(&ms.vs, ms.range.as_millis() as i64 + extra, out),
+        Expr::Call(call) => call.args.args.iter().try_for_each(|a| collect_with(a, out, extra)),
         Expr::Aggregate(agg) => {
-            collect(&agg.expr, out)?;
-            agg.param.as_ref().map_or(Ok(()), |p| collect(p, out))
+            collect_with(&agg.expr, out, extra)?;
+            agg.param.as_ref().map_or(Ok(()), |p| collect_with(p, out, extra))
         }
         Expr::Binary(b) => {
-            collect(&b.lhs, out)?;
-            collect(&b.rhs, out)
+            collect_with(&b.lhs, out, extra)?;
+            collect_with(&b.rhs, out, extra)
         }
-        Expr::Paren(p) => collect(&p.expr, out),
-        Expr::Unary(u) => collect(&u.expr, out),
+        Expr::Paren(p) => collect_with(&p.expr, out, extra),
+        Expr::Unary(u) => collect_with(&u.expr, out, extra),
         Expr::NumberLiteral(_) | Expr::StringLiteral(_) => Ok(()),
-        Expr::Subquery(_) => Err(unsupported("subqueries are not supported")),
+        Expr::Subquery(sq) => {
+            if sq.at.is_some() {
+                return Err(unsupported("the @ modifier is not supported"));
+            }
+            collect_with(&sq.expr, out, extra + subquery_extra_ms(sq))
+        }
         _ => Err(unsupported("unsupported expression")),
     }
 }

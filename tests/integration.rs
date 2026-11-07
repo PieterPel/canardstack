@@ -654,6 +654,21 @@ fn promql_calendar_regression_and_bucket_functions() {
     // The fitted line is 4.5 at :02 with slope 0.5, so two seconds later it is 5.5.
     assert_eq!(value(r#"deriv(sem_gauge{job="a"}[10s])"#).as_deref(), Some("0.5"));
     assert_eq!(value(r#"predict_linear(sem_gauge{job="a"}[10s], 2)"#).as_deref(), Some("5.5"));
+    // The subquery evaluates at :01 and :02 (multiples of 1s inside (:00, :02]): values 9 and 2.
+    assert_eq!(value(r#"max_over_time(sem_gauge{job="a"}[2s:1s])"#).as_deref(), Some("9"));
+    assert_eq!(value(r#"min_over_time(sem_gauge{job="a"}[2s:1s] offset 1s)"#).as_deref(), Some("1"));
+    let counted = prom_get(
+        &state,
+        "/api/v1/query",
+        &[("query", r#"count_values("v", sem_gauge)"#), ("time", "1767225602")],
+    );
+    let by_value: HashMap<String, String> = counted["data"]["result"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| (s["metric"]["v"].as_str().unwrap().into(), s["value"][1].as_str().unwrap().into()))
+        .collect();
+    assert_eq!(by_value, HashMap::from([("2".into(), "1".into()), ("4".into(), "1".into())]));
     // Inverted clamp bounds give an empty result, as in Prometheus.
     assert_eq!(value(r#"clamp(sem_gauge{job="a"}, 5, 1)"#), None);
 }

@@ -31,6 +31,13 @@ import (
 const (
 	prometheusDownloadURL = "https://github.com/prometheus/prometheus/releases/download/v3.13.5/prometheus-3.13.5.{{.OS}}-{{.Arch}}.tar.gz"
 	scrapeConfigTemplate  = `
+# The replay is 70 minutes of history delivered in seconds. Without an out-of-order window the
+# reference drops the oldest snapshots as "too old" relative to its newest, and then holds less
+# data than the target, which keeps everything.
+storage:
+  tsdb:
+    out_of_order_time_window: 2h
+
 global:
   scrape_interval: {{.ScrapeInterval}}
 
@@ -128,6 +135,9 @@ func (c canardstack) Run(ctx context.Context, opts promql.Options) error {
 			"CANARDSTACK_API_KEY=" + apiKey,
 			"CANARDSTACK_ADMIN_API_KEY=" + apiKey + "-admin",
 			"CANARDSTACK_DATA_DIR=" + filepath.Join(dir, "canardstack"),
+			// The suite fires hundreds of queries at once; let them queue instead of getting 429s.
+			"CANARDSTACK_QUERY_CONCURRENCY=16",
+			"CANARDSTACK_QUERY_ADMISSION_WAIT_MS=120000",
 			"CANARDSTACK_DUCKLAKE_ATTACH_URI=ducklake:sqlite:" + catalog,
 			"CANARDSTACK_DUCKLAKE_DATA_PATH=" + data + "/",
 		}, binary, "serve")

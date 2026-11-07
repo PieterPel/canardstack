@@ -5,6 +5,8 @@ use super::*;
 pub(super) struct Ev<'a> {
     pub(super) grid: &'a Grid,
     pub(super) data: &'a HashMap<String, Vec<Raw>>,
+    /// Extra look-back baked into the keys of selectors inside enclosing subqueries.
+    pub(super) extra_ms: i64,
 }
 
 pub(super) type Samples<'a> = &'a [(i64, f64)];
@@ -46,7 +48,7 @@ impl Ev<'_> {
 
     pub(super) fn raw(&self, vs: &VectorSelector, window_ms: i64) -> ApiResult<&[Raw]> {
         self.data
-            .get(&selector_key(vs, window_ms))
+            .get(&selector_key(vs, window_ms + self.extra_ms))
             .map(Vec::as_slice)
             .ok_or_else(|| exec_err("selector was not fetched"))
     }
@@ -98,8 +100,10 @@ impl Ev<'_> {
         keep_name: bool,
         f: &dyn Fn(Samples, i64, i64, usize) -> Option<f64>,
     ) -> ApiResult<Value> {
-        let Expr::MatrixSelector(ms) = arg else {
-            return Err(unsupported("expected a range vector argument"));
+        let ms = match arg {
+            Expr::MatrixSelector(ms) => ms,
+            Expr::Subquery(sq) => return self.windowed_subquery(sq, keep_name, f),
+            _ => return Err(unsupported("expected a range vector argument")),
         };
         let range = ms.range.as_millis() as i64;
         let off = offset_ms(&ms.vs);

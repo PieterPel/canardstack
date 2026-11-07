@@ -28,9 +28,10 @@ impl Ev<'_> {
     pub(super) fn aggregate(&self, agg: &parser::AggregateExpr) -> ApiResult<Value> {
         let op = agg.op.to_string();
         let input = self.vector_arg(&agg.expr)?;
+        let count_values = op == "count_values";
         let param = match &agg.param {
-            Some(p) => Some(self.scalar_arg(p)?),
-            None => None,
+            Some(p) if !count_values => Some(self.scalar_arg(p)?),
+            _ => None,
         };
         let mut groups: BTreeMap<Labels, Vec<usize>> = BTreeMap::new();
         for (i, s) in input.iter().enumerate() {
@@ -41,6 +42,13 @@ impl Ev<'_> {
         }
         let n = self.n();
         let mut out = Vec::new();
+        if count_values {
+            let label = match &agg.param {
+                Some(p) => self.string_arg(p)?,
+                None => return Err(bad("count_values needs a label name")),
+            };
+            return Ok(Value::Vector(self.count_values(&label, &input, &groups)));
+        }
         if op == "topk" || op == "bottomk" {
             let k = param.ok_or_else(|| bad("missing k"))?;
             for members in groups.values() {
@@ -102,5 +110,31 @@ impl Ev<'_> {
             out.push(Series { labels, vals });
         }
         Ok(Value::Vector(out))
+    }
+
+    /// `count_values("label", v)`: per group and step, how many series hold each distinct value.
+    fn count_values(
+        &self,
+        label: &str,
+        input: &[Series],
+        groups: &BTreeMap<Labels, Vec<usize>>,
+    ) -> Vec<Series> {
+        let mut out: BTreeMap<Labels, Vec<Option<f64>>> = BTreeMap::new();
+        for (group, members) in groups {
+            for step in 0..self.n() {
+                let mut counts: BTreeMap<String, f64> = BTreeMap::new();
+                for &i in members {
+                    if let Some(v) = input[i].vals[step] {
+                        *counts.entry(v.to_string()).or_default() += 1.0;
+                    }
+                }
+                for (value, count) in counts {
+                    let mut labels = group.clone();
+                    labels.insert(label.to_string(), value);
+                    out.entry(labels).or_insert_with(|| vec![None; self.n()])[step] = Some(count);
+                }
+            }
+        }
+        out.into_iter().map(|(labels, vals)| Series { labels, vals }).collect()
     }
 }

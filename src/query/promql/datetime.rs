@@ -63,7 +63,11 @@ impl Ev<'_> {
             inner = &p.expr;
         }
         if let Expr::VectorSelector(vs) = inner {
-            return Ok(Value::Vector(self.instant_selector(vs, true)?));
+            let mut series = self.instant_selector(vs, true)?;
+            series.iter_mut().for_each(|s| {
+                s.labels.remove(METRIC_NAME);
+            });
+            return Ok(Value::Vector(series));
         }
         Ok(Value::Vector(
             self.vector_arg(arg)?
