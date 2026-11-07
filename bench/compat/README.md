@@ -114,14 +114,22 @@ What it showed (release build, one machine, medians over three warm rounds):
 | LogQL vs Loki | 480 lines | 2,408 | 1.7 | 2.6 | nothing above 10x |
 | LogQL vs Loki | 20x lines | 1,874 | 1.4 | 2.0 | the gap shrinks as data grows |
 | TraceQL vs Tempo | 60 traces | 384 | 3.3 | 6.0 | |
-| TraceQL vs Tempo | 900 traces | 384 | 7.3 | 15.8 | 119 queries over 10x; a plain filter takes 13 ms against 1.6 ms |
+| TraceQL vs Tempo | 900 traces | 384 | 7.3 | 15.8 | before the optimisations below: 119 queries over 10x; a plain filter takes 13 ms against 1.6 ms |
+| TraceQL vs Tempo | 900 traces, optimised | 384 | 3.8 | 9.9 | 38 queries over 10x |
 
-- **The PromQL floor is DuckLake's, not ours.** Plain DuckDB on a persistent connection to the same
-  SQLite-catalog DuckLake takes about 3 ms for each table a query touches (`SELECT 1` is 0.06 ms),
-  and a PromQL fetch reads both the gauge and the sum table. Cutting it means touching fewer tables
-  (a cached name-to-table map), reusing a snapshot for a short while, or caching results.
-- **TraceQL scales linearly with spans and is the weak spot.** Every search or metrics query loads
-  all spans of the window and parses their JSON in Rust, so cost follows the span count (and the
-  300,000-span cap turns large windows into errors) while Tempo's index keeps filters flat. Pushing
-  the span filter and the time range into SQL, and parsing attributes lazily, is the fix.
+- **The PromQL floor is DuckLake's, not ours.** A filtered scan of one DuckLake table on a SQLite
+  catalog takes 3–6 ms in plain DuckDB, even when the table is empty (`SELECT 1` is 0.06 ms; canardstack's
+  own HTTP and planning cost for `1+1` is 0.3 ms). Things that did not lower it: holding one
+  transaction open (7.7 to 6.0 ms), flushing inlined rows to Parquet, merging files (the span table
+  is a single file), and reading one table instead of both for a metric whose table is known (no
+  change across the 649 queries, so that routing cache was not kept). What would: fewer catalog
+  round trips per scan, which is DuckLake's to improve, or caching whole results.
+- **TraceQL scaled with spans and was the weak spot; three changes cut it.** Loading a trace set now
+  takes one scan (window functions mark the traces that touch the window and meet each condition),
+  the filters of the query are pushed into that scan as SQL (`pushdown.rs`, conservative: anything
+  not understood is left to the evaluator), and the wide JSON columns a query cannot read are not
+  selected (reading them was most of the cost: 12 ms against 6 ms for 4,270 spans). At 900 traces
+  the median ratio fell from 7.3 to 3.8 and the queries over 10x from 119 to 38. What remains is
+  mostly the same per-scan cost; a plain `{ } | rate()` still reads every span of the window, where
+  Tempo answers from an index.
 - **LogQL holds up.** Its engine reads only the matching rows, and the gap to Loki narrows with data.
