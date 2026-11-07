@@ -73,14 +73,11 @@ against a real Loki and Tempo and compare the answers.
 
 ## What the suite does not cover
 
-Histograms (the storage layer has none), subqueries, `@` modifiers, recording and alerting rules,
-`| json` / `| logfmt` parsers, `label_format`, `line_format` templates, LogQL `topk`/`offset`
-and per-stream (unaggregated) metric queries, TraceQL `select()` attributes in search results, and the exemplar,
-log-volume and tail endpoints. canardstack rejects the
-unsupported ones with an explicit `unsupported_promql` / `unsupported_logql` error rather than a
-wrong answer. Known semantic gaps: `changes()` follows Prometheus (the change into the window is
-not counted), and Loki streams split by severity, so unaggregated log metric queries differ from
-Loki's per-stream series.
+Native (exponential) histograms and summaries, which the storage layer does not hold; the `@`
+modifier, recording and alerting rules (canardstack rejects `@` with an explicit
+`unsupported_promql` error rather than a wrong answer); TraceQL `select()` attributes in search
+results; and the exemplar, log-volume and tail endpoints. Explicit-bucket histograms are checked
+against Prometheus by [`histogram/`](histogram/README.md).
 
 ## Adding a case
 

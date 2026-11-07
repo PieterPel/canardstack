@@ -22,7 +22,11 @@ from typing import List
 READERS = {
     "logs": [("otlp_logs", "read_otlp_logs")],
     "traces": [("otlp_traces", "read_otlp_traces")],
-    "metrics": [("otlp_metrics_gauge", "read_otlp_metrics_gauge"), ("otlp_metrics_sum", "read_otlp_metrics_sum")],
+    "metrics": [
+        ("otlp_metrics_gauge", "read_otlp_metrics_gauge"),
+        ("otlp_metrics_sum", "read_otlp_metrics_sum"),
+        ("otlp_metrics_histogram", "read_otlp_metrics_histogram"),
+    ],
 }
 
 
