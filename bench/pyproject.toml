@@ -11,7 +11,9 @@ dependencies = [
 # duckdb is only needed by serverless_writer/. Its version must match the DuckDB the stack uses
 # (the `duckdb` crate 1.10506.x is DuckDB 1.5.6) because extension binaries are version-specific.
 serverless = ["duckdb==1.5.6"]
+# compat/promql/bridge.py parses OpenMetrics text.
+compliance = ["prometheus-client>=0.20"]
 
 [tool.uv]
 package = false
-default-groups = ["serverless"]
+default-groups = ["serverless", "compliance"]

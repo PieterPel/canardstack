@@ -6,12 +6,15 @@ requires-python = ">=3.10"
 name = "canardstack-bench"
 version = "0.0.0"
 source = { virtual = "." }
-default-groups = ["serverless"]
+default-groups = ["compliance", "serverless"]
 dependencies = [
     { name = "opentelemetry-proto" },
 ]
 
 [package.dev-dependencies]
+compliance = [
+    { name = "prometheus-client" },
+]
 serverless = [
     { name = "duckdb" },
 ]
@@ -20,6 +23,7 @@ serverless = [
 requires-dist = [{ name = "opentelemetry-proto", specifier = ">=1.27" }]
 
 [package.metadata.requires-dev]
+compliance = [{ name = "prometheus-client", specifier = ">=0.20" }]
 serverless = [{ name = "duckdb", specifier = "==1.5.6" }]
 
 [[package]]
@@ -74,6 +78,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/24/9c/1aa4ce60e9bc72af20dc49c92cc0566825092d92b3d6a277439fb5fb7c01/opentelemetry_proto-1.45.2.tar.gz", hash = "sha256:bd8d23cf770605b0af9b7be2071d26a464fea289d35429abfd2a66226114ad64", size = 46486, upload-time = "2026-10-29T17:29:53.007Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/7e/0d/a0b8f2b9efe2ec1abdf639d3696db9b1563ebeb11d91aac08ba7341e9122/opentelemetry_proto-1.45.2-py3-none-any.whl", hash = "sha256:03a7ca1b43f89fd5b965d5975902bb2515c0c86e2428b456836e9a6149c6235a", size = 72484, upload-time = "2026-10-29T17:29:31.403Z" },
+]
+
+[[package]]
+name = "prometheus-client"
+version = "0.26.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/52/73/f1334c29c2af4cd9dba6c7817e61b611bd0215e2eb5565c6064a4de18802/prometheus_client-0.26.0.tar.gz", hash = "sha256:04a91bcf94e2cf74a44a1a874d651a2e853ed354b6e822f3b7487751465d5c2b", size = 92910, upload-time = "2026-07-24T19:36:41.893Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/eb/a3/b69efbf4143b5b9859b977770bbbabcc2796b702fa69dc40271e45cd5a56/prometheus_client-0.26.0-py3-none-any.whl", hash = "sha256:fa93d06737aa02bacd05794768508bb97d2fbee28cb3bca04eaae92f0ca953d6", size = 64494, upload-time = "2026-07-24T19:36:40.854Z" },
 ]
 
 [[package]]
