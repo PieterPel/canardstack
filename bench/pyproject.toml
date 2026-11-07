@@ -1,19 +1,16 @@
 [project]
 name = "canardstack-bench"
 version = "0.0.0"
-description = "Benchmark, compatibility and serverless-writer harness for canardstack"
+description = "Benchmark and compatibility harness for canardstack"
 requires-python = ">=3.10"
 dependencies = [
     "opentelemetry-proto>=1.27",   # OTLP protobuf encoding for ingest
 ]
 
 [dependency-groups]
-# duckdb is only needed by serverless_writer/. Its version must match the DuckDB the stack uses
-# (the `duckdb` crate 1.10506.x is DuckDB 1.5.6) because extension binaries are version-specific.
-serverless = ["duckdb==1.5.6"]
 # compat/promql/bridge.py parses OpenMetrics text.
 compliance = ["prometheus-client>=0.20"]
 
 [tool.uv]
 package = false
-default-groups = ["serverless", "compliance"]
+default-groups = ["compliance"]

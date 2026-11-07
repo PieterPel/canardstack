@@ -54,6 +54,20 @@ if any of them stops passing and prints cases that newly pass; `--update-baselin
 current passes, so each fix locks in a gain. `--fail-under promql=60` adds a floor on a language's
 pass rate. The goal is to keep `canardstack-pg`'s baseline at every case in the suite.
 
+## Loading data: `REEDLAKE_BINARY`
+
+The LogQL, TraceQL, PromQL and histogram harnesses put their data into DuckLake with the `reedlake`
+binary (`reedlake.py` runs it), so what they test is what a deployment runs, and canardstack has no
+writer of its own. Build it from the `reedlake` crate and point `REEDLAKE_BINARY` at it:
+
+```bash
+cargo build -p reedlake          # in the checkout that holds the crate
+export REEDLAKE_BINARY=/path/to/target/debug/reedlake
+```
+
+It must be built against the same DuckDB as canardstack (the `duckdb` crate `1.10506.x`, DuckDB
+1.5.6), because DuckDB extensions only load into the exact version they were built for.
+
 ## Scoreboard (canardstack on a Postgres catalog)
 
 | language | pass | wrong | unsupported | pass rate |

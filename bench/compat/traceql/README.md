@@ -17,7 +17,7 @@ child processes, `KEEP_DIR=1` keeps their temp directories.
 
 How the data gets in: the generator makes 60 deterministic checkout traces (frontend, checkout and
 payment services; typed span attributes; errors, events, links) one second apart. They go to Tempo
-as OTLP/HTTP, and to canardstack as OTLP trace exports committed to a local SQLite-catalog DuckLake.
+as OTLP/HTTP, and to canardstack as OTLP trace exports committed to a local SQLite-catalog DuckLake with `reedlake ingest`.
 Tempo 3 only serves recent traces and reports ready about 15 seconds before its live-store partition
 turns active, so the harness waits before pushing and generates fresh timestamps.
 

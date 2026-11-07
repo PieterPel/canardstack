@@ -25,11 +25,10 @@ import time
 import urllib.request
 from pathlib import Path
 
-import duckdb
 from prometheus_client.openmetrics.parser import text_string_to_metric_families
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "serverless_writer"))
-from eventhub_ingest import ingest_batch  # noqa: E402
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from reedlake import ingest  # noqa: E402
 
 BATCH_SCRAPES = 12  # scrapes committed per DuckLake transaction
 
@@ -335,11 +334,6 @@ def scrape_proto(url: str) -> bytes:
 
 
 def run(args) -> None:
-    con = duckdb.connect()
-    for ext, repo in (("otlp", "community"), ("ducklake", "core"), ("sqlite", "core")):
-        con.execute(f"INSTALL {ext} FROM {repo}")
-        con.execute(f"LOAD {ext}")
-    con.execute(f"ATTACH 'ducklake:sqlite:{args.catalog}' AS lake (DATA_PATH '{args.data}/')")
     pending: "queue.Queue[bytes]" = queue.Queue()
 
     def writer() -> None:
@@ -353,7 +347,7 @@ def run(args) -> None:
                         events.append(pending.get(timeout=0.05))
                     except queue.Empty:
                         pass
-                ingest_batch(con, "metrics", events, "bridge", seq, seq + len(events) - 1)
+                ingest(args.catalog, args.data, "metrics", "bridge", seq, seq + len(events) - 1, events)
                 seq += len(events)
                 for _ in events:
                     pending.task_done()

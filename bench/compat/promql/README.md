@@ -11,8 +11,8 @@ nix-shell -p go --run 'go test -run TestCompliance -timeout 30m -json ./... > re
 ```
 
 How canardstack takes part: `bridge.py` scrapes the suite's replayer (OpenMetrics text with explicit
-timestamps) and commits each scrape through `read_otlp_metrics_*` into a local SQLite-catalog
-DuckLake, the way a Collector's prometheus receiver would feed duckdb-otlp. A native canardstack
+timestamps) and commits each scrape with `reedlake ingest` into a local SQLite-catalog
+DuckLake, the way a Collector's prometheus receiver would feed it. A native canardstack
 serves that catalog, behind a small reverse proxy that adds the API key the suite's client lacks.
 `DEBUG=1` streams the child processes; `KEEP_DIR=1` keeps the catalog for inspection.
 

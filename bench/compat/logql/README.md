@@ -16,7 +16,7 @@ into `bin/`. `DEBUG=1` streams the child processes, `KEEP_DIR=1` keeps their tem
 How the data gets in: the generator makes 480 JSON log lines (the shape oteldb's generator uses:
 method, status, took, size, ips, ids) in three streams labelled `{filename, job="varlogs"}`. They go
 to Loki through its JSON push API, and to canardstack as OTLP log exports (the stream labels as
-resource attributes) committed to a local SQLite-catalog DuckLake through `read_otlp_logs`.
+resource attributes) committed to a local SQLite-catalog DuckLake with `reedlake ingest`.
 
 Comparison follows oteldb's comparer: `service_name`, `detected_level` and `level` are stripped
 from both sides (attribute discovery is implementation-defined), series are sorted by label set,

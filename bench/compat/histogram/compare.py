@@ -1,7 +1,7 @@
 #!/usr/bin/env -S uv run --script
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["duckdb==1.5.6", "opentelemetry-proto", "protobuf"]
+# dependencies = ["opentelemetry-proto", "protobuf"]
 # ///
 """Compare PromQL over OTel explicit-bucket histograms between Prometheus and canardstack.
 
@@ -9,8 +9,8 @@ The same cumulative histograms are sent to Prometheus through its OTLP receiver 
 them to classic `_bucket`/`_sum`/`_count` series) and committed to a DuckLake that canardstack
 serves. A set of queries runs against both and the answers are compared.
 
-    uv run bench/compat/histogram/compare.py            # needs target/release/canardstack (or CANARDSTACK_BINARY)
-    PROMETHEUS_BINARY=... CANARDSTACK_BINARY=... uv run bench/compat/histogram/compare.py
+    REEDLAKE_BINARY=... uv run bench/compat/histogram/compare.py   # needs target/release/canardstack (or CANARDSTACK_BINARY)
+    PROMETHEUS_BINARY=... CANARDSTACK_BINARY=... REEDLAKE_BINARY=... uv run bench/compat/histogram/compare.py
 """
 
 from __future__ import annotations
@@ -36,8 +36,8 @@ from opentelemetry.proto.common.v1.common_pb2 import AnyValue, KeyValue
 from opentelemetry.proto.metrics.v1 import metrics_pb2
 
 ROOT = Path(__file__).resolve().parents[3]
-sys.path.insert(0, str(ROOT / "bench" / "serverless_writer"))
-from eventhub_ingest import ingest_batch  # noqa: E402
+sys.path.insert(0, str(ROOT / "bench" / "compat"))
+from reedlake import ingest  # noqa: E402
 
 API_KEY = "histogram-compare"
 BOUNDS = [0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0]
@@ -388,19 +388,11 @@ def main():
             urllib.request.urlopen(req, timeout=30).read()
 
         # --- canardstack, fed through the writer
-        import duckdb
         catalog, data = work / "catalog.sqlite", work / "data"
         data.mkdir()
         sqlite3.connect(catalog).execute("PRAGMA journal_mode=WAL").close()
-        con = duckdb.connect()
-        for ext, repo in (("otlp", "community"), ("ducklake", "core"), ("sqlite", "core")):
-            con.execute(f"INSTALL {ext} FROM {repo}")
-            con.execute(f"LOAD {ext}")
-        con.execute(f"ATTACH 'ducklake:sqlite:{catalog}' AS lake (DATA_PATH '{data}/')")
         events = [MessageToJson(r, indent=None).encode() for _, r in requests + native_requests]
-        rows = ingest_batch(con, "metrics", events, "histogram-compare", 0, len(events) - 1)
-        print(f"committed {rows} histogram rows from {len(events)} requests")
-        con.close()
+        print(ingest(catalog, data, "metrics", "histogram-compare", 0, len(events) - 1, events), f"from {len(events)} requests")
         cs_port = free_port()
         processes.append(subprocess.Popen(
             [binary, "serve"], cwd=work, stdout=open(work / "canardstack.log", "w"), stderr=subprocess.STDOUT,

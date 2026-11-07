@@ -7,8 +7,7 @@ in seconds becomes `http_server_duration_seconds`).
 
 `compare.py` checks that against the real thing. It generates cumulative histograms (two services,
 three routes, 60 scrapes 15 s apart, one counter reset) and sends them to a Prometheus through its
-OTLP receiver and to a DuckLake through the benchmark writer (`duckdb-otlp`'s
-`read_otlp_metrics_histogram`), which a native canardstack serves. 26 queries then run as instant and
+OTLP receiver and to a DuckLake with `reedlake ingest`, which a native canardstack serves. 26 queries then run as instant and
 range queries on both and the answers are compared (values to 1e-6 relative): selectors on each series
 kind and on `le`, `rate`/`increase` over buckets, sums and ratios, `histogram_quantile` over plain
 and rated buckets, grouped by `le`, `job` and route, and including a counter reset.
