@@ -21,6 +21,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -249,6 +250,7 @@ func startCanardstack(t *testing.T, repo string, lines []logLine) string {
 }
 
 type target struct {
+	name   string
 	base   string
 	header http.Header
 }
@@ -268,23 +270,31 @@ func (tg target) queryRange(query string, w window) (*envelope, error) {
 	for k, v := range tg.header {
 		req.Header[k] = v
 	}
-	client := http.Client{Timeout: 60 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
+	var status int
+	var body []byte
+	if err := measure("logql", tg.name, query, func() (bool, error) {
+		client := http.Client{Timeout: 60 * time.Second}
+		resp, err := client.Do(req.Clone(req.Context()))
+		if err != nil {
+			return false, err
+		}
+		defer resp.Body.Close()
+		body, _ = io.ReadAll(resp.Body)
+		status = resp.StatusCode
+		return status == 200, nil
+	}); err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
 	e := &envelope{}
 	if err := jsonUnmarshal(body, e); err != nil {
-		return nil, fmt.Errorf("status %d: %s", resp.StatusCode, truncate(string(body), 200))
+		return nil, fmt.Errorf("status %d: %s", status, truncate(string(body), 200))
 	}
-	if resp.StatusCode != 200 || e.Status != "success" {
+	if status != 200 || e.Status != "success" {
 		message := e.Error
 		if message == "" {
 			message = string(body)
 		}
-		return nil, fmt.Errorf("%d %s: %s", resp.StatusCode, e.ErrorType, truncate(message, 160))
+		return nil, fmt.Errorf("%d %s: %s", status, e.ErrorType, truncate(message, 160))
 	}
 	return e, nil
 }
@@ -295,6 +305,15 @@ func truncate(s string, n int) string {
 		return s[:n] + "..."
 	}
 	return s
+}
+
+// scale multiplies the number of generated log lines (SCALE=10 is ten times as many).
+func scale() int {
+	n, err := strconv.Atoi(os.Getenv("SCALE"))
+	if err != nil || n < 1 {
+		return 1
+	}
+	return n
 }
 
 var spaces = regexp.MustCompile(`\s+`)
@@ -320,7 +339,7 @@ func TestCompliance(t *testing.T) {
 	}
 
 	end := time.Now().UTC().Truncate(time.Second).Add(-5 * time.Second)
-	lines := generate(end.Add(-2*time.Minute), end, time.Second, 4, []string{"log.json", "other.json", "third.json"})
+	lines := generate(end.Add(-2*time.Minute), end, time.Second, 4*scale(), []string{"log.json", "other.json", "third.json"})
 	w := window{start: end.Add(-time.Minute), end: end}
 
 	loki := startLoki(t)
@@ -333,8 +352,8 @@ func TestCompliance(t *testing.T) {
 		t.Fatalf("push to Loki: %v %s", err, body)
 	}
 	resp.Body.Close()
-	ref := target{base: loki}
-	got := target{base: startCanardstack(t, repo, lines), header: http.Header{"Authorization": {"Bearer " + apiKey}}}
+	ref := target{name: "loki", base: loki}
+	got := target{name: "canardstack", base: startCanardstack(t, repo, lines), header: http.Header{"Authorization": {"Bearer " + apiKey}}}
 	t.Logf("%d lines pushed, %d queries", len(lines), len(cases))
 
 	sem := make(chan struct{}, concurrency)

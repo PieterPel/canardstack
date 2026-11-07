@@ -87,3 +87,41 @@ Loki's per-stream series.
 Append a `Case` to the right list in `cases.py`. Use the `$GAUGE`, `$COUNTER`, `$LBL`, `$S0..` and
 `$RUN` placeholders, and give either `expect` (a dict compared within `tol`) or a `check`
 (`(ctx, observed) -> (ok, detail)`). Run it against `--target lgtm` first.
+
+## Latency against the reference engines
+
+The three differential harnesses can also time every query on both servers. With `TIMING=<file>`
+each request is repeated four times (the first is cold) and every duration is appended to the file;
+run with `-parallel 1` and a release build so requests do not compete and the binary is the one you
+would deploy. `SCALE=<n>` multiplies the LogQL lines and `TRACES=<n>` sets the TraceQL traces (the
+PromQL data comes from the upstream suite and cannot be scaled).
+
+```bash
+cargo build --release
+CANARDSTACK_BINARY=$PWD/target/release/canardstack TIMING=$PWD/bench/compat/results/latency-logql.jsonl \
+  sh -c 'cd bench/compat/logql && nix-shell -p go --run "go test -parallel 1 -run TestCompliance -timeout 90m -count=1 ."'
+uv run --project bench bench/compat/latency_report.py bench/compat/results/latency-*.jsonl
+```
+
+The report gives, per language, the ratio of canardstack's median warm latency to the reference's,
+by feature, the worst ratios, and the first-request penalty.
+
+What it showed (release build, one machine, medians over three warm rounds):
+
+| | data | queries | ratio p50 | p90 | notes |
+| --- | --- | --- | --- | --- | --- |
+| PromQL vs Prometheus | upstream suite, ~70 min | 649 | 19.5 | 40 | every query costs 6–7 ms (even `min(nonexistent)`), Prometheus 0.1–0.5 ms |
+| LogQL vs Loki | 480 lines | 2,408 | 1.7 | 2.6 | nothing above 10x |
+| LogQL vs Loki | 20x lines | 1,874 | 1.4 | 2.0 | the gap shrinks as data grows |
+| TraceQL vs Tempo | 60 traces | 384 | 3.3 | 6.0 | |
+| TraceQL vs Tempo | 900 traces | 384 | 7.3 | 15.8 | 119 queries over 10x; a plain filter takes 13 ms against 1.6 ms |
+
+- **The PromQL floor is DuckLake's, not ours.** Plain DuckDB on a persistent connection to the same
+  SQLite-catalog DuckLake takes about 3 ms for each table a query touches (`SELECT 1` is 0.06 ms),
+  and a PromQL fetch reads both the gauge and the sum table. Cutting it means touching fewer tables
+  (a cached name-to-table map), reusing a snapshot for a short while, or caching results.
+- **TraceQL scales linearly with spans and is the weak spot.** Every search or metrics query loads
+  all spans of the window and parses their JSON in Rust, so cost follows the span count (and the
+  300,000-span cap turns large windows into errors) while Tempo's index keeps filters flat. Pushing
+  the span filter and the time range into SQL, and parsing attributes lazily, is the fix.
+- **LogQL holds up.** Its engine reads only the matching rows, and the gap to Loki narrows with data.

@@ -87,8 +87,21 @@ func (p prometheus) Run(ctx context.Context, opts promql.Options) error {
 	if err := os.WriteFile(configFile, buf.Bytes(), 0o600); err != nil {
 		return err
 	}
+	listen := opts.QueryHostPort
+	if timingPath != "" {
+		// Put a timing proxy in front, as canardstack has.
+		private, err := compliance.AllocateFreeLocalHostPort()
+		if err != nil {
+			return err
+		}
+		target, _ := url.Parse("http://" + private)
+		server := &http.Server{Addr: opts.QueryHostPort, Handler: timingProxy("promql", "prometheus", httputil.NewSingleHostReverseProxy(target))}
+		go server.ListenAndServe()
+		defer server.Close()
+		listen = private
+	}
 	return promql.RunCommand(ctx, ".", nil, binary,
-		fmt.Sprintf("--web.listen-address=%s", opts.QueryHostPort),
+		fmt.Sprintf("--web.listen-address=%s", listen),
 		fmt.Sprintf("--storage.tsdb.path=%v", dir),
 		fmt.Sprintf("--config.file=%s", configFile))
 }
@@ -170,7 +183,7 @@ func (c canardstack) Run(ctx context.Context, opts promql.Options) error {
 		}
 		proxy.ServeHTTP(w, r)
 	})
-	server := &http.Server{Addr: opts.QueryHostPort, Handler: gated}
+	server := &http.Server{Addr: opts.QueryHostPort, Handler: timingProxy("promql", "canardstack", gated)}
 	go func() { errCh <- server.ListenAndServe() }()
 	defer server.Close()
 

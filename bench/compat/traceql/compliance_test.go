@@ -22,6 +22,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -33,8 +34,16 @@ import (
 const (
 	apiKey      = "compliance-key"
 	concurrency = 8
-	traceCount  = 60
 )
+
+// traceCount is the number of generated traces (TRACES overrides it; keep it below the search
+// limit of 1000). They are spread over the same minute whatever the count.
+var traceCount = func() int {
+	if n, err := strconv.Atoi(os.Getenv("TRACES")); err == nil && n > 0 {
+		return n
+	}
+	return 60
+}()
 
 var tempoConfig = `stream_over_http_enabled: true
 server:
@@ -258,6 +267,7 @@ func startCanardstack(t *testing.T, repo string, traces []trace) string {
 }
 
 type target struct {
+	name   string
 	base   string
 	header http.Header
 }
@@ -276,15 +286,23 @@ func (tg target) queryRange(query string, w window) (map[string]seriesSamples, e
 	for k, v := range tg.header {
 		req.Header[k] = v
 	}
-	client := http.Client{Timeout: 60 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
+	var status int
+	var body []byte
+	if err := measure("traceql", tg.name, query, func() (bool, error) {
+		client := http.Client{Timeout: 60 * time.Second}
+		resp, err := client.Do(req.Clone(req.Context()))
+		if err != nil {
+			return false, err
+		}
+		defer resp.Body.Close()
+		body, _ = io.ReadAll(resp.Body)
+		status = resp.StatusCode
+		return status == 200, nil
+	}); err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("%d: %s", resp.StatusCode, truncate(string(body), 200))
+	if status != 200 {
+		return nil, fmt.Errorf("%d: %s", status, truncate(string(body), 200))
 	}
 	if path := os.Getenv("DUMP"); path != "" {
 		if tg.header != nil {
@@ -310,15 +328,23 @@ func (tg target) search(query string, w window) (map[string]traceSummary, error)
 	for k, v := range tg.header {
 		req.Header[k] = v
 	}
-	client := http.Client{Timeout: 60 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
+	var status int
+	var body []byte
+	if err := measure("traceql", tg.name, query, func() (bool, error) {
+		client := http.Client{Timeout: 60 * time.Second}
+		resp, err := client.Do(req.Clone(req.Context()))
+		if err != nil {
+			return false, err
+		}
+		defer resp.Body.Close()
+		body, _ = io.ReadAll(resp.Body)
+		status = resp.StatusCode
+		return status == 200, nil
+	}); err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("%d: %s", resp.StatusCode, truncate(string(body), 200))
+	if status != 200 {
+		return nil, fmt.Errorf("%d: %s", status, truncate(string(body), 200))
 	}
 	return summarise(body)
 }
@@ -383,11 +409,11 @@ func TestCompliance(t *testing.T) {
 	// Whole seconds, so Tempo and canardstack see the same timestamps.
 	// Tempo's live-store only serves recent traces, so keep the data fresh and dense.
 	base := time.Now().UTC().Truncate(time.Second).Add(-70 * time.Second)
-	traces := generate(base, time.Second, traceCount)
+	traces := generate(base, time.Minute/time.Duration(traceCount), traceCount)
 	w := window{start: base.Add(-time.Minute), end: base.Add(10 * time.Minute)}
 
-	ref := target{base: startTempo(t, traces)}
-	got := target{base: startCanardstack(t, repo, traces), header: http.Header{"Authorization": {"Bearer " + apiKey}}}
+	ref := target{name: "tempo", base: startTempo(t, traces)}
+	got := target{name: "canardstack", base: startCanardstack(t, repo, traces), header: http.Header{"Authorization": {"Bearer " + apiKey}}}
 
 	waitFor(t, "Tempo to index the traces", 3*time.Minute, func() bool {
 		res, err := ref.search("{ }", w)
