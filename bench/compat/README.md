@@ -58,11 +58,13 @@ pass rate. The goal is to keep `canardstack-pg`'s baseline at every case in the 
 
 The LogQL, TraceQL, PromQL and histogram harnesses put their data into DuckLake with the `reedlake`
 binary (`reedlake.py` runs it), so what they test is what a deployment runs, and canardstack has no
-writer of its own. Build it from the `reedlake` crate and point `REEDLAKE_BINARY` at it:
+writer of its own. `reedlake` lives in the `mono` repo (`apps/rust/reedlake`). Build it there and
+point `REEDLAKE_BINARY` at the result:
 
 ```bash
-cargo build -p reedlake          # in the checkout that holds the crate
-export REEDLAKE_BINARY=/path/to/target/debug/reedlake
+# in a checkout of mono
+just reedlake build
+export REEDLAKE_BINARY=$PWD/apps/rust/reedlake/target/debug/reedlake
 ```
 
 It must be built against the same DuckDB as canardstack (the `duckdb` crate `1.10506.x`, DuckDB

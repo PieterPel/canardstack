@@ -1,9 +1,9 @@
 """Commit OTLP requests to a DuckLake the way a deployment does: with the `reedlake` binary.
 
 The harnesses feed their data through this instead of a writer of their own, so what they test is
-what runs. Set REEDLAKE_BINARY to a built `reedlake` (`cargo build -p reedlake` in the private-mono
-checkout that holds it); it must be built against the same DuckDB as canardstack, because DuckDB
-extensions only load into the exact version they were built for.
+what runs. Set REEDLAKE_BINARY to a built `reedlake` (`just reedlake build` in the mono repo, which
+holds it in apps/rust/reedlake); it must be built against the same DuckDB as canardstack, because
+DuckDB extensions only load into the exact version they were built for.
 """
 
 import os
@@ -15,7 +15,7 @@ from pathlib import Path
 def binary() -> str:
     path = os.environ.get("REEDLAKE_BINARY")
     if not path or not Path(path).is_file():
-        raise SystemExit("set REEDLAKE_BINARY to a built reedlake binary (cargo build -p reedlake)")
+        raise SystemExit("set REEDLAKE_BINARY to a built reedlake binary (just reedlake build, in the mono repo)")
     return path
 
 
