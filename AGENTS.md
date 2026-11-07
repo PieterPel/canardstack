@@ -77,7 +77,7 @@ Storage signals are `Logs`, `Spans`, `MetricGauge`, and `MetricSum`. Histograms 
 - `src/runtime/memory.rs` - runtime memory-pressure probing.
 - `src/cli/` - subcommand implementations.
 - `crates/logql-syntax/` - dependency-free LogQL parser (lexer, AST, parser) in a workspace member that can be published on its own; `src/query/logql/` wraps it and holds the evaluator.
-- `crates/traceql-syntax/` - dependency-free TraceQL parser and validator, tested against Tempo's own example queries; `src/query/traceql/` wraps it and evaluates search queries (spanset filters, pipelines, aggregates, structural operators) over whole traces loaded into memory (`model.rs`, `eval.rs`, `value.rs`).
+- `crates/traceql-syntax/` - dependency-free TraceQL parser and validator, tested against Tempo's own example queries; `src/query/traceql/` wraps it and evaluates search queries (spanset filters, pipelines, aggregates, structural operators) over whole traces loaded into memory (`model.rs`, `eval.rs`, `value.rs`) and metrics queries (`metrics.rs`).
 
 ## Load-Bearing Constraints
 

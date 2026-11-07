@@ -263,6 +263,87 @@ fn traceql_search(
     Ok(json!({"traces": traces, "metrics": {"inspectedTraces": traces.len(), "completedJobs": 1, "totalJobs": 1}}))
 }
 
+/// `10s`, `1m`, `500ms`, `1h` or plain seconds, in nanoseconds.
+fn parse_step_ns(raw: &str) -> ApiResult<i64> {
+    let (number, unit) = match raw.find(|c: char| c.is_ascii_alphabetic()) {
+        Some(at) => raw.split_at(at),
+        None => (raw, "s"),
+    };
+    let unit_ns: f64 = match unit {
+        "ns" => 1.0,
+        "us" | "µs" => 1e3,
+        "ms" => 1e6,
+        "s" => 1e9,
+        "m" => 6e10,
+        "h" => 3.6e12,
+        _ => -1.0,
+    };
+    match number.parse::<f64>() {
+        Ok(n) if unit_ns > 0.0 && n > 0.0 => Ok((n * unit_ns).round() as i64),
+        _ => Err(ApiError::new(400, "invalid_step", "step must be a positive duration such as 10s or 1m")),
+    }
+}
+
+fn label_value(value: &traceql::Val) -> Value {
+    use traceql::ast::{Kind, Status};
+    use traceql::Val;
+    match value {
+        Val::Str(s) => json!({"stringValue": s}),
+        Val::Int(v) => json!({"intValue": v.to_string()}),
+        Val::Float(v) => json!({"doubleValue": v}),
+        Val::Bool(v) => json!({"boolValue": v}),
+        Val::Dur(v) => json!({"stringValue": format!("{v}ns")}),
+        Val::Status(s) => json!({"stringValue": match s { Status::Ok => "ok", Status::Error => "error", Status::Unset => "unset" }}),
+        Val::Kind(k) => json!({"stringValue": match k {
+            Kind::Unspecified => "unspecified",
+            Kind::Internal => "internal",
+            Kind::Server => "server",
+            Kind::Client => "client",
+            Kind::Producer => "producer",
+            Kind::Consumer => "consumer",
+        }}),
+    }
+}
+
+/// `/api/metrics/query_range`: a TraceQL metrics query over a time range.
+pub fn tempo_metrics_range(state: &AppState, params: &HashMap<String, String>) -> ApiResult<Value> {
+    let q = params
+        .get("q")
+        .or_else(|| params.get("query"))
+        .filter(|q| !q.trim().is_empty())
+        .ok_or_else(|| ApiError::new(400, "missing_parameter", "q is required"))?;
+    let query = traceql::parse(q)?;
+    if !matches!(query.kind, traceql::ast::QueryKind::Metrics(_) | traceql::ast::QueryKind::MetricsMath { .. }) {
+        return Err(ApiError::new(400, "bad_data", "not a metrics query"));
+    }
+    let (from, to) = optional_range(params, INTERACTIVE_RANGE_SECS)?;
+    let step_ns = match params.get("step").filter(|s| !s.is_empty()) {
+        Some(step) => parse_step_ns(step)?,
+        None => (((to - from).num_seconds() / 100).max(1)) * 1_000_000_000,
+    };
+    let start_ns = from.timestamp_nanos_opt().unwrap_or_default();
+    let end_ns = to.timestamp_nanos_opt().unwrap_or_default();
+    let range = traceql::MetricsRange::new(start_ns, end_ns, step_ns)?;
+    let series = traceql::evaluate_metrics(&state.queries, &state.storage, &query.kind, range)?;
+    let series: Vec<Value> = series
+        .iter()
+        .map(|s| {
+            let labels: Vec<Value> = s.labels.iter().map(|(k, v)| json!({"key": k, "value": label_value(v)})).collect();
+            let samples: Vec<Value> = s
+                .samples
+                .iter()
+                .enumerate()
+                .filter_map(|(i, v)| {
+                    let v = (*v)?;
+                    (!v.is_nan()).then(|| json!({"timestampMs": range.timestamp_ms(i).to_string(), "value": v}))
+                })
+                .collect();
+            json!({"labels": labels, "samples": samples})
+        })
+        .collect();
+    Ok(json!({"series": series, "metrics": {"completedJobs": 1, "totalJobs": 1}, "step": step_ns.to_string()}))
+}
+
 pub fn tempo_tags() -> Value {
     json!({"tagNames": semantic_labels::tempo_tag_names()})
 }

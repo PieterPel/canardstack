@@ -264,6 +264,40 @@ type target struct {
 
 type window struct{ start, end time.Time }
 
+// queryRange runs a metrics query over the window with a 10 second step.
+func (tg target) queryRange(query string, w window) (map[string]seriesSamples, error) {
+	params := url.Values{
+		"q":     {query},
+		"start": {fmt.Sprint(w.start.Unix())},
+		"end":   {fmt.Sprint(w.end.Unix())},
+		"step":  {"10s"},
+	}
+	req, _ := http.NewRequest(http.MethodGet, tg.base+"/api/metrics/query_range?"+params.Encode(), nil)
+	for k, v := range tg.header {
+		req.Header[k] = v
+	}
+	client := http.Client{Timeout: 60 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("%d: %s", resp.StatusCode, truncate(string(body), 200))
+	}
+	if path := os.Getenv("DUMP"); path != "" {
+		if tg.header != nil {
+			path += ".got"
+		}
+		if f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644); err == nil {
+			fmt.Fprintf(f, "%s\n%s\n", query, body)
+			f.Close()
+		}
+	}
+	return summariseMetrics(body)
+}
+
 func (tg target) search(query string, w window) (map[string]traceSummary, error) {
 	params := url.Values{
 		"q":     {query},
@@ -299,7 +333,9 @@ func truncate(s string, n int) string {
 
 var metricsQuery = regexp.MustCompile(`rate\(\)|_over_time|compare\(|topk|bottomk`)
 
-func loadQueries(t *testing.T) []string {
+// loadQueries returns the search queries and the metrics queries of the corpus. Queries with a
+// sampling hint are left out: which spans they keep is random.
+func loadQueries(t *testing.T) (search, metrics []string) {
 	t.Helper()
 	var ours struct {
 		Queries []string `yaml:"queries"`
@@ -322,15 +358,18 @@ func loadQueries(t *testing.T) []string {
 		t.Fatal(err)
 	}
 	seen := map[string]bool{}
-	var out []string
 	for _, q := range append(ours.Queries, tempo.Valid...) {
-		if metricsQuery.MatchString(q) || seen[q] {
+		if seen[q] || strings.Contains(q, "sample") {
 			continue
 		}
 		seen[q] = true
-		out = append(out, q)
+		if metricsQuery.MatchString(q) {
+			metrics = append(metrics, q)
+		} else {
+			search = append(search, q)
+		}
 	}
-	return out
+	return search, metrics
 }
 
 var spaces = regexp.MustCompile(`\s+`)
@@ -340,7 +379,7 @@ func TestCompliance(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	queries := loadQueries(t)
+	queries, metricQueries := loadQueries(t)
 	// Whole seconds, so Tempo and canardstack see the same timestamps.
 	// Tempo's live-store only serves recent traces, so keep the data fresh and dense.
 	base := time.Now().UTC().Truncate(time.Second).Add(-70 * time.Second)
@@ -354,9 +393,35 @@ func TestCompliance(t *testing.T) {
 		res, err := ref.search("{ }", w)
 		return err == nil && len(res) == traceCount
 	})
-	t.Logf("%d traces loaded, %d queries", traceCount, len(queries))
+	t.Logf("%d traces loaded, %d search queries, %d metrics queries", traceCount, len(queries), len(metricQueries))
 
 	sem := make(chan struct{}, concurrency)
+	// Tempo counts spans into 10 second steps; the data covers the first minute after base.
+	mw := window{start: base.Add(-10 * time.Second), end: base.Add(80 * time.Second)}
+	// Tempo cuts the end of a metrics range back to 30 seconds before now; wait until the window
+	// is entirely older than that so both sides cover the same steps.
+	time.Sleep(time.Until(mw.end.Add(40 * time.Second)))
+	t.Run("metrics", func(t *testing.T) {
+		for _, q := range metricQueries {
+			q := q
+			t.Run(spaces.ReplaceAllString(strings.TrimSpace(q), " "), func(t *testing.T) {
+				t.Parallel()
+				sem <- struct{}{}
+				defer func() { <-sem }()
+				want, refErr := ref.queryRange(q, mw)
+				if refErr != nil {
+					t.Skipf("reference rejects the query: %v", refErr)
+				}
+				have, err := got.queryRange(q, mw)
+				if err != nil {
+					t.Fatalf("unexpected failure: %v", err)
+				}
+				if d := diffMetrics(want, have); d != "" {
+					t.Fatalf("different results: %s", d)
+				}
+			})
+		}
+	})
 	t.Run("queries", func(t *testing.T) {
 		for _, q := range queries {
 			q := q

@@ -48,6 +48,7 @@ enum CompatHandler {
     LokiSeries,
     LokiLabelValues,
     TempoSearch,
+    TempoMetricsRange,
     TempoTags,
     TempoTrace,
     TempoTagValues,
@@ -171,6 +172,13 @@ const COMPAT_ROUTES: &[CompatRoute] = &[
         RoutePattern::Exact("/api/search"),
         QueryAdmission::Heavy,
         CompatHandler::TempoSearch,
+    ),
+    compat_route(
+        &["GET"],
+        "/api/metrics/query_range",
+        RoutePattern::Exact("/api/metrics/query_range"),
+        QueryAdmission::Heavy,
+        CompatHandler::TempoMetricsRange,
     ),
     compat_route(
         &["GET"],
@@ -333,6 +341,7 @@ fn compat_value(
             compat::loki_label_values(state, param.expect("label route has param"), params)
         }
         CompatHandler::TempoSearch => compat::tempo_search(state, params),
+        CompatHandler::TempoMetricsRange => compat::tempo_metrics_range(state, params),
         CompatHandler::TempoTags => Ok(compat::tempo_tags()),
         CompatHandler::TempoTrace => {
             compat::tempo_trace(state, param.expect("trace route has param"))

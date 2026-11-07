@@ -124,3 +124,12 @@ queries:
   - '{ } | max(.http.status_code) < 300'
   - '{ } | sum(.http.status_code) = 500'
   - '{ .http.status_code >= 500 } | max(.http.status_code) = 500'
+
+  # metrics
+  - '{ } | rate()'
+  - '{ } | count_over_time()'
+  - '{ } | rate() by (resource.service.name)'
+  - '{ } | count_over_time() by (name)'
+  - '{ status = error } | rate()'
+  - '{ } | count_over_time() by (span:status)'
+  - '{ } | rate() by (span.http.method)'

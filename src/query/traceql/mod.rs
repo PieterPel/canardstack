@@ -2,6 +2,7 @@
 //! the spans of the traces visible in DuckLake.
 
 mod eval;
+mod metrics;
 mod model;
 mod value;
 
@@ -13,7 +14,9 @@ use eval::Eval;
 use traceql_syntax::ast::{Query, QueryKind};
 use value::Regexes;
 
+pub use metrics::{evaluate as evaluate_metrics, Range as MetricsRange, Series as MetricsSeries};
 pub use traceql_syntax::ast;
+pub use value::Val;
 
 pub fn parse(input: &str) -> ApiResult<Query> {
     let query = traceql_syntax::parse(input).map_err(|e| ApiError::new(400, "bad_data", e.to_string()))?;
