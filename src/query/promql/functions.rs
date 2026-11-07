@@ -239,39 +239,6 @@ impl Ev<'_> {
     }
 }
 
-pub(super) fn variance(values: impl Iterator<Item = f64>) -> f64 {
-    let (mut count, mut mean, mut m2) = (0.0, 0.0, 0.0);
-    for v in values {
-        count += 1.0;
-        let delta = v - mean;
-        mean += delta / count;
-        m2 += delta * (v - mean);
-    }
-    if count == 0.0 {
-        f64::NAN
-    } else {
-        m2 / count
-    }
-}
-
-pub(super) fn quantile(q: f64, mut values: Vec<f64>) -> f64 {
-    if values.is_empty() || q.is_nan() {
-        return f64::NAN;
-    }
-    if q < 0.0 {
-        return f64::NEG_INFINITY;
-    }
-    if q > 1.0 {
-        return f64::INFINITY;
-    }
-    values.sort_by(|a, b| a.total_cmp(b));
-    let rank = q * (values.len() - 1) as f64;
-    let lower = rank.floor() as usize;
-    let upper = rank.ceil() as usize;
-    let weight = rank - lower as f64;
-    values[lower] * (1.0 - weight) + values[upper] * weight
-}
-
 /// Prometheus' `extrapolatedRate`: slope of the first and last sample in the window, extended to
 /// the window edges unless the samples stop short of them.
 pub(super) fn extrapolated(s: Samples, start: i64, end: i64, counter: bool, rate: bool) -> Option<f64> {

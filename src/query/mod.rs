@@ -7,6 +7,7 @@ pub mod prom_labels;
 pub mod prom_names;
 pub mod promql;
 pub mod trace;
+pub mod vector;
 
 use crate::config::Config;
 use crate::db::sql::{quote as sql_quote, time_predicate};

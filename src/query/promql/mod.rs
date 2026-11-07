@@ -29,7 +29,7 @@ mod subquery;
 use eval::{Ev, Samples};
 use fetch::{collect, fetch, selector_key, offset_ms, Raw};
 use fetch::anchored;
-use functions::{quantile, variance};
+use crate::query::vector::{self, quantile, variance};
 
 pub const LOOKBACK_MS: i64 = 300_000;
 const MAX_SAMPLES: usize = 1_000_000;
@@ -37,26 +37,7 @@ const DOT: &str = "__DOT__";
 
 pub use crate::query::prom_labels::Labels;
 
-#[derive(Clone, Copy)]
-pub struct Grid {
-    pub start_ms: i64,
-    pub step_ms: i64,
-    pub steps: usize,
-}
-
-impl Grid {
-    pub fn ts(&self, i: usize) -> i64 {
-        self.start_ms + self.step_ms * i as i64
-    }
-    fn end_ms(&self) -> i64 {
-        self.ts(self.steps.saturating_sub(1))
-    }
-}
-
-pub struct Series {
-    pub labels: Labels,
-    pub vals: Vec<Option<f64>>,
-}
+pub use crate::query::vector::{Grid, Series};
 
 pub enum Value {
     Scalar(Vec<f64>),
