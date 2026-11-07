@@ -10,6 +10,7 @@ mod fetch;
 mod labels;
 mod metric;
 mod pipeline;
+mod template;
 mod values;
 
 use crate::validation::{ApiError, ApiResult};

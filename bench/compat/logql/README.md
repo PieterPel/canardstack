@@ -29,10 +29,13 @@ numbers are compared to 1e-5 relative, NaN equals NaN, and a query marked `shoul
 | --- | --- | --- |
 | first run, before the metric engine | 2,408 | 46 |
 | with the metric engine | 2,408 | 2,403 |
+| with `line_format` / `label_format` templates | 2,408 | 2,406 |
 
-The 5 that do not pass: 3 `line_format` / `label_format` template queries (templates are not
-implemented yet), 1 `topk` whose tied values Loki breaks differently, and 1 query Loki itself
-rejects (skipped).
+The 2 that do not pass: one `topk by (method)` where tied values are picked in a different order
+than Loki picks them (the order of equal values is implementation-defined in both), and one
+`absent_over_time` that the reference answers unexpectedly and the harness therefore skips.
 
 Loki evaluates a range query on multiples of the step (the start rounds down, the end rounds up).
 canardstack does the same for metric queries, so results do not depend on the second a run starts.
+The harness runs Loki with `TZ=UTC` because `{{ __timestamp__ }}` prints the server's local zone and
+canardstack prints UTC.

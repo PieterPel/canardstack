@@ -198,7 +198,8 @@ func startLoki(t *testing.T) string {
 	if err := os.WriteFile(config, []byte(fmt.Sprintf(lokiConfig, httpPort, grpcPort, dir, dir, dir)), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	start(t, dir, nil, binary, "-config.file="+config)
+	// UTC, so `__timestamp__` prints the zone canardstack uses (Loki prints the server's local zone).
+	start(t, dir, []string{"TZ=UTC"}, binary, "-config.file="+config)
 	base := fmt.Sprintf("http://127.0.0.1:%d", httpPort)
 	waitFor(t, "Loki", base+"/ready", nil)
 	return base

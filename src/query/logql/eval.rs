@@ -30,7 +30,7 @@ pub fn log_streams(
     let entries = fetch(engine, storage, &log.matchers, &log.stages, from, to)?;
     let mut kept: Vec<(i64, String, Labels)> = entries
         .iter()
-        .filter_map(|e| pipeline.process(&e.line, &e.labels).map(|(line, labels)| (e.ts_ns, line, labels)))
+        .filter_map(|e| pipeline.process(e.ts_ns, &e.line, &e.labels).map(|(line, labels)| (e.ts_ns, line, labels)))
         .collect();
     if !forward {
         kept.reverse();

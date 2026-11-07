@@ -1,6 +1,7 @@
 //! Runs the stages of a log pipeline over one line and its labels.
 
 use super::extract::{json_extract, logfmt_extract, unpack, PatternMatcher};
+use super::template::{Ctx, Template};
 use super::values::{parse_bytes, parse_duration_secs, IpMatcher};
 use crate::query::prom_labels::Labels;
 use crate::validation::{ApiError, ApiResult};
@@ -10,10 +11,6 @@ use std::sync::OnceLock;
 
 const ERROR: &str = "__error__";
 const ERROR_DETAILS: &str = "__error_details__";
-
-fn unsupported(msg: impl Into<String>) -> ApiError {
-    ApiError::new(400, "unsupported_logql", msg)
-}
 
 fn bad(msg: impl Into<String>) -> ApiError {
     ApiError::new(400, "bad_data", msg)
@@ -80,6 +77,11 @@ enum Filter {
     Or(Box<Filter>, Box<Filter>),
 }
 
+enum LabelFmt {
+    Rename(String),
+    Template(Template),
+}
+
 enum Compiled {
     Line { needles: Vec<Needle>, negate: bool },
     Json(Vec<Extraction>),
@@ -87,9 +89,9 @@ enum Compiled {
     Regexp(Regex),
     Pattern(PatternMatcher),
     Unpack,
-    LineFormat(String),
+    LineFormat(Template),
     Decolorize,
-    Rename(Vec<(String, String)>),
+    LabelFormat(Vec<(String, LabelFmt)>),
     Drop(Vec<(String, Option<ValueTest>)>),
     Keep(Vec<(String, Option<ValueTest>)>),
     Filter(Filter),
@@ -181,20 +183,24 @@ impl Pipeline {
                     PatternMatcher::compile(p).map_err(|e| bad(format!("invalid pattern {p:?}: {e}")))?,
                 ),
                 Stage::Unpack => Compiled::Unpack,
-                Stage::LineFormat(t) if !t.contains("{{") => Compiled::LineFormat(t.clone()),
-                Stage::LineFormat(_) => return Err(unsupported("line_format templates are not supported yet")),
-                Stage::LabelFormat(items) => {
-                    let mut renames = Vec::new();
-                    for item in items {
-                        match item {
-                            LabelFormatItem::Rename { dst, src } => renames.push((dst.clone(), src.clone())),
-                            LabelFormatItem::Template { .. } => {
-                                return Err(unsupported("label_format templates are not supported yet"))
-                            }
-                        }
-                    }
-                    Compiled::Rename(renames)
-                }
+                Stage::LineFormat(t) => Compiled::LineFormat(
+                    Template::parse(t).map_err(|e| bad(format!("invalid line_format template: {e}")))?,
+                ),
+                Stage::LabelFormat(items) => Compiled::LabelFormat(
+                    items
+                        .iter()
+                        .map(|item| match item {
+                            LabelFormatItem::Rename { dst, src } => Ok((dst.clone(), LabelFmt::Rename(src.clone()))),
+                            LabelFormatItem::Template { dst, template } => Ok((
+                                dst.clone(),
+                                LabelFmt::Template(
+                                    Template::parse(template)
+                                        .map_err(|e| bad(format!("invalid label_format template: {e}")))?,
+                                ),
+                            )),
+                        })
+                        .collect::<ApiResult<Vec<_>>>()?,
+                ),
                 Stage::Decolorize => Compiled::Decolorize,
                 Stage::Drop(items) | Stage::Keep(items) => {
                     let items = items
@@ -217,7 +223,7 @@ impl Pipeline {
     }
 
     /// The line and labels after the pipeline, or None when a filter drops the line.
-    pub fn process(&self, line: &str, base: &Labels) -> Option<(String, Labels)> {
+    pub fn process(&self, ts_ns: i64, line: &str, base: &Labels) -> Option<(String, Labels)> {
         let mut line = line.to_string();
         let mut labels = base.clone();
         for stage in &self.stages {
@@ -260,16 +266,33 @@ impl Pipeline {
                     Err(detail) => set_error(&mut labels, "JSONParserErr", &detail),
                 },
                 Compiled::Json(_) | Compiled::Logfmt(_) | Compiled::Regexp(_) | Compiled::Pattern(_) | Compiled::Unpack => {}
-                Compiled::LineFormat(text) => line = text.clone(),
+                Compiled::LineFormat(template) => {
+                    match template.render(&Ctx { labels: &labels, line: &line, ts_ns }) {
+                        Ok(rendered) => line = rendered,
+                        Err(detail) => set_error(&mut labels, "TemplateFormatErr", &detail),
+                    }
+                }
                 Compiled::Decolorize => {
                     static ANSI: OnceLock<Regex> = OnceLock::new();
                     let re = ANSI.get_or_init(|| Regex::new("\x1b\\[[0-9;]*[A-Za-z]").expect("static regex"));
                     line = re.replace_all(&line, "").into_owned();
                 }
-                Compiled::Rename(pairs) => {
-                    for (dst, src) in pairs {
-                        if let Some(value) = labels.remove(src) {
-                            labels.insert(dst.clone(), value);
+                Compiled::LabelFormat(items) => {
+                    for (dst, fmt) in items {
+                        match fmt {
+                            LabelFmt::Rename(src) => {
+                                if let Some(value) = labels.remove(src) {
+                                    labels.insert(dst.clone(), value);
+                                }
+                            }
+                            LabelFmt::Template(template) => {
+                                match template.render(&Ctx { labels: &labels, line: &line, ts_ns }) {
+                                    Ok(rendered) => {
+                                        labels.insert(dst.clone(), rendered);
+                                    }
+                                    Err(detail) => set_error(&mut labels, "TemplateFormatErr", &detail),
+                                }
+                            }
                         }
                     }
                 }
@@ -357,7 +380,7 @@ mod tests {
     fn run(query: &str, line: &str, labels: &[(&str, &str)]) -> Option<(String, Labels)> {
         let Expr::Log(log) = logql_syntax::parse(query).unwrap() else { panic!("not a log query") };
         let base: Labels = labels.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
-        Pipeline::compile(&log.stages).unwrap().process(line, &base)
+        Pipeline::compile(&log.stages).unwrap().process(1_700_000_000_000_000_000, line, &base)
     }
 
     const JSON: &str = r#"{"method":"GET","status":503,"took":"1.5s","size":"2KB","ip":"10.1.2.3"}"#;
@@ -429,8 +452,17 @@ mod tests {
     }
 
     #[test]
-    fn templates_are_rejected_until_supported() {
-        let Expr::Log(log) = logql_syntax::parse(r#"{a="b"} | line_format "{{.x}}""#).unwrap() else { panic!() };
-        assert_eq!(Pipeline::compile(&log.stages).err().unwrap().reason, "unsupported_logql");
+    fn templates_format_lines_and_labels() {
+        let (line, _) = run(r#"{a="b"} | json | line_format "{{ .method | lower }} {{ .status }}""#, JSON, &[]).unwrap();
+        assert_eq!(line, "get 503");
+        let (_, labels) = run(r#"{a="b"} | json | label_format kind="{{ if ge .status \"500\" }}server{{ else }}ok{{ end }}", code=status"#, JSON, &[]).unwrap();
+        assert_eq!(labels["kind"], "server");
+        assert_eq!(labels["code"], "503");
+        let (line, _) = run(r#"{a="b"} | line_format "{{ __timestamp__ }}""#, "x", &[]).unwrap();
+        assert_eq!(line, "2023-11-14 22:13:20 +0000 UTC");
+        let (_, labels) = run(r#"{a="b"} | line_format "{{ nosuchfn }}""#, "x", &[]).unwrap();
+        assert_eq!(labels["__error__"], "TemplateFormatErr");
+        let Expr::Log(log) = logql_syntax::parse(r#"{a="b"} | line_format "{{ range .x }}""#).unwrap() else { panic!() };
+        assert_eq!(Pipeline::compile(&log.stages).err().unwrap().reason, "bad_data");
     }
 }

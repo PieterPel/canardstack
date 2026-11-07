@@ -186,7 +186,7 @@ impl Ev<'_> {
         let group = grouping(&r.grouping);
         let mut by_series: BTreeMap<Labels, Vec<Sample>> = BTreeMap::new();
         for entry in &entries {
-            let Some((line, mut labels)) = pipeline.process(&entry.line, &entry.labels) else { continue };
+            let Some((line, mut labels)) = pipeline.process(entry.ts_ns, &entry.line, &entry.labels) else { continue };
             if let Some(kind) = labels.get("__error__") {
                 let detail = labels.get("__error_details__").map(String::as_str).unwrap_or("");
                 return Err(bad(format!(
