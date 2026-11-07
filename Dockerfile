@@ -17,6 +17,7 @@ WORKDIR /app
 FROM chef AS planner
 COPY Cargo.toml Cargo.lock ./
 COPY src ./src
+COPY crates ./crates
 # Cargo validates every declared target, including the bench in Cargo.toml.
 COPY benches ./benches
 RUN cargo chef prepare --recipe-path recipe.json
@@ -64,6 +65,7 @@ RUN --mount=type=cache,id=cargo-registry,target=/usr/local/cargo/registry \
 
 COPY Cargo.toml Cargo.lock ./
 COPY src ./src
+COPY crates ./crates
 COPY benches ./benches
 
 RUN --mount=type=cache,id=cargo-registry,target=/usr/local/cargo/registry \

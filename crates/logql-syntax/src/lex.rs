@@ -1,9 +1,9 @@
 //! LogQL tokens.
 
-use crate::validation::{ApiError, ApiResult};
+use crate::{ParseError, Result};
 
 #[derive(Clone, Debug, PartialEq)]
-pub enum Tok {
+pub(crate) enum Tok {
     Ident(String),
     Str(String),
     Num(f64),
@@ -40,8 +40,11 @@ pub enum Tok {
     Eof,
 }
 
-pub fn err(pos: usize, msg: impl std::fmt::Display) -> ApiError {
-    ApiError::new(400, "bad_data", format!("parse error at position {pos}: {msg}"))
+pub(crate) fn err(position: usize, message: impl std::fmt::Display) -> ParseError {
+    ParseError {
+        position,
+        message: message.to_string(),
+    }
 }
 
 fn duration_unit(unit: &str) -> Option<f64> {
@@ -80,7 +83,7 @@ fn bytes_unit(unit: &str) -> Option<f64> {
 }
 
 /// Unescapes a double-quoted LogQL string (Go escapes).
-fn unquote(raw: &str, pos: usize) -> ApiResult<String> {
+fn unquote(raw: &str, pos: usize) -> Result<String> {
     let mut out = String::new();
     let mut chars = raw.chars();
     while let Some(c) = chars.next() {
@@ -109,7 +112,7 @@ fn unquote(raw: &str, pos: usize) -> ApiResult<String> {
     Ok(out)
 }
 
-pub fn lex(input: &str) -> ApiResult<Vec<(usize, Tok)>> {
+pub(crate) fn lex(input: &str) -> Result<Vec<(usize, Tok)>> {
     let chars: Vec<(usize, char)> = input.char_indices().collect();
     let mut out = Vec::new();
     let mut i = 0;
@@ -204,7 +207,7 @@ pub fn lex(input: &str) -> ApiResult<Vec<(usize, Tok)>> {
 }
 
 /// A number, optionally with a duration (`5m`, `1h30m`) or bytes (`10KB`) unit.
-fn lex_number(chars: &[(usize, char)], start: usize, pos: usize) -> ApiResult<(Tok, usize)> {
+fn lex_number(chars: &[(usize, char)], start: usize, pos: usize) -> Result<(Tok, usize)> {
     let at = |i: usize| chars.get(i).map(|(_, c)| *c);
     let mut i = start;
     let mut total_secs = 0.0;

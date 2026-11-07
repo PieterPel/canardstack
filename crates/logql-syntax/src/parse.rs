@@ -1,11 +1,12 @@
 //! LogQL parser: log queries (selector plus pipeline), range and vector aggregations, binary
 //! operators with vector matching, `label_replace` and `vector()`.
 
-use super::ast::*;
-use super::lex::{err, lex, Tok};
-use crate::validation::ApiResult;
+use crate::ast::*;
+use crate::lex::{err, lex, Tok};
+use crate::Result;
 
-pub fn parse(input: &str) -> ApiResult<Expr> {
+/// Parses a LogQL expression: a log query or a metric query.
+pub fn parse(input: &str) -> Result<Expr> {
     let mut p = Parser {
         toks: lex(input)?,
         i: 0,
@@ -58,7 +59,7 @@ impl Parser {
         }
     }
 
-    fn expect(&mut self, tok: Tok) -> ApiResult<()> {
+    fn expect(&mut self, tok: Tok) -> Result<()> {
         if self.eat(&tok) {
             Ok(())
         } else {
@@ -70,21 +71,21 @@ impl Parser {
         matches!(self.peek(), Tok::Ident(w) if w == word)
     }
 
-    fn ident(&mut self) -> ApiResult<String> {
+    fn ident(&mut self) -> Result<String> {
         match self.next() {
             Tok::Ident(w) => Ok(w),
             other => Err(err(self.pos(), format!("expected a name, found {other:?}"))),
         }
     }
 
-    fn string(&mut self) -> ApiResult<String> {
+    fn string(&mut self) -> Result<String> {
         match self.next() {
             Tok::Str(s) => Ok(s),
             other => Err(err(self.pos(), format!("expected a string, found {other:?}"))),
         }
     }
 
-    fn number(&mut self) -> ApiResult<f64> {
+    fn number(&mut self) -> Result<f64> {
         let negative = self.eat(&Tok::Minus);
         match self.next() {
             Tok::Num(n) => Ok(if negative { -n } else { n }),
@@ -115,7 +116,7 @@ impl Parser {
         })
     }
 
-    fn expr(&mut self, min_prec: u8) -> ApiResult<Expr> {
+    fn expr(&mut self, min_prec: u8) -> Result<Expr> {
         let mut lhs = self.unary()?;
         while let Some((op, prec)) = self.binary_op() {
             if prec < min_prec {
@@ -140,7 +141,7 @@ impl Parser {
     #[allow(clippy::type_complexity)]
     fn binary_modifiers(
         &mut self,
-    ) -> ApiResult<(bool, Option<(bool, Vec<String>)>, Option<(bool, Vec<String>)>)> {
+    ) -> Result<(bool, Option<(bool, Vec<String>)>, Option<(bool, Vec<String>)>)> {
         let bool_modifier = if self.is_ident("bool") {
             self.next();
             true
@@ -169,7 +170,7 @@ impl Parser {
         Ok((bool_modifier, matching, group))
     }
 
-    fn label_list(&mut self) -> ApiResult<Vec<String>> {
+    fn label_list(&mut self) -> Result<Vec<String>> {
         self.expect(Tok::LParen)?;
         let mut labels = Vec::new();
         while self.peek() != &Tok::RParen {
@@ -182,7 +183,7 @@ impl Parser {
         Ok(labels)
     }
 
-    fn unary(&mut self) -> ApiResult<Expr> {
+    fn unary(&mut self) -> Result<Expr> {
         if self.eat(&Tok::Minus) {
             return Ok(match self.unary()? {
                 Expr::Number(n) => Expr::Number(-n),
@@ -199,7 +200,7 @@ impl Parser {
         self.primary()
     }
 
-    fn primary(&mut self) -> ApiResult<Expr> {
+    fn primary(&mut self) -> Result<Expr> {
         let pos = self.pos();
         match self.peek().clone() {
             Tok::Num(n) => {
@@ -238,7 +239,7 @@ impl Parser {
         }
     }
 
-    fn label_replace(&mut self) -> ApiResult<Expr> {
+    fn label_replace(&mut self) -> Result<Expr> {
         self.expect(Tok::LParen)?;
         let expr = self.expr(0)?;
         let mut strings = Vec::new();
@@ -257,7 +258,7 @@ impl Parser {
         })))
     }
 
-    fn grouping(&mut self) -> ApiResult<Option<Grouping>> {
+    fn grouping(&mut self) -> Result<Option<Grouping>> {
         if self.is_ident("by") || self.is_ident("without") {
             let by = self.is_ident("by");
             self.next();
@@ -269,7 +270,7 @@ impl Parser {
         Ok(None)
     }
 
-    fn vec_agg(&mut self, op: VecOp) -> ApiResult<Expr> {
+    fn vec_agg(&mut self, op: VecOp) -> Result<Expr> {
         let mut grouping = self.grouping()?;
         self.expect(Tok::LParen)?;
         let param = if matches!(op, VecOp::Topk | VecOp::Bottomk) {
@@ -292,7 +293,7 @@ impl Parser {
         })))
     }
 
-    fn range_agg(&mut self, op: RangeOp) -> ApiResult<Expr> {
+    fn range_agg(&mut self, op: RangeOp) -> Result<Expr> {
         self.expect(Tok::LParen)?;
         let param = if op == RangeOp::QuantileOverTime {
             let q = self.number()?;
@@ -339,7 +340,7 @@ impl Parser {
         })))
     }
 
-    fn duration_ms(&mut self) -> ApiResult<i64> {
+    fn duration_ms(&mut self) -> Result<i64> {
         match self.next() {
             Tok::Duration(secs) => Ok((secs * 1000.0).round() as i64),
             other => Err(err(self.pos(), format!("expected a duration, found {other:?}"))),
@@ -348,7 +349,7 @@ impl Parser {
 
     // ---- log queries ------------------------------------------------------------------
 
-    fn log_expr(&mut self) -> ApiResult<LogExpr> {
+    fn log_expr(&mut self) -> Result<LogExpr> {
         let matchers = self.selector()?;
         let mut stages = Vec::new();
         let mut unwrap = None;
@@ -359,7 +360,7 @@ impl Parser {
         Ok(LogExpr { matchers, stages })
     }
 
-    fn selector(&mut self) -> ApiResult<Vec<Matcher>> {
+    fn selector(&mut self) -> Result<Vec<Matcher>> {
         self.expect(Tok::LBrace)?;
         let mut matchers = Vec::new();
         while self.peek() != &Tok::RBrace {
@@ -388,7 +389,7 @@ impl Parser {
     }
 
     /// Parses `|= ...` and `| stage` while they follow; stops at anything else.
-    fn stages(&mut self, stages: &mut Vec<Stage>, unwrap: &mut Option<Unwrap>) -> ApiResult<()> {
+    fn stages(&mut self, stages: &mut Vec<Stage>, unwrap: &mut Option<Unwrap>) -> Result<()> {
         loop {
             let line_op = match self.peek() {
                 Tok::PipeEq => Some(LineOp::Contains),
@@ -415,7 +416,7 @@ impl Parser {
         }
     }
 
-    fn line_filter(&mut self, op: LineOp) -> ApiResult<Stage> {
+    fn line_filter(&mut self, op: LineOp) -> Result<Stage> {
         let mut values = vec![self.filter_value()?];
         while self.is_ident("or") {
             self.next();
@@ -424,7 +425,7 @@ impl Parser {
         Ok(Stage::LineFilter { op, values })
     }
 
-    fn filter_value(&mut self) -> ApiResult<FilterValue> {
+    fn filter_value(&mut self) -> Result<FilterValue> {
         if self.is_ident("ip") && self.peek_at(1) == &Tok::LParen {
             self.next();
             self.next();
@@ -435,7 +436,7 @@ impl Parser {
         Ok(FilterValue::Str(self.string()?))
     }
 
-    fn stage(&mut self) -> ApiResult<Parsed> {
+    fn stage(&mut self) -> Result<Parsed> {
         let Tok::Ident(word) = self.peek().clone() else {
             // `| (a > 1 or b = "x")` starts a label filter with a parenthesis.
             return Ok(Parsed::Stage(Stage::LabelFilter(self.label_filter(0)?)));
@@ -481,7 +482,7 @@ impl Parser {
         }))
     }
 
-    fn extractions(&mut self) -> ApiResult<Vec<Extraction>> {
+    fn extractions(&mut self) -> Result<Vec<Extraction>> {
         let mut out = Vec::new();
         while let Tok::Ident(_) = self.peek() {
             let label = self.ident()?;
@@ -498,7 +499,7 @@ impl Parser {
         Ok(out)
     }
 
-    fn label_format(&mut self) -> ApiResult<Vec<LabelFormatItem>> {
+    fn label_format(&mut self) -> Result<Vec<LabelFormatItem>> {
         let mut out = Vec::new();
         loop {
             let dst = self.ident()?;
@@ -514,7 +515,7 @@ impl Parser {
         }
     }
 
-    fn drop_items(&mut self) -> ApiResult<Vec<DropItem>> {
+    fn drop_items(&mut self) -> Result<Vec<DropItem>> {
         let mut out = Vec::new();
         loop {
             let label = self.ident()?;
@@ -537,7 +538,7 @@ impl Parser {
         }
     }
 
-    fn unwrap_stage(&mut self) -> ApiResult<Unwrap> {
+    fn unwrap_stage(&mut self) -> Result<Unwrap> {
         let first = self.ident()?;
         let conv = match first.as_str() {
             "bytes" => Some(Conv::Bytes),
@@ -561,7 +562,7 @@ impl Parser {
 
     /// `a > 1 and b = "x", c != "y" or d`: `or` binds loosest; `and`, `,` and plain adjacency
     /// all mean AND.
-    fn label_filter(&mut self, depth: u8) -> ApiResult<LabelFilter> {
+    fn label_filter(&mut self, depth: u8) -> Result<LabelFilter> {
         let mut left = self.label_and(depth)?;
         while self.is_ident("or") {
             self.next();
@@ -571,7 +572,7 @@ impl Parser {
         Ok(left)
     }
 
-    fn label_and(&mut self, depth: u8) -> ApiResult<LabelFilter> {
+    fn label_and(&mut self, depth: u8) -> Result<LabelFilter> {
         let mut left = self.label_atom(depth)?;
         loop {
             let joined = if self.is_ident("and") || self.peek() == &Tok::Comma {
@@ -590,7 +591,7 @@ impl Parser {
         }
     }
 
-    fn label_atom(&mut self, depth: u8) -> ApiResult<LabelFilter> {
+    fn label_atom(&mut self, depth: u8) -> Result<LabelFilter> {
         if self.eat(&Tok::LParen) {
             let inner = self.label_filter(depth + 1)?;
             self.expect(Tok::RParen)?;
