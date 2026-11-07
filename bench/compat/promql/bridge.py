@@ -11,7 +11,9 @@ exposes. The rows go through `read_otlp_metrics_*`, so the stored shape is the r
 """
 
 import argparse
+import os
 import re
+import traceback
 from decimal import Decimal
 import json
 import queue
@@ -105,23 +107,37 @@ def run(args) -> None:
 
     def writer() -> None:
         seq = 0
-        while True:
-            events = [pending.get()]
-            deadline = time.monotonic() + 0.3
-            while len(events) < BATCH_SCRAPES and time.monotonic() < deadline:
-                try:
-                    events.append(pending.get(timeout=0.05))
-                except queue.Empty:
-                    pass
-            ingest_batch(con, "metrics", events, "bridge", seq, seq + len(events) - 1)
-            seq += len(events)
+        try:
+            while True:
+                events = [pending.get()]
+                deadline = time.monotonic() + 0.3
+                while len(events) < BATCH_SCRAPES and time.monotonic() < deadline:
+                    try:
+                        events.append(pending.get(timeout=0.05))
+                    except queue.Empty:
+                        pass
+                ingest_batch(con, "metrics", events, "bridge", seq, seq + len(events) - 1)
+                seq += len(events)
+                for _ in events:
+                    pending.task_done()
+        except Exception:
+            traceback.print_exc()
+            os._exit(1)  # a silent writer would leave the suite querying incomplete data
 
     threading.Thread(target=writer, daemon=True).start()
     url = f"http://{args.scrape}/metrics"
+    seen_samples = signalled = False
     while True:
         request = to_otlp(scrape(url), args.job)
         if request is not None:
+            seen_samples = True
             pending.put(json.dumps(request, separators=(",", ":")).encode())
+        elif seen_samples and not signalled and args.done_file:
+            # The replay is exhausted (the target now serves empty scrapes): once everything
+            # scraped is committed, tell the harness the data is complete.
+            pending.join()
+            Path(args.done_file).touch()
+            signalled = True
         time.sleep(args.interval)
 
 
@@ -136,6 +152,7 @@ def main() -> None:
     r.add_argument("--scrape", required=True)
     r.add_argument("--interval", type=float, default=0.015)
     r.add_argument("--job", default="demo")
+    r.add_argument("--done-file", help="touched once the scrape source is exhausted and all committed")
     args = parser.parse_args()
     if args.cmd == "init":
         connection = sqlite3.connect(args.catalog)

@@ -22,6 +22,7 @@ import (
 	"path/filepath"
 	"testing"
 	"text/template"
+	"time"
 
 	"github.com/prometheus/common/model"
 	"github.com/prometheus/compliance"
@@ -153,7 +154,23 @@ func (c canardstack) Run(ctx context.Context, opts promql.Options) error {
 		director(r)
 		r.Header.Set("Authorization", "Bearer "+apiKey)
 	}
-	server := &http.Server{Addr: opts.QueryHostPort, Handler: proxy}
+	// Hold queries until the bridge has committed the whole replay. The suite's own readiness check
+	// passes as soon as an earlier sample exists, which can be before the last scrapes are written.
+	ingested := filepath.Join(dir, "ingested")
+	gated := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		for {
+			if _, err := os.Stat(ingested); err == nil {
+				break
+			}
+			select {
+			case <-r.Context().Done():
+				return
+			case <-time.After(20 * time.Millisecond):
+			}
+		}
+		proxy.ServeHTTP(w, r)
+	})
+	server := &http.Server{Addr: opts.QueryHostPort, Handler: gated}
 	go func() { errCh <- server.ListenAndServe() }()
 	defer server.Close()
 
@@ -161,7 +178,7 @@ func (c canardstack) Run(ctx context.Context, opts promql.Options) error {
 		errCh <- promql.RunCommand(ctx, dir, nil, "uv", uv("run", catalog, data,
 			"--scrape", opts.ScrapeTargetHostPort,
 			"--interval", fmt.Sprintf("%f", opts.ScrapeInterval.Seconds()),
-			"--job", opts.ScrapeTargetJobName)...)
+			"--job", opts.ScrapeTargetJobName, "--done-file", ingested)...)
 	}()
 
 	select {

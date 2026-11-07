@@ -18,3 +18,21 @@ serves that catalog, behind a small reverse proxy that adds the API key the suit
 
 Native histograms cannot go through a text scrape and canardstack stores no histograms, so those
 queries (about 110) are expected failures for now.
+
+## Result
+
+| | queries | pass |
+| --- | --- | --- |
+| everything | 661 | 546 (83%) |
+| excluding native histograms | 548 | 546 (99.6%) |
+
+The 113 native-histogram queries fail because the text scrape cannot carry them and canardstack
+stores no histograms (they would map to OTel exponential histograms). The other two failures are
+`label_replace`/`label_join` called with a destination label `"\xff"`: Prometheus rejects it as
+invalid UTF-8, but the parser hands us the string `ÿ`, which Rust accepts.
+
+Setup notes that matter when reading results: the reference gets a 2h out-of-order window (the
+replay is 70 minutes of history delivered in seconds, and a default Prometheus drops the oldest
+snapshots as "too old", leaving it with less data than the target); the target's queries are held
+until the bridge has committed the whole replay; and the target runs with raised query concurrency
+because the suite fires several hundred queries at once.
