@@ -137,18 +137,6 @@ pub fn projected_labels(scope: LabelScope) -> Vec<(&'static str, String)> {
         .collect()
 }
 
-/// Every metric-scope label as (canonical name, SQL expression), for evaluators that need the full
-/// label set of a series rather than a projection.
-pub fn metric_labels() -> Vec<(&'static str, String)> {
-    LABELS
-        .iter()
-        .filter(|label| has_scope(label, LabelScope::Metrics))
-        .filter_map(|label| {
-            label_expr(LabelScope::Metrics, label.canonical).map(|expr| (label.canonical, expr))
-        })
-        .collect()
-}
-
 pub fn prometheus_label_names() -> Vec<String> {
     std::iter::once("__name__".to_string())
         .chain(

@@ -3,6 +3,7 @@
 use super::*;
 use crate::db::sql::{quote, time_predicate};
 use crate::query::prometheus::resolve_metric_name;
+use crate::query::prom_labels::{labels_from_row, INSTANCE_SQL, JOB_SQL, SERIES_COLUMNS};
 use crate::signal::StorageSignal;
 use chrono::{TimeZone, Utc};
 
@@ -138,11 +139,6 @@ fn compile(vs: &VectorSelector) -> ApiResult<Compiled> {
                 continue;
             }
         }
-        let label = if label == METRIC_NAME {
-            label
-        } else {
-            canon(&label)
-        };
         let test = match op {
             MatchOp::Equal => Test::Eq(value),
             MatchOp::NotEqual => Test::Ne(value),
@@ -160,7 +156,6 @@ pub(super) fn fetch(
     reqs: &[Req],
     grid: &Grid,
 ) -> ApiResult<HashMap<String, Vec<Raw>>> {
-    let label_exprs = semantic_labels::metric_labels();
     struct Plan {
         key: String,
         sql: String,
@@ -193,18 +188,18 @@ pub(super) fn fetch(
                 if value.is_empty() {
                     continue;
                 }
-                if let Some((_, expr)) = label_exprs.iter().find(|(name, _)| *name == m.label) {
-                    filters.push(format!("({expr}) = {}", quote(value)));
+                // job and instance are columns; other labels come out of a JSON attribute blob whose
+                // keys are sanitised, so those are matched after the fetch.
+                match m.label.as_str() {
+                    "job" => filters.push(format!("{JOB_SQL} = {}", quote(value))),
+                    "instance" => filters.push(format!("{INSTANCE_SQL} = {}", quote(value))),
+                    _ => {}
                 }
             }
         }
-        let label_cols = label_exprs
-            .iter()
-            .map(|(_, expr)| format!(", CAST({expr} AS VARCHAR)"))
-            .collect::<String>();
         let select = |signal: StorageSignal| {
             format!(
-                "SELECT name, concat_ws(chr(31), coalesce(service_name, ''), coalesce(service_namespace, ''), coalesce(service_instance_id, ''), coalesce(CAST(resource_attributes AS VARCHAR), ''), coalesce(scope_name, ''), coalesce(CAST(metric_attributes AS VARCHAR), '')) AS sid, epoch_ms(time_unix_nano) AS t, coalesce(double_value, int_value::DOUBLE) AS v{label_cols} FROM {{prefix}}{} WHERE {}",
+                "SELECT name, concat_ws(chr(31), coalesce(service_name, ''), coalesce(service_namespace, ''), coalesce(service_instance_id, ''), coalesce(CAST(resource_attributes AS VARCHAR), ''), coalesce(scope_name, ''), coalesce(CAST(metric_attributes AS VARCHAR), '')) AS sid, epoch_ms(time_unix_nano) AS t, coalesce(double_value, int_value::DOUBLE) AS v, {SERIES_COLUMNS} FROM {{prefix}}{} WHERE {}",
                 signal.as_str(),
                 filters.join(" AND ")
             )
@@ -221,7 +216,6 @@ pub(super) fn fetch(
             compiled,
         });
     }
-    let label_names: Vec<&str> = label_exprs.iter().map(|(n, _)| *n).collect();
     let fetched = engine.run_interactive(storage, |conn, prefix| {
         let mut out: HashMap<String, Vec<Raw>> = HashMap::new();
         let mut total = 0usize;
@@ -246,14 +240,15 @@ pub(super) fn fetch(
                 let raw = match entry {
                     std::collections::hash_map::Entry::Occupied(e) => e.into_mut(),
                     std::collections::hash_map::Entry::Vacant(e) => {
-                        let mut labels = Labels::new();
-                        for (i, label) in label_names.iter().enumerate() {
-                            if let Some(value) = row.get::<_, Option<String>>(4 + i)? {
-                                if !value.is_empty() {
-                                    labels.insert((*label).to_string(), value);
-                                }
-                            }
-                        }
+                        let col = |i: usize| row.get::<_, Option<String>>(4 + i);
+                        let mut labels = labels_from_row(
+                            col(0)?.as_deref(),
+                            col(1)?.as_deref(),
+                            col(2)?.as_deref(),
+                            col(3)?.as_deref(),
+                            col(4)?.as_deref(),
+                            col(5)?.as_deref(),
+                        );
                         let shown = plan.compiled.display_name.clone().unwrap_or(name);
                         labels.insert(METRIC_NAME.to_string(), shown);
                         e.insert(Raw {

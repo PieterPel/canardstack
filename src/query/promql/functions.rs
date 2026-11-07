@@ -117,7 +117,7 @@ impl Ev<'_> {
                 if let Expr::VectorSelector(vs) = arg(0)? {
                     for m in &vs.matchers.matchers {
                         if matches!(m.op, MatchOp::Equal) && m.name != METRIC_NAME {
-                            labels.insert(canon(&unescape(&m.name)), m.value.clone());
+                            labels.insert(unescape(&m.name), m.value.clone());
                         }
                     }
                 }
@@ -169,9 +169,9 @@ impl Ev<'_> {
             }
             "label_replace" => {
                 let mut series = self.vector_arg(arg(0)?)?;
-                let dst = canon(&self.string_arg(arg(1)?)?);
+                let dst = self.string_arg(arg(1)?)?;
                 let repl = self.string_arg(arg(2)?)?;
-                let src = canon(&self.string_arg(arg(3)?)?);
+                let src = self.string_arg(arg(3)?)?;
                 let rx = anchored(&self.string_arg(arg(4)?)?)?;
                 for s in &mut series {
                     let value = s.labels.get(&src).cloned().unwrap_or_default();
@@ -189,11 +189,11 @@ impl Ev<'_> {
             }
             "label_join" => {
                 let mut series = self.vector_arg(arg(0)?)?;
-                let dst = canon(&self.string_arg(arg(1)?)?);
+                let dst = self.string_arg(arg(1)?)?;
                 let sep = self.string_arg(arg(2)?)?;
                 let srcs = args[3..]
                     .iter()
-                    .map(|e| self.string_arg(e).map(|n| canon(&n)))
+                    .map(|e| self.string_arg(e))
                     .collect::<ApiResult<Vec<_>>>()?;
                 for s in &mut series {
                     let joined = srcs

@@ -7,7 +7,6 @@
 //! grouping and vector matching. Unsupported constructs fail with `unsupported_promql`.
 
 use crate::query::QueryEngine;
-use crate::semantic_labels::{self, LabelScope};
 use crate::storage::Storage;
 use crate::validation::{ApiError, ApiResult};
 use promql_parser::label::{MatchOp, METRIC_NAME};
@@ -32,7 +31,7 @@ pub const LOOKBACK_MS: i64 = 300_000;
 const MAX_SAMPLES: usize = 1_000_000;
 const DOT: &str = "__DOT__";
 
-pub type Labels = BTreeMap<String, String>;
+pub use crate::query::prom_labels::Labels;
 
 #[derive(Clone, Copy)]
 pub struct Grid {
@@ -124,11 +123,6 @@ fn unescape(name: &str) -> String {
     name.replace(DOT, ".")
 }
 
-fn canon(name: &str) -> String {
-    semantic_labels::canonical_for_alias(LabelScope::Metrics, name)
-        .map(str::to_string)
-        .unwrap_or_else(|| name.to_string())
-}
 
 pub fn evaluate(
     engine: &QueryEngine,

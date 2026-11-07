@@ -83,13 +83,13 @@ impl Ev<'_> {
         match matching {
             None => base.map(|(k, v)| (k.clone(), v.clone())).collect(),
             Some(LabelModifier::Include(l)) => {
-                let keep: Vec<String> = l.labels.iter().map(|n| canon(&unescape(n))).collect();
+                let keep: Vec<String> = l.labels.iter().map(|n| unescape(n)).collect();
                 base.filter(|(k, _)| keep.contains(k))
                     .map(|(k, v)| (k.clone(), v.clone()))
                     .collect()
             }
             Some(LabelModifier::Exclude(l)) => {
-                let drop: Vec<String> = l.labels.iter().map(|n| canon(&unescape(n))).collect();
+                let drop: Vec<String> = l.labels.iter().map(|n| unescape(n)).collect();
                 base.filter(|(k, _)| !drop.contains(k))
                     .map(|(k, v)| (k.clone(), v.clone()))
                     .collect()
@@ -117,7 +117,7 @@ impl Ev<'_> {
         };
         let include: Vec<String> = match &card {
             VectorMatchCardinality::ManyToOne(l) | VectorMatchCardinality::OneToMany(l) => {
-                l.labels.iter().map(|n| canon(&unescape(n))).collect()
+                l.labels.iter().map(|n| unescape(n)).collect()
             }
             _ => Vec::new(),
         };
@@ -157,7 +157,7 @@ impl Ev<'_> {
                         Some(LabelModifier::Include(_)) => labels.retain(|k, _| sig.contains_key(k)),
                         Some(LabelModifier::Exclude(l)) => {
                             for name in &l.labels {
-                                labels.remove(&canon(&unescape(name)));
+                                labels.remove(&unescape(name));
                             }
                         }
                         None => {}

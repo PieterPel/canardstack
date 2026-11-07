@@ -10,12 +10,12 @@ impl Ev<'_> {
                 .labels
                 .iter()
                 .filter_map(|name| {
-                    let name = canon(&unescape(name));
+                    let name = unescape(name);
                     labels.get(&name).map(|v| (name, v.clone()))
                 })
                 .collect(),
             Some(LabelModifier::Exclude(l)) => {
-                let drop: Vec<String> = l.labels.iter().map(|n| canon(&unescape(n))).collect();
+                let drop: Vec<String> = l.labels.iter().map(|n| unescape(n)).collect();
                 labels
                     .iter()
                     .filter(|(k, _)| k.as_str() != METRIC_NAME && !drop.contains(k))

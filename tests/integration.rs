@@ -578,6 +578,55 @@ fn loki_line_filters_chain_negate_and_format() {
     assert_eq!(loki_lines(&state, r#"{service_name="a"} != "EVENT""#).len(), 4);
 }
 
+/// `mem` samples with arbitrary metric attributes, as a scraped Prometheus metric would have.
+fn app_with_attribute_labels() -> (tempfile::TempDir, AppState) {
+    let dir = tempdir().unwrap();
+    let mut config = Config::test(dir.path().join("canardstack.duckdb"));
+    config.operator.local_storage_dir = dir.path().join("storage");
+    let state = AppState::new_with_storage_hook_for_tests(config, |storage| {
+        storage
+            .with_conn(|conn, prefix| {
+                conn.execute_batch(&format!(
+                    "INSERT INTO {prefix}otlp_metrics_gauge \
+                     (time_unix_nano, name, double_value, service_name, service_instance_id, \
+                      resource_attributes, metric_attributes) VALUES \
+                     (TIMESTAMP_NS '2026-01-01 00:00:00', 'mem', 10, 'demo', 'h1:80', '{{}}', '{{\"type\":\"free\",\"http.route\":\"/a\"}}'), \
+                     (TIMESTAMP_NS '2026-01-01 00:00:00', 'mem', 30, 'demo', 'h1:80', '{{}}', '{{\"type\":\"used\"}}'), \
+                     (TIMESTAMP_NS '2026-01-01 00:00:00', 'mem', 50, 'demo', 'h2:80', '{{}}', '{{\"type\":\"free\"}}');"
+                ))?;
+                Ok(())
+            })
+            .unwrap();
+    })
+    .unwrap();
+    (dir, state)
+}
+
+#[test]
+fn prometheus_metric_attributes_are_labels() {
+    let (_dir, state) = app_with_attribute_labels();
+    let query = |q: &str| {
+        prom_get(&state, "/api/v1/query", &[("query", q), ("time", "1767225600")])["data"]["result"].clone()
+    };
+    let free = query(r#"mem{type="free"}"#);
+    assert_eq!(free.as_array().unwrap().len(), 2, "{free}");
+    let first = free.as_array().unwrap().iter().find(|s| s["metric"]["instance"] == "h1:80").unwrap();
+    assert_eq!(first["metric"]["__name__"], "mem");
+    assert_eq!(first["metric"]["job"], "demo");
+    assert_eq!(first["metric"]["type"], "free");
+    assert_eq!(first["metric"]["http_route"], "/a");
+    let by_type = query("sum by (type) (mem)");
+    let sums: HashMap<String, String> = by_type
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| (s["metric"]["type"].as_str().unwrap().to_string(), s["value"][1].as_str().unwrap().to_string()))
+        .collect();
+    assert_eq!(sums, HashMap::from([("free".into(), "60".into()), ("used".into(), "30".into())]));
+    assert_eq!(query(r#"mem{instance="h2:80"}"#).as_array().unwrap().len(), 1);
+    assert_eq!(query(r#"mem{type=~"fr.*", http_route!=""}"#).as_array().unwrap().len(), 1);
+}
+
 #[test]
 fn loki_label_values_fall_back_to_raw_logs_when_the_summary_is_empty() {
     let (_dir, state) = app_with_log_lines();
@@ -700,9 +749,9 @@ fn prometheus_instant_query_uses_latest_sample_per_series() {
     // count() is the number of series, not the number of samples.
     assert_eq!(instant_value(&state, "count(sem_gauge)"), "2");
     // A bare selector returns the newest sample, not an average over the window.
-    assert_eq!(instant_value(&state, r#"sem_gauge{service_name="a"}"#), "2");
+    assert_eq!(instant_value(&state, r#"sem_gauge{job="a"}"#), "2");
     assert_eq!(
-        instant_value(&state, r#"max(sem_gauge{service_name="a"})"#),
+        instant_value(&state, r#"max(sem_gauge{job="a"})"#),
         "2"
     );
 }
@@ -714,7 +763,7 @@ fn prometheus_range_query_includes_the_end_timestamp() {
         &state,
         "/api/v1/query_range",
         &[
-            ("query", r#"sem_gauge{service_name="a"}"#),
+            ("query", r#"sem_gauge{job="a"}"#),
             ("start", "1767225600"),
             ("end", "1767225602"),
             ("step", "1"),
@@ -749,7 +798,7 @@ fn prometheus_instant_query_falls_back_to_sum_and_returns_empty_for_no_match() {
         "/api/v1/query",
         &[(
             "query",
-            r#"max(demo.payment.transactions{service_name="nobody"})"#,
+            r#"max(demo.payment.transactions{job="nobody"})"#,
         )],
     );
     assert_eq!(body["data"]["result"], serde_json::json!([]), "{body}");
@@ -766,7 +815,7 @@ fn prometheus_range_query_returns_the_sample_at_each_step_not_a_bucket_aggregate
         &state,
         "/api/v1/query_range",
         &[
-            ("query", r#"sem_gauge{service_name="a"}"#),
+            ("query", r#"sem_gauge{job="a"}"#),
             ("start", "1767225600"),
             ("end", "1767225602"),
             ("step", "2"),
@@ -799,7 +848,7 @@ fn prometheus_range_query_keeps_one_series_per_service() {
         .iter()
         .map(|s| {
             (
-                s["metric"]["service_name"].as_str().unwrap().to_string(),
+                s["metric"]["job"].as_str().unwrap().to_string(),
                 s["values"]
                     .as_array()
                     .unwrap()

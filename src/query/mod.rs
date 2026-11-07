@@ -1,6 +1,7 @@
 pub mod log;
 pub mod logmetric;
 pub mod plan;
+pub mod prom_labels;
 pub mod promql;
 pub mod prometheus;
 pub mod trace;
