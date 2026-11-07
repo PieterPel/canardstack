@@ -209,7 +209,7 @@ impl Metadata {
         };
         let key = CacheKey::window(Api::Loki, Discovery::LabelValue, metadata_name, from, to);
         let value = self.cached(storage, key, || {
-            label_values(
+            let values = label_values(
                 queries,
                 storage,
                 &[StorageSignal::Logs],
@@ -217,8 +217,13 @@ impl Metadata {
                 metadata_name,
                 from,
                 to,
-            )
-            .map(|values| json!(values))
+            )?;
+            if values.is_empty() {
+                loki_raw_label_values(queries, storage, metadata_name, from, to)
+                    .map(|values| json!(values))
+            } else {
+                Ok(json!(values))
+            }
         })?;
         Ok(string_array(value))
     }
@@ -479,6 +484,41 @@ fn label_values(
         Ok(())
     })?;
     Ok(values.into_iter().collect())
+}
+
+/// Distinct label values read straight from the log table, for when `metadata_summary` has none.
+fn loki_raw_label_values(
+    queries: &QueryEngine,
+    storage: &Storage,
+    metadata_name: &str,
+    from: DateTime<Utc>,
+    to: DateTime<Utc>,
+) -> ApiResult<Vec<String>> {
+    let Some(label_expr) = semantic_labels::label_expr(LabelScope::Logs, metadata_name) else {
+        return Ok(Vec::new());
+    };
+    let sql = format!(
+        "\
+        SELECT DISTINCT value FROM ( \
+            SELECT cast({label_expr} AS VARCHAR) AS value, time_unix_nano \
+            FROM {{prefix}}{} \
+        ) \
+        WHERE value IS NOT NULL AND value <> '' AND {} \
+        ORDER BY value \
+        LIMIT {DISCOVERY_LIMIT}",
+        StorageSignal::Logs.as_str(),
+        raw_time_predicate(from, to)
+    );
+    let mut out = Vec::new();
+    queries.run_interactive(storage, |conn, prefix| {
+        let mut stmt = conn.prepare(&sql.replace("{prefix}", prefix))?;
+        let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
+        for row in rows {
+            out.push(row?);
+        }
+        Ok(())
+    })?;
+    Ok(out)
 }
 
 fn prometheus_raw_label_values(

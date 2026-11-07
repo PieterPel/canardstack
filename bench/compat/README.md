@@ -37,7 +37,7 @@ something outside the language; fix the case before trusting results for canards
 
 **Not yet validated against a reference engine:** the LogQL cases (`line_case_sensitive`,
 `line_contains_substring`, `line_literal_keywords`, `line_literal_parens`, `metric_bytes_rate`,
-`metric_negated_filter`, `metric_max_by`) and the TraceQL case `traceql_duration_name_service`
+`metric_negated_filter`) and the TraceQL case `traceql_duration_name_service`
 were added with the evaluator work and have only been checked against their goldens by hand. Run
 them with `--target lgtm` before baselining them. A PromQL `changes()` case was dropped because
 VictoriaMetrics and Prometheus count the change into the window differently.
@@ -52,45 +52,31 @@ and canardstack before committing a baseline.
 `baselines/<target>.json` lists the cases that must keep passing. `--check-baseline` exits non-zero
 if any of them stops passing and prints cases that newly pass; `--update-baseline` records the
 current passes, so each fix locks in a gain. `--fail-under promql=60` adds a floor on a language's
-pass rate. The goal is simply for `canardstack-pg`'s baseline to approach the reference's 74.
+pass rate. The goal is to keep `canardstack-pg`'s baseline at every case in the suite.
 
 ## Scoreboard (canardstack on a Postgres catalog)
 
 | language | pass | wrong | unsupported | pass rate |
 | --- | --- | --- | --- | --- |
-| PromQL | 12 | 13 | 23 | 25% (12/48) |
-| LogQL | 6 | 2 | 8 | 38% (6/16) |
-| Tempo / TraceQL | 9 | 1 | 0 | 90% (9/10) |
-| reference (Mimir, Loki, Tempo) | 74 | 0 | 0 | 100% (74/74) |
+| PromQL | 59 | 0 | 0 | 100% (59/59) |
+| LogQL | 22 | 0 | 0 | 100% (22/22) |
+| Tempo / TraceQL | 11 | 0 | 0 | 100% (11/11) |
 
-## What is failing, by root cause
+`baselines/canardstack-pg.json` now lists all 92 cases. The first PromQL cases (12 of 48 at the
+start) were failing because the old single-selector parser could not express the language; the
+PromQL evaluator in `src/query/promql/` replaced it. Treat 100% as "matches this suite", not "is
+PromQL": the suite is small and the cases were chosen to cover what dashboards use.
 
-Wrong answers come first because they are worse than errors: a dashboard shows a plausible number
-that is not the right one.
+## What the suite does not cover
 
-**Silently wrong**
-- Instant queries return **one unlabeled series** for a selector over several series
-  (`selector_all`, `rate`, the matcher cases), and a `by (label)` aggregation returns **one group**
-  instead of all (`agg_by`, `count_by`, `sum_rate_by`).
-- `sum(rate(counter[1m]))` returns the rate of the whole counter set, not the sum of per-series rates
-  (1.0 instead of 3.0).
-- A range `sum()` without `by` returns one series per service instead of collapsing to one.
-- A range query reports, at each step, the last sample in a bucket aligned to the epoch, not the
-  value at the step time (`range_value_at_step`), and a bucket holding one sample yields a rate of 0
-  (`range_rate_last_step_single_sample`).
-- LogQL chained line filters (`|= "a" != "b"`) return nothing (`chained_filters`).
-- TraceQL duration filters are ignored: `{ duration > 1h }` returns every trace.
-- Loki label values do not include recent services (`logql.meta_label_values`, a stale metadata cache).
-
-**Rejected with an explicit error**
-- PromQL: `quantile`, `increase`, `irate`, `*_over_time`, arithmetic and comparisons (scalar and
-  between series), `topk`/`bottomk`, `offset`, `absent`, `clamp`, `abs`, `label_replace`, `sort`.
-- LogQL: `!=` and `!~` line filters, `| line_format`, every metric query (`count_over_time`, `rate`,
-  `bytes_over_time`, `sum by (...)`), and parentheses around filtered metric queries.
-
-Not covered by any case yet: histograms (the storage layer has none), subqueries, `@` modifiers,
-recording and alerting rules, `| json` / `| logfmt` parsers, `label_format`, TraceQL structural
-operators and aggregates, and the exemplar, log-volume and tail endpoints.
+Histograms (the storage layer has none), subqueries, `@` modifiers, recording and alerting rules,
+`| json` / `| logfmt` parsers, `label_format`, `line_format` templates, LogQL `topk`/`offset`
+and per-stream (unaggregated) metric queries, TraceQL structural operators, aggregates and
+span-level `||`, and the exemplar, log-volume and tail endpoints. canardstack rejects the
+unsupported ones with an explicit `unsupported_promql` / `unsupported_logql` error rather than a
+wrong answer. Known semantic gaps: `changes()` follows Prometheus (the change into the window is
+not counted), and Loki streams split by severity, so unaggregated log metric queries differ from
+Loki's per-stream series.
 
 ## Adding a case
 

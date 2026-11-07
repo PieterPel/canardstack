@@ -579,6 +579,17 @@ fn loki_line_filters_chain_negate_and_format() {
 }
 
 #[test]
+fn loki_label_values_fall_back_to_raw_logs_when_the_summary_is_empty() {
+    let (_dir, state) = app_with_log_lines();
+    let body = prom_get(
+        &state,
+        "/loki/api/v1/label/service_name/values",
+        &[("start", "1767225500"), ("end", "1767225700")],
+    );
+    assert_eq!(body["data"], serde_json::json!(["a"]), "{body}");
+}
+
+#[test]
 fn loki_metric_queries_count_rate_and_aggregate() {
     let (_dir, state) = app_with_log_lines();
     let value = |query: &str| {

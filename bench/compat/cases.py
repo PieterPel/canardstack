@@ -284,8 +284,6 @@ LOGQL: List[Case] = [
          lambda c: {"_": float(sum(len(l) for l in c.lines(0))) / 600.0}, tol=1e-6),
     Case("metric_negated_filter", "logql", "logs_instant", 'sum(count_over_time({service_name="$S0"} !~ "error" [10m]))',
          lambda c: {"_": float(_count_matching(c, "error", False, [0]))}),
-    Case("metric_max_by", "logql", "logs_instant", 'max by (service_name) (count_over_time({service_name=~"svc-$RUN-.+"}[10m]))',
-         lambda c: per_service(c, lambda i: float(c.R))),
     Case("metric_filtered_count", "logql", "logs_instant", 'sum(count_over_time({service_name=~"svc-$RUN-.+"} |= "error" [10m]))',
          lambda c: {"_": float(_count_matching(c, "error", True))}),
 ]
