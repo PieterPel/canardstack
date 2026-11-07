@@ -213,7 +213,9 @@ fn evaluate_first_stage(
         MetricsFn::AvgOverTime(a) => (Kind::Avg, Some(a), Vec::new()),
         MetricsFn::HistogramOverTime(a) => (Kind::Histogram, Some(a), Vec::new()),
         MetricsFn::QuantileOverTime(a, qs) => (Kind::Quantile, Some(a), qs.clone()),
-        MetricsFn::Compare { .. } => return Err(ApiError::new(400, "bad_data", "compare() is not supported")),
+        MetricsFn::Compare { filter, top_n, start, end } => {
+            return compare(engine, storage, query, filter, (*top_n, *start, *end), range);
+        }
     };
     let name = match &query.agg.func {
         MetricsFn::Rate => "rate",
@@ -361,6 +363,100 @@ fn observe(
     let entry = series.entry(key).or_insert_with(|| Bucketed { labels, cells: BTreeMap::new() });
     let cells = entry.cells.entry(bucket.map_or(0, f64::to_bits)).or_insert_with(|| vec![Cell::new(); range.steps]);
     cells[step].observe(value.unwrap_or(0.0));
+}
+
+/// The attributes of a span that `compare()` counts: a few intrinsics and every resource, span and
+/// instrumentation-scope attribute.
+fn compared_attributes(trace: &Trace, i: usize) -> Vec<(String, Val)> {
+    let s = &trace.spans[i];
+    let mut out = vec![
+        ("instrumentation:name".to_string(), Val::Str(s.scope_name.clone())),
+        ("instrumentation:version".to_string(), Val::Str(s.scope_version.clone())),
+        ("kind".to_string(), Val::Kind(super::value::kind_of(s.kind))),
+        ("name".to_string(), Val::Str(s.name.clone())),
+        ("rootName".to_string(), Val::Str(trace.root_name.clone())),
+        ("rootServiceName".to_string(), Val::Str(trace.root_service.clone())),
+        ("status".to_string(), Val::Status(super::value::status_of(s.status))),
+        ("statusMessage".to_string(), Val::Str(s.status_message.clone())),
+        ("span:childCount".to_string(), Val::Int(s.children as i64)),
+    ];
+    out.extend(s.resource.iter().map(|(k, v)| (format!("resource.{k}"), v.clone())));
+    out.extend(s.span.iter().map(|(k, v)| (format!("span.{k}"), v.clone())));
+    out.extend(s.scope.iter().map(|(k, v)| (format!("instrumentation.{k}"), v.clone())));
+    // Durations are left out, like Tempo.
+    out.retain(|(_, v)| !matches!(v, Val::Dur(_)));
+    out
+}
+
+/// `compare(filter, topN, start, end)`: for every attribute, how often each value occurs among the
+/// spans the filter selects and among the others (the baseline), per step, with the `topN` most
+/// frequent values kept and the number of spans that had the attribute as the totals.
+fn compare(
+    engine: &QueryEngine,
+    storage: &Storage,
+    query: &MetricsPipeline,
+    filter: &Field,
+    (top_n, sel_start, sel_end): (i64, i64, i64),
+    range: Range,
+) -> ApiResult<Vec<Series>> {
+    if !(1..=1000).contains(&top_n) {
+        return Err(ApiError::new(400, "bad_data", "compare() top number of values must be an integer between 1 and 1000"));
+    }
+    type Counts = BTreeMap<String, BTreeMap<String, (Val, Vec<f64>)>>;
+    let mut values: [Counts; 2] = [Counts::new(), Counts::new()];
+    let mut totals: [BTreeMap<String, Vec<f64>>; 2] = [BTreeMap::new(), BTreeMap::new()];
+    let traces = model::load(engine, storage, Utc.timestamp_nanos(range.start_ns), Utc.timestamp_nanos(range.end_ns() + 1_000_000))?;
+    let regexes = Regexes::default();
+    for trace in &traces {
+        let eval = Eval { trace, regexes: &regexes };
+        let mut spans: Vec<usize> = eval.pipeline(&query.pipeline, eval.input())?.into_iter().flatten().collect();
+        spans.sort_unstable();
+        spans.dedup();
+        for i in spans {
+            let span = &trace.spans[i];
+            let Some(step) = range.interval(span.start_ns) else { continue };
+            let in_window = (sel_start <= 0 || sel_end <= 0) || (span.start_ns > sel_start && span.start_ns <= sel_end);
+            let side = usize::from(in_window && eval.field(filter, i).iter().any(Val::is_true));
+            for (name, value) in compared_attributes(trace, i) {
+                let counts = values[side].entry(name.clone()).or_default().entry(value_key(&Some(value.clone()))).or_insert_with(|| (value, vec![0.0; range.steps]));
+                counts.1[step] += 1.0;
+                totals[side].entry(name).or_insert_with(|| vec![0.0; range.steps])[step] += 1.0;
+            }
+        }
+    }
+    let mut out = Vec::new();
+    let mut too_many: BTreeMap<String, ()> = BTreeMap::new();
+    for (side, (meta, meta_total)) in [("baseline", "baseline_total"), ("selection", "selection_total")].into_iter().enumerate() {
+        for (attr, by_value) in &values[side] {
+            let mut ranked: Vec<&(Val, Vec<f64>)> = by_value.values().collect();
+            ranked.sort_by(|a, b| {
+                let (x, y): (f64, f64) = (a.1.iter().sum(), b.1.iter().sum());
+                y.partial_cmp(&x).unwrap_or(std::cmp::Ordering::Equal).then_with(|| format!("{:?}", a.0).cmp(&format!("{:?}", b.0)))
+            });
+            if ranked.len() > top_n as usize {
+                too_many.insert(attr.clone(), ());
+            }
+            for (value, counts) in ranked.into_iter().take(top_n as usize) {
+                out.push(Series {
+                    labels: vec![("__meta_type".into(), Val::Str(meta.into())), (attr.clone(), value.clone())],
+                    samples: counts.iter().map(|c| Some(*c)).collect(),
+                });
+            }
+        }
+        for (attr, counts) in &totals[side] {
+            out.push(Series {
+                labels: vec![("__meta_type".into(), Val::Str(meta_total.into())), (attr.clone(), Val::Str("nil".into()))],
+                samples: counts.iter().map(|c| Some(*c)).collect(),
+            });
+        }
+    }
+    for (attr, ()) in too_many {
+        out.push(Series {
+            labels: vec![("__meta_error".into(), Val::Str("__too_many_values__".into())), (attr, Val::Str("nil".into()))],
+            samples: Vec::new(),
+        });
+    }
+    Ok(out)
 }
 
 /// Evaluates a metrics query: one function with its second stages, or arithmetic over several.

@@ -4,7 +4,7 @@ Runs TraceQL search queries against a real Tempo (the reference) and against can
 same generated traces, and compares the responses. The queries are `queries.yml` (written for the
 generated data) plus every valid query in Tempo's own `test_examples.yaml`. Search queries go to
 `/api/search`, metrics queries (`rate()`, `*_over_time`, `topk`/`bottomk`, filters, arithmetic) to
-`/api/metrics/query_range`; queries with a sampling hint are left out because they are random.
+`/api/metrics/query_range` (`compare()` included); queries with a sampling hint are left out because they are random.
 
 ```bash
 cargo build                                   # target/debug/canardstack (or set CANARDSTACK_BINARY)
@@ -32,7 +32,7 @@ compared. A query the reference rejects is skipped. `DUMP=file` appends the refe
 | | queries | pass |
 | --- | --- | --- |
 | search: spanset filters, pipelines, aggregates, structural operators | 266 | 256 |
-| metrics: `rate`, `count/min/max/avg/sum/quantile/histogram_over_time`, `by()`, `topk`, `bottomk`, filters, arithmetic | 115 | 115 |
+| metrics: `rate`, `count/min/max/avg/sum/quantile/histogram_over_time`, `by()`, `topk`, `bottomk`, filters, arithmetic, `compare()` | 119 | 116 |
 
 The 9 search queries that do not pass (one more is rejected by Tempo and skipped) are all behaviour of Tempo's storage layer, not of TraceQL, which is why
 canardstack does not copy them (the query with `childCount` is rejected by Tempo and counted as a
@@ -56,4 +56,12 @@ skip, not a pass):
 - Like Tempo, the first step is labelled with the aligned start (the range gets one extra leading
   step), steps cover `(t - step, t]`, and `quantile_over_time` interpolates over power-of-two
   buckets.
-- `compare()` and sampling hints (`with(sample=...)`) are not evaluated.
+- Sampling hints (`with(sample=...)`) are not evaluated.
+- `compare()` counts each span once. The comparer drops what comes from Tempo's storage format:
+  attributes in its dedicated columns get a series for the spans that lack them (value `nil`) and
+  totals over every span, so those series and totals are ignored on both sides, and when several
+  values are equally frequent Tempo's pick for the top N is arbitrary, so equal counts compare equal.
+  Three `compare()` queries still differ, for two reasons in Tempo: an attribute that also appears in
+  the query's filter is counted two or more times (`{ name = "payment.charge" } | compare(...)` has
+  every `name` count doubled while its totals are right), and the `nil` series takes a place in the
+  top N (canardstack has no `nil` series, so one more real value fits).

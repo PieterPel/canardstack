@@ -67,6 +67,83 @@ func summariseMetrics(body []byte) (map[string]seriesSamples, error) {
 	return out, nil
 }
 
+// normaliseCompare removes what Tempo's storage format adds to compare() answers: attributes in
+// its dedicated columns get a series counting the spans that lack them (value "nil") and totals
+// over every span. For those attributes the "nil" series and the totals are dropped on both sides.
+func normaliseCompare(ref, got map[string]seriesSamples) {
+	dedicated := map[string]bool{}
+	for key := range ref {
+		labels := strings.Split(key, ",")
+		if len(labels) == 2 && strings.HasPrefix(labels[0], "__meta_type=") && !strings.HasSuffix(labels[0], "_total") && strings.HasSuffix(labels[1], "=nil") {
+			dedicated[strings.TrimSuffix(labels[1], "=nil")] = true
+		}
+	}
+	drop := func(m map[string]seriesSamples, nilToo bool) {
+		for key := range m {
+			labels := strings.Split(key, ",")
+			if len(labels) != 2 || !strings.HasPrefix(labels[0], "__meta_type=") {
+				continue
+			}
+			attr, value, _ := strings.Cut(labels[1], "=")
+			if !dedicated[attr] {
+				continue
+			}
+			if strings.HasSuffix(labels[0], "_total") || (nilToo && value == "nil") {
+				delete(m, key)
+			}
+		}
+	}
+	drop(ref, true)
+	drop(got, false)
+
+	// Which of several equally frequent values makes the top N is arbitrary in Tempo (an unstable
+	// sort), so when the chosen values differ but their counts are the same, the group is equal.
+	group := func(m map[string]seriesSamples) map[string][]string {
+		out := map[string][]string{}
+		for key := range m {
+			labels := strings.Split(key, ",")
+			if len(labels) == 2 && strings.HasPrefix(labels[0], "__meta_type=") {
+				attr, _, _ := strings.Cut(labels[1], "=")
+				out[labels[0]+","+attr] = append(out[labels[0]+","+attr], key)
+			}
+		}
+		return out
+	}
+	sums := func(m map[string]seriesSamples, keys []string) string {
+		totals := make([]float64, 0, len(keys))
+		for _, k := range keys {
+			t := 0.0
+			for _, v := range m[k] {
+				t += v
+			}
+			totals = append(totals, t)
+		}
+		sort.Float64s(totals)
+		return fmt.Sprint(totals)
+	}
+	refGroups, gotGroups := group(ref), group(got)
+	for g, refKeys := range refGroups {
+		gotKeys, ok := gotGroups[g]
+		if !ok || strings.Join(sortedCopy(refKeys), "\n") == strings.Join(sortedCopy(gotKeys), "\n") {
+			continue
+		}
+		if sums(ref, refKeys) == sums(got, gotKeys) {
+			for _, k := range refKeys {
+				delete(ref, k)
+			}
+			for _, k := range gotKeys {
+				delete(got, k)
+			}
+		}
+	}
+}
+
+func sortedCopy(in []string) []string {
+	out := append([]string(nil), in...)
+	sort.Strings(out)
+	return out
+}
+
 func closeEnough(a, b float64) bool {
 	if math.IsNaN(a) && math.IsNaN(b) {
 		return true
@@ -77,7 +154,18 @@ func closeEnough(a, b float64) bool {
 func diffMetrics(ref, got map[string]seriesSamples) string {
 	refKeys, gotKeys := metricKeys(ref), metricKeys(got)
 	if strings.Join(refKeys, "\n") != strings.Join(gotKeys, "\n") {
-		return fmt.Sprintf("series differ: got %s, want %s", preview(gotKeys), preview(refKeys))
+		var missing, extra []string
+		for _, k := range refKeys {
+			if _, ok := got[k]; !ok {
+				missing = append(missing, k)
+			}
+		}
+		for _, k := range gotKeys {
+			if _, ok := ref[k]; !ok {
+				extra = append(extra, k)
+			}
+		}
+		return fmt.Sprintf("series differ: missing %s; unexpected %s", preview(missing), preview(extra))
 	}
 	for _, key := range refKeys {
 		want, have := ref[key], got[key]

@@ -416,6 +416,9 @@ func TestCompliance(t *testing.T) {
 				if err != nil {
 					t.Fatalf("unexpected failure: %v", err)
 				}
+				if strings.Contains(q, "compare(") {
+					normaliseCompare(want, have)
+				}
 				if d := diffMetrics(want, have); d != "" {
 					t.Fatalf("different results: %s", d)
 				}

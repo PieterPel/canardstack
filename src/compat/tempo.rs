@@ -325,9 +325,10 @@ pub fn tempo_metrics_range(state: &AppState, params: &HashMap<String, String>) -
     let end_ns = to.timestamp_nanos_opt().unwrap_or_default();
     let range = traceql::MetricsRange::new(start_ns, end_ns, step_ns)?;
     let series = traceql::evaluate_metrics(&state.queries, &state.storage, &query.kind, range)?;
+    // Like Tempo, a series without any sample is left out.
     let series: Vec<Value> = series
         .iter()
-        .map(|s| {
+        .filter_map(|s| {
             let labels: Vec<Value> = s.labels.iter().map(|(k, v)| json!({"key": k, "value": label_value(v)})).collect();
             let samples: Vec<Value> = s
                 .samples
@@ -338,7 +339,7 @@ pub fn tempo_metrics_range(state: &AppState, params: &HashMap<String, String>) -
                     (!v.is_nan()).then(|| json!({"timestampMs": range.timestamp_ms(i).to_string(), "value": v}))
                 })
                 .collect();
-            json!({"labels": labels, "samples": samples})
+            (!samples.is_empty()).then(|| json!({"labels": labels, "samples": samples}))
         })
         .collect();
     Ok(json!({"series": series, "metrics": {"completedJobs": 1, "totalJobs": 1}, "step": step_ns.to_string()}))

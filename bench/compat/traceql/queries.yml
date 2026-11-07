@@ -133,3 +133,7 @@ queries:
   - '{ status = error } | rate()'
   - '{ } | count_over_time() by (span:status)'
   - '{ } | rate() by (span.http.method)'
+  - '{ } | compare({ status = error })'
+  - '{ } | compare({ resource.service.name = "payment" }, 5)'
+  - '{ name = "payment.charge" } | compare({ status = error })'
+  - '{ resource.service.name = "checkout" } | compare({ duration > 20ms }, 3)'

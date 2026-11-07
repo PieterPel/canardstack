@@ -68,14 +68,14 @@ pass rate. The goal is to keep `canardstack-pg`'s baseline at every case in the 
 checks specific to canardstack (labels, discovery endpoints, resource caps). Breadth comes from
 [`promql/`](promql/README.md), which runs prometheus/compliance (546 of 548 queries pass without
 native histograms). LogQL and TraceQL have no upstream suite, so [`logql/`](logql/README.md)
-(2,406 of 2,408 queries) and [`traceql/`](traceql/README.md) (256 of 266 search queries, all 115 metrics queries) run the same queries
+(2,406 of 2,408 queries) and [`traceql/`](traceql/README.md) (256 of 266 search queries, 116 of 119 metrics queries) run the same queries
 against a real Loki and Tempo and compare the answers.
 
 ## What the suite does not cover
 
 Histograms (the storage layer has none), subqueries, `@` modifiers, recording and alerting rules,
 `| json` / `| logfmt` parsers, `label_format`, `line_format` templates, LogQL `topk`/`offset`
-and per-stream (unaggregated) metric queries, TraceQL `compare()`, `select()` attributes in search results, and the exemplar,
+and per-stream (unaggregated) metric queries, TraceQL `select()` attributes in search results, and the exemplar,
 log-volume and tail endpoints. canardstack rejects the
 unsupported ones with an explicit `unsupported_promql` / `unsupported_logql` error rather than a
 wrong answer. Known semantic gaps: `changes()` follows Prometheus (the change into the window is

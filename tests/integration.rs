@@ -891,6 +891,97 @@ fn tempo_search_applies_traceql_duration_filters() {
     assert_eq!(count("{ duration >= 100ms }"), 2);
 }
 
+/// Two traces: `t1` is root -> mid -> leaf (the leaf fails), `t2` is a lone span 10 seconds later.
+fn app_with_traces() -> (tempfile::TempDir, AppState) {
+    let dir = tempdir().unwrap();
+    let mut config = Config::test(dir.path().join("canardstack.duckdb"));
+    config.operator.local_storage_dir = dir.path().join("storage");
+    let state = AppState::new_with_storage_hook_for_tests(config, |storage| {
+        storage
+            .with_conn(|conn, prefix| {
+                conn.execute_batch(&format!(
+                    "INSERT INTO {prefix}otlp_traces (start_time_unix_nano, duration_time_unix_nano, \
+                     trace_id, span_id, parent_span_id, name, kind, status_code, service_name, \
+                     resource_attributes, span_attributes) VALUES \
+                     (TIMESTAMP_NS '2026-01-01 00:00:01', 3000000000, 't1', 'a1', '', 'root', 2, 0, 'web', '{{}}', '{{\"n\":1}}'), \
+                     (TIMESTAMP_NS '2026-01-01 00:00:02', 1000000000, 't1', 'a2', 'a1', 'mid', 1, 0, 'web', '{{}}', '{{\"n\":2}}'), \
+                     (TIMESTAMP_NS '2026-01-01 00:00:03', 100000000, 't1', 'a3', 'a2', 'leaf', 3, 2, 'db', '{{}}', '{{\"n\":3}}'), \
+                     (TIMESTAMP_NS '2026-01-01 00:00:12', 50000000, 't2', 'b1', '', 'solo', 2, 0, 'web', '{{}}', '{{}}');"
+                ))?;
+                Ok(())
+            })
+            .unwrap();
+    })
+    .unwrap();
+    (dir, state)
+}
+
+#[test]
+fn traceql_search_evaluates_structure_and_trace_intrinsics() {
+    let (_dir, state) = app_with_traces();
+    let search = |q: &str| {
+        prom_get(&state, "/api/search", &[("q", q), ("start", "1767225500"), ("end", "1767225700"), ("spss", "10")])["traces"].clone()
+    };
+    let spans = |q: &str| -> Vec<String> {
+        let traces = search(q);
+        let mut ids: Vec<String> = traces
+            .as_array()
+            .unwrap()
+            .iter()
+            .flat_map(|t| t["spanSets"].as_array().unwrap().iter().flat_map(|s| s["spans"].as_array().unwrap().iter().map(|x| x["spanID"].as_str().unwrap().to_string())))
+            .collect();
+        ids.sort();
+        ids
+    };
+    assert_eq!(spans("{ status = error }"), ["a3"]);
+    assert_eq!(spans(r#"{ name = "root" } >> { status = error }"#), ["a3"]);
+    assert_eq!(spans(r#"{ name = "leaf" } << { name = "root" }"#), ["a1"]);
+    assert_eq!(spans(r#"{ name = "mid" } > { }"#), ["a3"]);
+    assert_eq!(spans("{ } | count() > 2"), ["a1", "a2", "a3"]);
+    assert_eq!(spans("{ trace:rootName = \"solo\" }"), ["b1"]);
+    assert_eq!(spans("{ .n >= 2 } | select(.n)"), ["a2", "a3"]);
+    let traces = search("{ trace:duration >= 3s }");
+    assert_eq!(traces.as_array().unwrap().len(), 1);
+    assert_eq!(traces[0]["rootTraceName"], "root");
+    assert_eq!(traces[0]["rootServiceName"], "web");
+    // Tempo prints the trace id without leading zeros, and the duration in whole milliseconds.
+    assert_eq!(traces[0]["durationMs"], 3000);
+}
+
+#[test]
+fn traceql_metrics_bucket_spans_into_steps_and_compare_selections() {
+    let (_dir, state) = app_with_traces();
+    let query = |q: &str| {
+        prom_get(&state, "/api/metrics/query_range", &[("q", q), ("start", "1767225600"), ("end", "1767225630"), ("step", "10s")])["series"].clone()
+    };
+    // Steps are labelled with their end; the first is the aligned start itself.
+    let counts = |q: &str| -> Vec<(String, f64)> {
+        query(q)[0]["samples"].as_array().unwrap().iter().map(|s| (s["timestampMs"].as_str().unwrap().to_string(), s["value"].as_f64().unwrap())).collect()
+    };
+    assert_eq!(
+        counts("{ } | count_over_time()"),
+        [("1767225600000".to_string(), 0.0), ("1767225610000".to_string(), 3.0), ("1767225620000".to_string(), 1.0), ("1767225630000".to_string(), 0.0)]
+    );
+    let by_service = query("{ } | count_over_time() by (resource.service.name)");
+    assert_eq!(by_service.as_array().unwrap().len(), 2, "{by_service}");
+    let max = query("{ } | max_over_time(duration)");
+    assert_eq!(max[0]["samples"][0]["value"], 3.0);
+    // compare(): the failing span is the selection, everything else the baseline.
+    let compare = query("{ } | compare({ status = error })");
+    let value_of = |meta: &str, attr: &str, value: &str| -> Option<f64> {
+        compare.as_array().unwrap().iter().find_map(|s| {
+            let labels = s["labels"].as_array().unwrap();
+            let has = |k: &str, v: &str| labels.iter().any(|l| l["key"] == k && l["value"].to_string().contains(v));
+            (has("__meta_type", meta) && has(attr, value)).then(|| s["samples"].as_array().unwrap().iter().map(|x| x["value"].as_f64().unwrap()).sum())
+        })
+    };
+    assert_eq!(value_of("selection", "name", "leaf"), Some(1.0));
+    assert_eq!(value_of("baseline", "name", "root"), Some(1.0));
+    assert_eq!(value_of("baseline", "name", "leaf"), None);
+    assert_eq!(value_of("baseline_total", "name", "nil"), Some(3.0));
+    assert_eq!(value_of("selection", "status", "error"), Some(1.0));
+}
+
 fn prom_get(state: &AppState, path: &str, query: &[(&str, &str)]) -> Value {
     let params = query
         .iter()
