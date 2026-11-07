@@ -53,12 +53,14 @@ impl Metadata {
         &self,
         queries: &QueryEngine,
         storage: &Storage,
+        matches: &[String],
         from: DateTime<Utc>,
         to: DateTime<Utc>,
     ) -> ApiResult<Vec<String>> {
-        let key = CacheKey::window(Api::Prometheus, Discovery::LabelName, "", from, to);
+        let selectors = prom_discovery::Selectors::parse(matches)?;
+        let key = CacheKey::window(Api::Prometheus, Discovery::LabelName, &matches.join("\u{1f}"), from, to);
         let value = self.cached(storage, key, || {
-            prom_discovery::label_names(queries, storage, from, to).map(|names| json!(names))
+            prom_discovery::label_names(queries, storage, &selectors, from, to).map(|names| json!(names))
         })?;
         Ok(string_array(value))
     }
@@ -68,12 +70,15 @@ impl Metadata {
         queries: &QueryEngine,
         storage: &Storage,
         name: &str,
+        matches: &[String],
         from: DateTime<Utc>,
         to: DateTime<Utc>,
     ) -> ApiResult<Vec<String>> {
-        let key = CacheKey::window(Api::Prometheus, Discovery::LabelValue, name, from, to);
+        let selectors = prom_discovery::Selectors::parse(matches)?;
+        let cache_name = format!("{name}\u{1f}{}", matches.join("\u{1f}"));
+        let key = CacheKey::window(Api::Prometheus, Discovery::LabelValue, &cache_name, from, to);
         let value = self.cached(storage, key, || {
-            prom_discovery::label_values(queries, storage, name, from, to).map(|v| json!(v))
+            prom_discovery::label_values(queries, storage, name, &selectors, from, to).map(|v| json!(v))
         })?;
         Ok(string_array(value))
     }
@@ -82,12 +87,14 @@ impl Metadata {
         &self,
         queries: &QueryEngine,
         storage: &Storage,
+        matches: &[String],
         from: DateTime<Utc>,
         to: DateTime<Utc>,
     ) -> ApiResult<Value> {
-        let key = CacheKey::window(Api::Prometheus, Discovery::Series, "", from, to);
+        let selectors = prom_discovery::Selectors::parse(matches)?;
+        let key = CacheKey::window(Api::Prometheus, Discovery::Series, &matches.join("\u{1f}"), from, to);
         self.cached(storage, key, || {
-            prom_discovery::series(queries, storage, from, to).map(|sets| json!(sets))
+            prom_discovery::series(queries, storage, &selectors, from, to).map(|sets| json!(sets))
         })
     }
 

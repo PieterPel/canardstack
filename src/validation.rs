@@ -123,3 +123,6 @@ pub fn parse_limit(value: Option<&Value>, default: usize, max: usize) -> ApiResu
         Ok(limit)
     }
 }
+
+/// Separates the values of a repeated query parameter such as `match[]` in the parameter map.
+pub const MULTI_VALUE_SEPARATOR: char = '\u{1f}';

@@ -7,18 +7,82 @@ use crate::query::prom_names::{prom_name, Kind};
 use crate::query::QueryEngine;
 use crate::signal::StorageSignal;
 use crate::storage::Storage;
-use crate::validation::ApiResult;
+use crate::validation::{ApiError, ApiResult};
 use chrono::{DateTime, Utc};
+use promql_parser::label::MatchOp;
+use promql_parser::parser::{self, Expr};
+use regex::Regex;
 use std::collections::{BTreeMap, BTreeSet};
 
 /// Upper bound on distinct series read for one discovery request.
 const SERIES_LIMIT: usize = 10_000;
 const METRIC_NAME: &str = "__name__";
 
-/// Distinct label sets (including `__name__`) of the series with samples in the window.
+enum Test {
+    Eq(String),
+    Ne(String),
+    Re(Regex),
+    NotRe(Regex),
+}
+
+/// The `match[]` selectors of a discovery request: a series is selected when any selector
+/// matches it. No selectors select everything.
+#[derive(Default)]
+pub struct Selectors(Vec<Vec<(String, Test)>>);
+
+impl Selectors {
+    /// Parses the raw `match[]` values (each a vector selector such as `up{job="a"}`).
+    pub fn parse(raw: &[String]) -> ApiResult<Selectors> {
+        let bad = |msg: String| ApiError::new(400, "bad_data", msg);
+        let mut out = Vec::new();
+        for text in raw {
+            let Expr::VectorSelector(vs) = parser::parse(text).map_err(|e| bad(format!("invalid match[] selector: {e}")))? else {
+                return Err(bad(format!("match[] must be a series selector: {text}")));
+            };
+            if !vs.matchers.or_matchers.is_empty() {
+                return Err(bad("`or` between label matchers is not supported".into()));
+            }
+            let mut tests: Vec<(String, Test)> = Vec::new();
+            if let Some(name) = &vs.name {
+                tests.push((METRIC_NAME.to_string(), Test::Eq(name.clone())));
+            }
+            for m in &vs.matchers.matchers {
+                let anchored = |p: &str| Regex::new(&format!("^(?:{p})$")).map_err(|e| bad(format!("invalid regex: {e}")));
+                let test = match &m.op {
+                    MatchOp::Equal => Test::Eq(m.value.clone()),
+                    MatchOp::NotEqual => Test::Ne(m.value.clone()),
+                    MatchOp::Re(_) => Test::Re(anchored(&m.value)?),
+                    MatchOp::NotRe(_) => Test::NotRe(anchored(&m.value)?),
+                };
+                tests.push((m.name.clone(), test));
+            }
+            out.push(tests);
+        }
+        Ok(Selectors(out))
+    }
+
+    pub fn matches(&self, labels: &Labels) -> bool {
+        self.0.is_empty()
+            || self.0.iter().any(|tests| {
+                tests.iter().all(|(name, test)| {
+                    let value = labels.get(name).map(String::as_str).unwrap_or("");
+                    match test {
+                        Test::Eq(v) => value == v,
+                        Test::Ne(v) => value != v,
+                        Test::Re(r) => r.is_match(value),
+                        Test::NotRe(r) => !r.is_match(value),
+                    }
+                })
+            })
+    }
+}
+
+/// Distinct label sets (including `__name__`) of the series with samples in the window that the
+/// selectors match.
 pub fn series(
     queries: &QueryEngine,
     storage: &Storage,
+    selectors: &Selectors,
     from: DateTime<Utc>,
     to: DateTime<Utc>,
 ) -> ApiResult<Vec<Labels>> {
@@ -60,7 +124,9 @@ pub fn series(
             let name: String = row.get(0)?;
             let unit: Option<String> = row.get(7)?;
             labels.insert(METRIC_NAME.to_string(), prom_name(&name, unit.as_deref(), kind, suffixes));
-            sets.insert(labels);
+            if selectors.matches(&labels) {
+                sets.insert(labels);
+            }
         }
         Ok(())
     })?;
@@ -70,10 +136,11 @@ pub fn series(
 pub fn label_names(
     queries: &QueryEngine,
     storage: &Storage,
+    selectors: &Selectors,
     from: DateTime<Utc>,
     to: DateTime<Utc>,
 ) -> ApiResult<Vec<String>> {
-    let names: BTreeSet<String> = series(queries, storage, from, to)?
+    let names: BTreeSet<String> = series(queries, storage, selectors, from, to)?
         .into_iter()
         .flat_map(|labels| labels.into_keys())
         .collect();
@@ -84,10 +151,11 @@ pub fn label_values(
     queries: &QueryEngine,
     storage: &Storage,
     name: &str,
+    selectors: &Selectors,
     from: DateTime<Utc>,
     to: DateTime<Utc>,
 ) -> ApiResult<Vec<String>> {
-    let values: BTreeSet<String> = series(queries, storage, from, to)?
+    let values: BTreeSet<String> = series(queries, storage, selectors, from, to)?
         .into_iter()
         .filter_map(|mut labels| labels.remove(name))
         .collect();

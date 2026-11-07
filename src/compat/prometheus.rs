@@ -2,7 +2,7 @@ use super::params::{
     optional_range, optional_time, parse_step, required_param, required_time, validate_range,
 };
 use crate::query::promql::{self, Grid, Value as PromValue};
-use crate::validation::{ApiError, ApiResult};
+use crate::validation::{ApiError, ApiResult, MULTI_VALUE_SEPARATOR};
 use crate::AppState;
 use chrono::Utc;
 use serde_json::{json, Value};
@@ -96,11 +96,19 @@ pub(super) fn ts_json(ms: i64) -> Value {
     }
 }
 
+/// The values of a repeated `match[]` parameter.
+fn matches(params: &HashMap<String, String>) -> Vec<String> {
+    params
+        .get("match[]")
+        .map(|raw| raw.split(MULTI_VALUE_SEPARATOR).map(str::to_string).collect())
+        .unwrap_or_default()
+}
+
 pub fn prometheus_labels(state: &AppState, params: &HashMap<String, String>) -> ApiResult<Value> {
     let (from, to) = optional_range(params, METRIC_RANGE_SECS)?;
     let names = state
         .metadata
-        .prometheus_label_names(&state.queries, &state.storage, from, to)?;
+        .prometheus_label_names(&state.queries, &state.storage, &matches(params), from, to)?;
     Ok(prom_success(json!(names)))
 }
 
@@ -113,7 +121,7 @@ pub fn prometheus_label_values(
     let values =
         state
             .metadata
-            .prometheus_label_values(&state.queries, &state.storage, name, from, to)?;
+            .prometheus_label_values(&state.queries, &state.storage, name, &matches(params), from, to)?;
     Ok(prom_success(json!(values)))
 }
 
@@ -121,7 +129,7 @@ pub fn prometheus_series(state: &AppState, params: &HashMap<String, String>) -> 
     let (from, to) = optional_range(params, METRIC_RANGE_SECS)?;
     let out = state
         .metadata
-        .prometheus_series(&state.queries, &state.storage, from, to)?;
+        .prometheus_series(&state.queries, &state.storage, &matches(params), from, to)?;
     Ok(prom_success(out))
 }
 

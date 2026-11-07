@@ -635,6 +635,29 @@ fn prometheus_metric_attributes_are_labels() {
 }
 
 #[test]
+fn prometheus_discovery_endpoints_honour_match_selectors() {
+    let (_dir, state) = app_with_attribute_labels();
+    fn window(m: &str) -> Vec<(&str, &str)> {
+        vec![("start", "1767225500"), ("end", "1767225700"), ("match[]", m)]
+    }
+    let get = |path: &str, m: &str| prom_get(&state, path, &window(m))["data"].clone();
+    // One selector narrows the label values and the series.
+    assert_eq!(get("/api/v1/label/type/values", r#"mem{instance="h2:80"}"#), serde_json::json!(["free"]));
+    assert_eq!(get("/api/v1/label/instance/values", r#"{type="used"}"#), serde_json::json!(["h1:80"]));
+    assert_eq!(get("/api/v1/series", r#"mem{type=~"fr.*"}"#).as_array().unwrap().len(), 2);
+    // Label names only list the labels of the selected series.
+    assert_eq!(get("/api/v1/labels", r#"mem{type="used"}"#), serde_json::json!(["__name__", "instance", "job", "type"]));
+    // Several selectors select the union (a repeated `match[]` arrives joined).
+    let both = format!("{}\u{1f}{}", r#"mem{type="used"}"#, r#"mem{instance="h2:80"}"#);
+    assert_eq!(get("/api/v1/label/type/values", &both), serde_json::json!(["free", "used"]));
+    assert_eq!(get("/api/v1/label/type/values", r#"nothing"#), serde_json::json!([]));
+    // A selector that is not a series selector is rejected.
+    let params: HashMap<String, String> = window("rate(mem[1m])").into_iter().map(|(k, v)| (k.into(), v.into())).collect();
+    let response = http::route("GET", "/api/v1/series", &params, &api_headers(), &[], &state);
+    assert_eq!(response.status(), 400, "{}", response.json_body());
+}
+
+#[test]
 fn promql_calendar_regression_and_bucket_functions() {
     let (_dir, state) = app_with_gauge_series();
     // sem_gauge{job="a"} is 1, 9, 2 at 2026-01-01T00:00:00..02Z; evaluate at :02.
