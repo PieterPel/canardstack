@@ -52,11 +52,12 @@ class Target:
     headers: Dict[str, str]
     lbl: str                   # service label as written inside expressions
     lbl_plain: str             # the same label as a bare name (for metadata APIs)
+    counter_suffix: str = ""   # canardstack names monotonic sums with Prometheus' `_total`
 
 
 def canardstack(name: str, port: int) -> Target:
     base = f"http://localhost:{port}"
-    return Target(name, name, base, base, base, BEARER, "job", "job")
+    return Target(name, name, base, base, base, BEARER, "job", "job", "_total")
 
 
 TARGETS: Dict[str, Target] = {
@@ -85,7 +86,7 @@ class Wrong(Exception):
 # ---- request building ---------------------------------------------------------------
 
 def fill(text: str, tgt: Target, ctx: Ctx) -> str:
-    text = text.replace("$GAUGE", f"{ctx.w.metric_prefix}_gauge").replace("$COUNTER", f"{ctx.w.metric_prefix}_requests")
+    text = text.replace("$GAUGE", f"{ctx.w.metric_prefix}_gauge").replace("$COUNTER", f"{ctx.w.metric_prefix}_requests{tgt.counter_suffix}")
     text = text.replace("$LBLPLAIN", tgt.lbl_plain).replace("$LBL", tgt.lbl).replace("$RUN", ctx.run)
     for i in range(ctx.S):
         text = text.replace(f"$S{i}", ctx.name(i))

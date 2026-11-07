@@ -3,6 +3,7 @@
 
 use crate::db::sql::time_predicate;
 use crate::query::prom_labels::{labels_from_row, Labels, SERIES_COLUMNS};
+use crate::query::prom_names::{prom_name, Kind};
 use crate::query::QueryEngine;
 use crate::signal::StorageSignal;
 use crate::storage::Storage;
@@ -24,7 +25,11 @@ pub fn series(
     let pred = time_predicate("time_unix_nano", from, to);
     let select = |signal: StorageSignal| {
         format!(
-            "SELECT name, {SERIES_COLUMNS} FROM {{prefix}}{} WHERE {pred}",
+            "SELECT name, {SERIES_COLUMNS}, unit, {} FROM {{prefix}}{} WHERE {pred}",
+            match signal {
+                StorageSignal::MetricSum => "is_monotonic",
+                _ => "NULL::BOOLEAN",
+            },
             signal.as_str()
         )
     };
@@ -33,6 +38,7 @@ pub fn series(
         select(StorageSignal::MetricGauge),
         select(StorageSignal::MetricSum)
     );
+    let suffixes = queries.prom_name_suffixes();
     let mut sets: BTreeSet<Labels> = BTreeSet::new();
     queries.run_interactive(storage, |conn, prefix| {
         let mut stmt = conn.prepare(&sql.replace("{prefix}", prefix))?;
@@ -47,7 +53,13 @@ pub fn series(
                 col(5)?.as_deref(),
                 col(6)?.as_deref(),
             );
-            labels.insert(METRIC_NAME.to_string(), row.get::<_, String>(0)?);
+            let kind = match row.get::<_, Option<bool>>(8)? {
+                Some(true) => Kind::Counter,
+                _ => Kind::Gauge,
+            };
+            let name: String = row.get(0)?;
+            let unit: Option<String> = row.get(7)?;
+            labels.insert(METRIC_NAME.to_string(), prom_name(&name, unit.as_deref(), kind, suffixes));
             sets.insert(labels);
         }
         Ok(())
@@ -88,19 +100,26 @@ pub fn metric_metadata(
     storage: &Storage,
 ) -> ApiResult<BTreeMap<String, (String, String, String)>> {
     let sql = format!(
-        "SELECT name, 'gauge', max(coalesce(unit, '')), max(coalesce(description, '')) FROM {{prefix}}{} GROUP BY name \
+        "SELECT name, false, max(coalesce(unit, '')), max(coalesce(description, '')) FROM {{prefix}}{} GROUP BY name, unit \
          UNION ALL \
-         SELECT name, CASE WHEN bool_or(coalesce(is_monotonic, false)) THEN 'counter' ELSE 'gauge' END, max(coalesce(unit, '')), max(coalesce(description, '')) FROM {{prefix}}{} GROUP BY name \
+         SELECT name, bool_or(coalesce(is_monotonic, false)), max(coalesce(unit, '')), max(coalesce(description, '')) FROM {{prefix}}{} GROUP BY name, unit \
          LIMIT {SERIES_LIMIT}",
         StorageSignal::MetricGauge.as_str(),
         StorageSignal::MetricSum.as_str()
     );
+    let suffixes = queries.prom_name_suffixes();
     let mut out = BTreeMap::new();
     queries.run_interactive(storage, |conn, prefix| {
         let mut stmt = conn.prepare(&sql.replace("{prefix}", prefix))?;
         let mut rows = stmt.query([])?;
         while let Some(row) = rows.next()? {
-            out.insert(row.get(0)?, (row.get(1)?, row.get(2)?, row.get(3)?));
+            let name: String = row.get(0)?;
+            let monotonic: bool = row.get(1)?;
+            let unit: String = row.get(2)?;
+            let kind = if monotonic { Kind::Counter } else { Kind::Gauge };
+            let shown = prom_name(&name, Some(&unit), kind, suffixes);
+            let kind_name = if monotonic { "counter" } else { "gauge" };
+            out.insert(shown, (kind_name.to_string(), unit, row.get(3)?));
         }
         Ok(())
     })?;

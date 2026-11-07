@@ -167,6 +167,11 @@ def results_dashboard(results: Dict[str, List[dict]]) -> dict:
 
 
 
+def counter_name(stack: str) -> str:
+    """canardstack names a monotonic sum with Prometheus' `_total` suffix; the others keep the stored name."""
+    return "bench_requests_total" if stack.startswith("canardstack") else "bench_requests"
+
+
 # ---- side-by-side comparison --------------------------------------------------
 
 COMPARE = [
@@ -226,14 +231,14 @@ def compare_dashboard(results: Dict[str, List[dict]]) -> dict:
     # latest values, side by side
     for n, (_, legend, uid, label, _, _) in enumerate(present):
         panels.append(stat(pid, f"Latest gauge: {legend}", uid, f'bench_gauge{{{label}="$service"}}', 8 * n, 12, 8, 4)); pid += 1
-    for n, (_, legend, uid, label, _, _) in enumerate(present):
-        panels.append(stat(pid, f"Latest counter: {legend}", uid, f'bench_requests{{{label}="$service"}}', 8 * n, 16, 8, 4)); pid += 1
+    for n, (stack_name, legend, uid, label, _, _) in enumerate(present):
+        panels.append(stat(pid, f"Latest counter: {legend}", uid, f'{counter_name(stack_name)}{{{label}="$service"}}', 8 * n, 16, 8, 4)); pid += 1
     # overlays
     panels.append(mixed_timeseries(pid, "bench_gauge, all backends overlaid (a 0-6 sawtooth)",
                                    [(legend, uid, f'bench_gauge{{{label}="$service"}}') for _, legend, uid, label, _, _ in present],
                                    0, 20, 12, 9)); pid += 1
     panels.append(mixed_timeseries(pid, "bench_requests, all backends overlaid (a counter reaching 2000)",
-                                   [(legend, uid, f'bench_requests{{{label}="$service"}}') for _, legend, uid, label, _, _ in present],
+                                   [(legend, uid, f'{counter_name(stack_name)}{{{label}="$service"}}') for stack_name, legend, uid, label, _, _ in present],
                                    12, 20, 12, 9)); pid += 1
     # logs and traces, one panel per backend
     for row_y, title, error_only in ((29, "Logs", False), (39, 'Logs containing "error"', True)):
@@ -347,14 +352,14 @@ def data_dashboard(stack: str) -> dict:
     sel = lambda name: f'{name}{{{label}="$service"}}'  # noqa: E731
     panels = [
         stat(1, "Latest gauge value", prom, sel("bench_gauge"), 0, 0, 6, 4),
-        stat(2, "Latest request counter", prom, sel("bench_requests"), 6, 0, 6, 4),
+        stat(2, "Latest request counter", prom, sel(counter_name(stack)), 6, 0, 6, 4),
         {"id": 3, "type": "text", "title": "About", "gridPos": {"x": 12, "y": 0, "w": 12, "h": 4},
          "options": {"mode": "markdown", "content":
                      "Deterministic benchmark workload (run id `demo`, see `bench/demo.py`). Pick a service "
                      f"(`svc-demo-0` to `svc-demo-4`); the trace id defaults to the last trace of `{sample_service}`. "
                      "The data is a few tens of minutes old, so keep the time range wide."}},
         timeseries(4, "bench_gauge (sawtooth, 10*service + k mod 7)", prom, sel("bench_gauge"), 0, 4, 12, 8),
-        timeseries(5, "bench_requests (monotonic sum, k + 1)", prom, sel("bench_requests"), 12, 4, 12, 8),
+        timeseries(5, "bench_requests (monotonic sum, k + 1)", prom, sel(counter_name(stack)), 12, 4, 12, 8),
         logs(6, "Logs", all_logs, 0, 12, 12, 10),
         logs(7, 'Logs containing "error" (every 10th record)', err, 12, 12, 12, 10),
         trace_panel(8, "Trace by id (root + child span)", trace[0], trace[1], 0, 22, 24, 10),

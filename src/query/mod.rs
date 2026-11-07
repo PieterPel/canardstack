@@ -3,6 +3,7 @@ pub mod logmetric;
 pub mod plan;
 pub mod prom_discovery;
 pub mod prom_labels;
+pub mod prom_names;
 pub mod promql;
 pub mod trace;
 
@@ -28,6 +29,7 @@ pub struct QueryEngine {
     interactive_timeout: Duration,
     interactive_memory_limit: String,
     execution: Option<Arc<QueryExecution>>,
+    prom_name_suffixes: bool,
 }
 
 impl QueryEngine {
@@ -38,7 +40,13 @@ impl QueryEngine {
             ),
             interactive_memory_limit: config.operator.query_interactive.memory_limit.clone(),
             execution: None,
+            prom_name_suffixes: config.operator.prometheus_name_suffixes,
         }
+    }
+
+    /// Whether Prometheus metric names carry unit and `_total` suffixes (see `prom_names`).
+    pub fn prom_name_suffixes(&self) -> bool {
+        self.prom_name_suffixes
     }
 
     pub(crate) fn with_execution(&self, execution: Arc<QueryExecution>) -> Self {

@@ -462,7 +462,7 @@ fn prometheus_discovery_reads_the_raw_metric_tables() {
     assert_eq!(labels.status(), 200, "{}", labels.json_body());
     assert_eq!(
         labels.json_body()["data"],
-        serde_json::json!(["demo.payment.transactions"])
+        serde_json::json!(["demo_payment_transactions_total"])
     );
 
     let series = http::route(
@@ -477,7 +477,7 @@ fn prometheus_discovery_reads_the_raw_metric_tables() {
     assert_eq!(
         series.json_body()["data"],
         serde_json::json!([{
-            "__name__": "demo.payment.transactions",
+            "__name__": "demo_payment_transactions_total",
             "job": "payment"
         }])
     );
@@ -674,6 +674,50 @@ fn promql_calendar_regression_and_bucket_functions() {
 }
 
 #[test]
+fn prometheus_metric_names_follow_the_otel_translation() {
+    let dir = tempdir().unwrap();
+    let mut config = Config::test(dir.path().join("canardstack.duckdb"));
+    config.operator.local_storage_dir = dir.path().join("storage");
+    let state = AppState::new_with_storage_hook_for_tests(config, |storage| {
+        storage
+            .with_conn(|conn, prefix| {
+                conn.execute_batch(&format!(
+                    "INSERT INTO {prefix}otlp_metrics_gauge (time_unix_nano, name, unit, description, double_value, \
+                      service_name, resource_attributes, metric_attributes) VALUES \
+                      (TIMESTAMP_NS '2026-01-01 00:00:00', 'http.server.duration', 's', 'request time', 0.5, 'api', '{{}}', '{{}}'); \
+                     INSERT INTO {prefix}otlp_metrics_sum (time_unix_nano, start_time_unix_nano, name, unit, description, \
+                      double_value, service_name, resource_attributes, metric_attributes, aggregation_temporality, is_monotonic) VALUES \
+                      (TIMESTAMP_NS '2026-01-01 00:00:00', TIMESTAMP_NS '2026-01-01 00:00:00', 'http.requests', '{{request}}', 'requests', 7, 'api', '{{}}', '{{}}', 2, true);"
+                ))?;
+                Ok(())
+            })
+            .unwrap();
+    })
+    .unwrap();
+    let count = |q: &str| {
+        prom_get(&state, "/api/v1/query", &[("query", q), ("time", "1767225600")])["data"]["result"]
+            .as_array()
+            .unwrap()
+            .len()
+    };
+    assert_eq!(count("http_server_duration_seconds"), 1);
+    assert_eq!(count("http_requests_total"), 1);
+    assert_eq!(count("sum(http_requests_total)"), 1);
+    // The stored names and the untranslated forms are not Prometheus names.
+    assert_eq!(count("http.server.duration"), 0);
+    assert_eq!(count("http_server_duration"), 0);
+    assert_eq!(count("http_requests"), 0);
+    assert_eq!(count(r#"{__name__=~"http_.*"}"#), 2);
+
+    let window = [("start", "1767225500"), ("end", "1767225700")];
+    let names = prom_get(&state, "/api/v1/label/__name__/values", &window);
+    assert_eq!(names["data"], serde_json::json!(["http_requests_total", "http_server_duration_seconds"]));
+    let metadata = prom_get(&state, "/api/v1/metadata", &[]);
+    assert_eq!(metadata["data"]["http_requests_total"][0]["type"], "counter");
+    assert_eq!(metadata["data"]["http_server_duration_seconds"][0]["unit"], "s");
+}
+
+#[test]
 fn loki_label_values_fall_back_to_raw_logs_when_the_summary_is_empty() {
     let (_dir, state) = app_with_log_lines();
     let body = prom_get(
@@ -834,7 +878,7 @@ fn prometheus_instant_query_falls_back_to_sum_and_returns_empty_for_no_match() {
     let body = prom_get(
         &state,
         "/api/v1/query",
-        &[("query", "max(demo.payment.transactions)")],
+        &[("query", "max(demo_payment_transactions_total)")],
     );
     assert_eq!(body["data"]["result"][0]["value"][1], "7", "{body}");
 
@@ -844,7 +888,7 @@ fn prometheus_instant_query_falls_back_to_sum_and_returns_empty_for_no_match() {
         "/api/v1/query",
         &[(
             "query",
-            r#"max(demo.payment.transactions{job="nobody"})"#,
+            r#"max(demo_payment_transactions_total{job="nobody"})"#,
         )],
     );
     assert_eq!(body["data"]["result"], serde_json::json!([]), "{body}");

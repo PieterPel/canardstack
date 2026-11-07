@@ -3,6 +3,7 @@
 use super::*;
 use crate::db::sql::{quote, time_predicate};
 use crate::query::prom_labels::{labels_from_row, INSTANCE_SQL, JOB_SQL, SERIES_COLUMNS};
+use crate::query::prom_names::{prom_name, stored_name_candidates, Kind, ESCAPED_NAME_SQL};
 use crate::signal::StorageSignal;
 use chrono::{TimeZone, Utc};
 
@@ -121,9 +122,9 @@ pub(super) fn anchored(pattern: &str) -> ApiResult<Regex> {
 
 struct Compiled {
     matchers: Vec<Matcher>,
-    /// Stored metric names the selector can match, when it names the metric by equality.
+    /// Escaped stored names that could hold the series, when the selector names the metric by
+    /// equality. It narrows the SQL; the exact check is on the translated name.
     names: Vec<String>,
-    display_name: Option<String>,
 }
 
 fn compile(vs: &VectorSelector) -> ApiResult<Compiled> {
@@ -145,17 +146,10 @@ fn compile(vs: &VectorSelector) -> ApiResult<Compiled> {
     let mut compiled = Compiled {
         matchers: Vec::new(),
         names: Vec::new(),
-        display_name: None,
     };
     for (label, op, value) in raw {
-        if label == METRIC_NAME {
-            if let MatchOp::Equal = op {
-                if compiled.names.is_empty() {
-                    compiled.names.push(value.clone());
-                    compiled.display_name = Some(value);
-                }
-                continue;
-            }
+        if label == METRIC_NAME && matches!(op, MatchOp::Equal) && compiled.names.is_empty() {
+            compiled.names = stored_name_candidates(&value);
         }
         let test = match op {
             MatchOp::Equal => Test::Eq(value),
@@ -199,7 +193,7 @@ pub(super) fn fetch(
                 .map(|n| quote(n))
                 .collect::<Vec<_>>()
                 .join(", ");
-            filters.push(format!("name IN ({names})"));
+            filters.push(format!("{ESCAPED_NAME_SQL} IN ({names})"));
         }
         for m in &compiled.matchers {
             if let Test::Eq(value) = &m.test {
@@ -217,7 +211,11 @@ pub(super) fn fetch(
         }
         let select = |signal: StorageSignal| {
             format!(
-                "SELECT name, concat_ws(chr(31), coalesce(service_name, ''), coalesce(service_namespace, ''), coalesce(service_instance_id, ''), coalesce(CAST(resource_attributes AS VARCHAR), ''), coalesce(scope_name, ''), coalesce(CAST(metric_attributes AS VARCHAR), '')) AS sid, epoch_ms(time_unix_nano) AS t, coalesce(double_value, int_value::DOUBLE) AS v, {SERIES_COLUMNS} FROM {{prefix}}{} WHERE {}",
+                "SELECT name, concat_ws(chr(31), coalesce(service_name, ''), coalesce(service_namespace, ''), coalesce(service_instance_id, ''), coalesce(CAST(resource_attributes AS VARCHAR), ''), coalesce(scope_name, ''), coalesce(CAST(metric_attributes AS VARCHAR), '')) AS sid, epoch_ms(time_unix_nano) AS t, coalesce(double_value, int_value::DOUBLE) AS v, {SERIES_COLUMNS}, unit, {} FROM {{prefix}}{} WHERE {}",
+                match signal {
+                    StorageSignal::MetricSum => "is_monotonic",
+                    _ => "NULL::BOOLEAN",
+                },
                 signal.as_str(),
                 filters.join(" AND ")
             )
@@ -234,6 +232,7 @@ pub(super) fn fetch(
             compiled,
         });
     }
+    let suffixes = engine.prom_name_suffixes();
     let fetched = engine.run_interactive(storage, |conn, prefix| {
         let mut out: HashMap<String, Vec<Raw>> = HashMap::new();
         let mut total = 0usize;
@@ -254,6 +253,12 @@ pub(super) fn fetch(
                 let Some(v) = row.get::<_, Option<f64>>(3)? else {
                     continue;
                 };
+                let kind = match row.get::<_, Option<bool>>(11)? {
+                    Some(true) => Kind::Counter,
+                    _ => Kind::Gauge,
+                };
+                let unit: Option<String> = row.get(10)?;
+                let name = prom_name(&name, unit.as_deref(), kind, suffixes);
                 let entry = by_series.entry((name.clone(), sid));
                 let raw = match entry {
                     std::collections::hash_map::Entry::Occupied(e) => e.into_mut(),
@@ -267,8 +272,7 @@ pub(super) fn fetch(
                             col(4)?.as_deref(),
                             col(5)?.as_deref(),
                         );
-                        let shown = plan.compiled.display_name.clone().unwrap_or(name);
-                        labels.insert(METRIC_NAME.to_string(), shown);
+                        labels.insert(METRIC_NAME.to_string(), name);
                         e.insert(Raw {
                             labels,
                             samples: Vec::new(),

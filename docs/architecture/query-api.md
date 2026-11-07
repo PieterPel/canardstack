@@ -148,3 +148,19 @@ The remaining HTTP endpoints are operational endpoints:
 Direct DuckDB/DuckLake SQL access is available outside Canardstack through
 DuckDB CLI, MotherDuck, or SQL clients. That path is intentionally separate from
 the normal HTTP product surface.
+
+## Prometheus labels and metric names
+
+Series follow the OpenTelemetry-to-Prometheus convention, computed from the stored rows:
+
+- Labels: `job` (`service.namespace/service.name`, or the name alone), `instance`
+  (`service.instance.id`), every metric attribute with its name escaped to `[a-zA-Z0-9_]`, and
+  `otel_scope_name` / `otel_scope_version` when the scope has them. Other resource attributes are
+  not labels.
+- Names: characters outside `[a-zA-Z0-9_:]` become `_`; a known unit adds a suffix (`s` ->
+  `_seconds`, `By` -> `_bytes`, `By/s` -> `_bytes_per_second`); a gauge with unit `1` gets
+  `_ratio`; a monotonic sum gets `_total`. `CANARDSTACK_PROMETHEUS_NAME_SUFFIXES=false` keeps only
+  the escaping.
+
+Label names, label values, series and metadata are read from the raw metric tables in the requested
+window (capped), not from `metadata_summary`.

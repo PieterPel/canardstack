@@ -101,7 +101,8 @@ def _last(w: Workload) -> int:
     return w.ts(w.records - 1) // 10**9
 
 
-def _prom_queries(base: str, label: str, prefix: str, headers: Dict[str, str]) -> List[Query]:
+def _prom_queries(base: str, label: str, prefix: str, headers: Dict[str, str],
+                  counter: str = "bench_requests") -> List[Query]:
     """Latest gauge/sum value (instant at the last sample) and gauge points (range)."""
 
     def sel(name: str, i: int, w: Workload) -> str:
@@ -135,7 +136,7 @@ def _prom_queries(base: str, label: str, prefix: str, headers: Dict[str, str]) -
               lambda w, i: w.expected(i)["gauge_range_max"]),
         Query("gauge_last", "metrics", instant("bench_gauge", "max"), prom_instant,
               lambda w, i: w.expected(i)["gauge_last"]),
-        Query("sum_last", "metrics", instant("bench_requests", "max"), prom_instant,
+        Query("sum_last", "metrics", instant(counter, "max"), prom_instant,
               lambda w, i: w.expected(i)["sum_last"]),
         Query("gauge_points", "metrics", points, prom_range_points,
               lambda w, i: w.expected(i)["gauge_count"]),
@@ -180,7 +181,7 @@ def canardstack() -> Backend:
         ingest={s: (f"{ingest}/v1/{s}", otlp) for s in ("logs", "metrics", "traces")},
         ready=[f"{query}/healthz"],
         queries=_loki_queries(query, auth)
-        + _prom_queries(query, "job", "", auth)
+        + _prom_queries(query, "job", "", auth, "bench_requests_total")
         + [Query("trace_by_id", "traces", trace, tempo_spans, lambda w, i: 2)],
         compose_dir="canardstack",
         project="bench-canardstack",
@@ -203,7 +204,7 @@ def canardstack_pg() -> Backend:
         ingest={s: (f"{ingest}/v1/{s}", otlp) for s in ("logs", "metrics", "traces")},
         ready=[f"{query}/healthz"],
         queries=_loki_queries(query, auth)
-        + _prom_queries(query, "job", "", auth)
+        + _prom_queries(query, "job", "", auth, "bench_requests_total")
         + [Query("trace_by_id", "traces", trace, tempo_spans, lambda w, i: 2)],
         compose_dir="canardstack-pg",
         project="bench-canardstack-pg",
@@ -226,7 +227,7 @@ def canardstack_sqlite() -> Backend:
         ingest={s: (f"{ingest}/v1/{s}", otlp) for s in ("logs", "metrics", "traces")},
         ready=[f"{query}/healthz"],
         queries=_loki_queries(query, auth)
-        + _prom_queries(query, "job", "", auth)
+        + _prom_queries(query, "job", "", auth, "bench_requests_total")
         + [Query("trace_by_id", "traces", trace, tempo_spans, lambda w, i: 2)],
         compose_dir="canardstack-sqlite",
         project="bench-canardstack-sqlite",

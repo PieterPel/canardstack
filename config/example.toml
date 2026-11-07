@@ -37,6 +37,10 @@ memory_limit = "1GiB"
 # Object storage examples:
 # data_path = "s3://canardstack-data/prod/"
 
+[prometheus]
+# Add unit and _total suffixes to Prometheus metric names (see CANARDSTACK_PROMETHEUS_NAME_SUFFIXES).
+name_suffixes = true
+
 [query]
 concurrency = 4
 timeout_secs = 15

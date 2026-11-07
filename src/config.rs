@@ -62,6 +62,9 @@ pub struct OperatorConfig {
     pub query_interactive: QueryLimits,
     pub query_admission_wait: Duration,
     pub cheap_query_admission_capacity: usize,
+    /// Add unit and `_total` suffixes to Prometheus metric names, as Prometheus' OTLP receiver
+    /// does by default. Off keeps only the character escaping (Mimir's default).
+    pub prometheus_name_suffixes: bool,
     pub max_concurrent_connections: usize,
     pub socket_read_timeout: Duration,
     pub socket_write_timeout: Duration,
@@ -209,6 +212,9 @@ impl OperatorConfig {
             )?
             .or(file.usize(&["admission", "cheap_query_capacity"])?)
             .unwrap_or(1),
+            prometheus_name_suffixes: env_bool("CANARDSTACK_PROMETHEUS_NAME_SUFFIXES")?
+                .or(file.bool(&["prometheus", "name_suffixes"])?)
+                .unwrap_or(true),
             max_concurrent_connections: env_usize("CANARDSTACK_MAX_CONNECTIONS")?
                 .or(file.usize(&["server", "max_connections"])?)
                 .unwrap_or(1024),
@@ -254,6 +260,7 @@ impl OperatorConfig {
             },
             query_admission_wait: Duration::from_secs(1),
             cheap_query_admission_capacity: 1,
+            prometheus_name_suffixes: true,
             max_concurrent_connections: 64,
             socket_read_timeout: Duration::from_secs(5),
             socket_write_timeout: Duration::from_secs(5),
@@ -548,6 +555,7 @@ mod tests {
         "CANARDSTACK_QUERY_ADMISSION_WAIT_MS",
         "CANARDSTACK_QUERY_ADMISSION_WAIT_SECS",
         "CANARDSTACK_CHEAP_QUERY_ADMISSION_CAPACITY",
+        "CANARDSTACK_PROMETHEUS_NAME_SUFFIXES",
         "CANARDSTACK_MAX_CONNECTIONS",
         "CANARDSTACK_SOCKET_READ_TIMEOUT_SECS",
         "CANARDSTACK_SOCKET_WRITE_TIMEOUT_SECS",

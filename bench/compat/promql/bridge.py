@@ -62,7 +62,9 @@ def to_otlp(text: str, job: str) -> dict | None:
     """One scrape (OpenMetrics text) as an OTLP/JSON metrics export request."""
     by_instance: dict[str, dict[str, dict]] = {}
     for family in text_string_to_metric_families(expand_timestamps(text)):
-        monotonic = family.type == "counter" or family.type in ("histogram", "summary")
+        # Only counters are sums. Histogram and summary components (`_bucket`, `_count`, `_sum`)
+        # have no OTLP counterpart here, so they are stored as gauges and keep their names.
+        monotonic = family.type == "counter"
         for sample in family.samples:
             if sample.timestamp is None:
                 continue
@@ -72,7 +74,9 @@ def to_otlp(text: str, job: str) -> dict | None:
             point = {"timeUnixNano": ts, "startTimeUnixNano": ts, "asDouble": float(sample.value),
                      "attributes": [attr(k, v) for k, v in sorted(labels.items())]}
             metric = by_instance.setdefault(instance, {}).setdefault(
-                sample.name, {"name": sample.name, "monotonic": monotonic, "points": []})
+                sample.name,
+                {"name": sample.name, "monotonic": monotonic and sample.name.endswith("_total"), "points": []},
+            )
             metric["points"].append(point)
     if not by_instance:
         return None

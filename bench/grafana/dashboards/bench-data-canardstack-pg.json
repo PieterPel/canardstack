@@ -82,7 +82,7 @@
             "type": "prometheus",
             "uid": "canardstack-pg-prometheus"
           },
-          "expr": "bench_requests{job=\"$service\"}",
+          "expr": "bench_requests_total{job=\"$service\"}",
           "range": true,
           "instant": false,
           "legendFormat": "{{__name__}}",
@@ -186,7 +186,7 @@
             "type": "prometheus",
             "uid": "canardstack-pg-prometheus"
           },
-          "expr": "bench_requests{job=\"$service\"}",
+          "expr": "bench_requests_total{job=\"$service\"}",
           "range": true,
           "instant": false,
           "legendFormat": "{{__name__}}",
