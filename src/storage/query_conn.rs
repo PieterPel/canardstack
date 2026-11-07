@@ -1,4 +1,4 @@
-use super::ducklake::{configure_base_connection, quote_ident};
+use super::ducklake::quote_ident;
 use super::{QueryTimeoutError, Storage};
 use crate::db::sql::escape_value;
 use crate::LockExt;
@@ -133,10 +133,16 @@ impl Storage {
             Some(execution) => timeout.min(execution.remaining()?),
             None => timeout,
         };
-        conn.execute_batch(&format!(
-            "SET memory_limit = '{}';",
-            escape_value(memory_limit)
-        ))?;
+        {
+            let mut applied = self.applied_memory_limit.lock_or_poisoned();
+            if applied.as_deref() != Some(memory_limit) {
+                conn.execute_batch(&format!(
+                    "SET memory_limit = '{}';",
+                    escape_value(memory_limit)
+                ))?;
+                *applied = Some(memory_limit.to_string());
+            }
+        }
 
         let state = Arc::new((Mutex::new(false), Condvar::new()));
         let timer_state = state.clone();
@@ -186,14 +192,10 @@ impl Storage {
     }
 
     fn open_scoped_query_connection(&self) -> Result<Connection> {
-        // Attached schemas + extensions are inherited; only per-conn PRAGMAs
-        // are reapplied here.
-        let cloned = {
-            let parent = self.reader.lock_or_poisoned();
-            parent.try_clone().context("clone DuckDB connection")?
-        };
-        configure_base_connection(&cloned)?;
-        Ok(cloned)
+        // Attached schemas, extensions and the database-wide settings from
+        // `configure_base_connection` are inherited; do not SET them again here.
+        let parent = self.reader.lock_or_poisoned();
+        parent.try_clone().context("clone DuckDB connection")
     }
 }
 

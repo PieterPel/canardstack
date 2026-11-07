@@ -75,6 +75,9 @@ pub struct Storage {
     postgres_catalog_configured: bool,
     local_storage_dir: PathBuf,
     last_error: Mutex<Option<String>>,
+    /// The `memory_limit` last applied. It is a database-wide setting, so a query only issues a
+    /// `SET` when its limit differs, instead of writing shared config on every query.
+    applied_memory_limit: Mutex<Option<String>>,
     /// Cache-invalidation token for discovery metadata. In query-only mode this
     /// process does not maintain `metadata_summary`, so the token is stable for
     /// the lifetime of the process.
@@ -133,6 +136,7 @@ impl Storage {
             postgres_catalog_configured: config.operator.postgres_dsn.is_some(),
             local_storage_dir: config.operator.local_storage_dir.clone(),
             last_error: Mutex::new(None),
+            applied_memory_limit: Mutex::new(None),
             metadata_generation: AtomicU64::new(0),
         })
     }

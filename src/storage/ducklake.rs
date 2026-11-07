@@ -313,6 +313,10 @@ pub(super) fn configure_extension_directory(
     Ok(())
 }
 
+/// Database-wide settings, applied once before any query connection exists. DuckDB keeps
+/// `disabled_optimizers`, `preserve_insertion_order` and `threads` in the shared database config, and
+/// every cloned connection inherits them. Re-issuing a `SET` per query races with other queries'
+/// optimizers reading the same config, which crashes the process under concurrent load.
 pub(super) fn configure_base_connection(conn: &Connection) -> Result<()> {
     // late_materialization rewrites ORDER BY ... LIMIT into two table scans, and
     // each DuckLake scan costs extra catalog round trips (5 more per query against
@@ -324,7 +328,7 @@ pub(super) fn configure_base_connection(conn: &Connection) -> Result<()> {
     // A DuckDB with the ICU extension (every prebuilt libduckdb) converts TIMESTAMPTZ through the
     // host's local zone; pin UTC so results do not depend on where the server runs. A build
     // without ICU has no such setting and is already UTC, so a failure here is expected.
-    let _ = conn.execute_batch("SET TimeZone='UTC';");
+    let _ = conn.execute_batch("SET GLOBAL TimeZone='UTC';");
     Ok(())
 }
 
