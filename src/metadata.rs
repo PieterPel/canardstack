@@ -14,7 +14,7 @@
 //! it from the latest summary rows.
 
 use crate::db::sql::{quote as sql_quote, time_predicate};
-use crate::query::QueryEngine;
+use crate::query::{prom_discovery, QueryEngine};
 use crate::semantic_labels::{self, LabelScope};
 use crate::signal::StorageSignal;
 use crate::storage::Storage;
@@ -49,6 +49,20 @@ impl Metadata {
         self.cache.lock_or_poisoned().entries.len()
     }
 
+    pub fn prometheus_label_names(
+        &self,
+        queries: &QueryEngine,
+        storage: &Storage,
+        from: DateTime<Utc>,
+        to: DateTime<Utc>,
+    ) -> ApiResult<Vec<String>> {
+        let key = CacheKey::window(Api::Prometheus, Discovery::LabelName, "", from, to);
+        let value = self.cached(storage, key, || {
+            prom_discovery::label_names(queries, storage, from, to).map(|names| json!(names))
+        })?;
+        Ok(string_array(value))
+    }
+
     pub fn prometheus_label_values(
         &self,
         queries: &QueryEngine,
@@ -57,38 +71,9 @@ impl Metadata {
         from: DateTime<Utc>,
         to: DateTime<Utc>,
     ) -> ApiResult<Vec<String>> {
-        let metadata_name = if name == "__name__" {
-            "__name__"
-        } else if let Some(canonical) =
-            semantic_labels::canonical_for_alias(LabelScope::Metrics, name)
-        {
-            canonical
-        } else {
-            return Ok(Vec::new());
-        };
-        let key = CacheKey::window(
-            Api::Prometheus,
-            Discovery::LabelValue,
-            metadata_name,
-            from,
-            to,
-        );
+        let key = CacheKey::window(Api::Prometheus, Discovery::LabelValue, name, from, to);
         let value = self.cached(storage, key, || {
-            let values = label_values(
-                queries,
-                storage,
-                &[StorageSignal::MetricGauge, StorageSignal::MetricSum],
-                "label_value",
-                metadata_name,
-                from,
-                to,
-            )?;
-            if values.is_empty() {
-                prometheus_raw_label_values(queries, storage, metadata_name, from, to)
-                    .map(|values| json!(values))
-            } else {
-                Ok(json!(values))
-            }
+            prom_discovery::label_values(queries, storage, name, from, to).map(|v| json!(v))
         })?;
         Ok(string_array(value))
     }
@@ -102,48 +87,7 @@ impl Metadata {
     ) -> ApiResult<Value> {
         let key = CacheKey::window(Api::Prometheus, Discovery::Series, "", from, to);
         self.cached(storage, key, || {
-            let mut out = Vec::new();
-            queries.run_interactive(storage, |conn, prefix| {
-                let metric_signals =
-                    signal_in_list(&[StorageSignal::MetricGauge, StorageSignal::MetricSum]);
-                let sql = format!(
-                    "\
-                    SELECT name, service_name, deployment_environment, sum(row_count) AS rows \
-                    FROM {prefix}metadata_summary \
-                    WHERE kind = 'series' \
-                      AND signal IN ({metric_signals}) \
-                      AND {} \
-                    GROUP BY 1,2,3 \
-                    ORDER BY rows DESC, name, service_name, deployment_environment \
-                    LIMIT {DISCOVERY_LIMIT}",
-                    metadata_time_predicate(from, to)
-                );
-                let mut stmt = conn.prepare(&sql)?;
-                let rows = stmt.query_map([], |row| {
-                    let mut labels = Map::new();
-                    labels.insert("__name__".to_string(), json!(row.get::<_, String>(0)?));
-                    insert_opt(
-                        &mut labels,
-                        "service_name",
-                        row.get::<_, Option<String>>(1)?,
-                    );
-                    insert_opt(
-                        &mut labels,
-                        "deployment_environment",
-                        row.get::<_, Option<String>>(2)?,
-                    );
-                    Ok(Value::Object(labels))
-                })?;
-                for row in rows {
-                    out.push(row?);
-                }
-                Ok(())
-            })?;
-            if out.is_empty() {
-                prometheus_raw_series(queries, storage, from, to)
-            } else {
-                Ok(json!(out))
-            }
+            prom_discovery::series(queries, storage, from, to).map(|sets| json!(sets))
         })
     }
 
@@ -155,42 +99,9 @@ impl Metadata {
         let key = CacheKey::static_key(Api::Prometheus, Discovery::MetricMetadata, "");
         self.cached(storage, key, || {
             let mut metadata = Map::new();
-            queries.run_interactive(storage, |conn, prefix| {
-                let metric_signals =
-                    signal_in_list(&[StorageSignal::MetricGauge, StorageSignal::MetricSum]);
-                let sql = format!(
-                    "\
-                    SELECT name, metric_type, \
-                           max(coalesce(metric_unit, '')) AS unit, \
-                           max(coalesce(metric_description, '')) AS help, \
-                           max(last_seen) AS last_seen \
-                    FROM {prefix}metadata_summary \
-                    WHERE kind = 'metric_metadata' \
-                      AND signal IN ({metric_signals}) \
-                    GROUP BY 1,2 \
-                    ORDER BY last_seen DESC, name, metric_type \
-                    LIMIT {DISCOVERY_LIMIT}"
-                );
-                let mut stmt = conn.prepare(&sql)?;
-                let rows = stmt.query_map([], |row| {
-                    Ok((
-                        row.get::<_, String>(0)?,
-                        row.get::<_, String>(1)?,
-                        row.get::<_, String>(2)?,
-                        row.get::<_, String>(3)?,
-                    ))
-                })?;
-                for row in rows {
-                    let (name, metric_type, unit, help) = row?;
-                    metadata
-                        .entry(name)
-                        .or_insert_with(|| json!([]))
-                        .as_array_mut()
-                        .expect("metadata entry should be an array")
-                        .push(json!({"type": metric_type, "unit": unit, "help": help}));
-                }
-                Ok(())
-            })?;
+            for (name, (kind, unit, help)) in prom_discovery::metric_metadata(queries, storage)? {
+                metadata.insert(name, json!([{"type": kind, "unit": unit, "help": help}]));
+            }
             Ok(Value::Object(metadata))
         })
     }
@@ -328,6 +239,7 @@ enum Api {
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 enum Discovery {
+    LabelName,
     LabelValue,
     Series,
     MetricMetadata,
@@ -521,105 +433,7 @@ fn loki_raw_label_values(
     Ok(out)
 }
 
-fn prometheus_raw_label_values(
-    queries: &QueryEngine,
-    storage: &Storage,
-    metadata_name: &str,
-    from: DateTime<Utc>,
-    to: DateTime<Utc>,
-) -> ApiResult<Vec<String>> {
-    let label_expr = if metadata_name == "__name__" {
-        "name".to_string()
-    } else if let Some(expr) = semantic_labels::label_expr(LabelScope::Metrics, metadata_name) {
-        expr
-    } else {
-        return Ok(Vec::new());
-    };
-    let sql = format!(
-        "\
-        WITH raw_values AS ( \
-            SELECT cast({label_expr} AS VARCHAR) AS value, time_unix_nano \
-            FROM {{prefix}}{} \
-            UNION ALL \
-            SELECT cast({label_expr} AS VARCHAR) AS value, time_unix_nano \
-            FROM {{prefix}}{} \
-        ) \
-        SELECT DISTINCT value \
-        FROM raw_values \
-        WHERE value IS NOT NULL \
-          AND value <> '' \
-          AND {} \
-        ORDER BY value \
-        LIMIT {DISCOVERY_LIMIT}",
-        StorageSignal::MetricGauge.as_str(),
-        StorageSignal::MetricSum.as_str(),
-        raw_time_predicate(from, to)
-    );
-    let mut out = Vec::new();
-    queries.run_interactive(storage, |conn, prefix| {
-        let mut stmt = conn.prepare(&sql.replace("{prefix}", prefix))?;
-        let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
-        for row in rows {
-            out.push(row?);
-        }
-        Ok(())
-    })?;
-    Ok(out)
-}
 
-fn prometheus_raw_series(
-    queries: &QueryEngine,
-    storage: &Storage,
-    from: DateTime<Utc>,
-    to: DateTime<Utc>,
-) -> ApiResult<Value> {
-    let deployment_environment =
-        semantic_labels::label_expr(LabelScope::Metrics, "deployment_environment")
-            .unwrap_or_else(|| "NULL".to_string());
-    let sql = format!(
-        "\
-        WITH raw_series AS ( \
-            SELECT name, service_name, {deployment_environment} AS deployment_environment, time_unix_nano \
-            FROM {{prefix}}{} \
-            UNION ALL \
-            SELECT name, service_name, {deployment_environment} AS deployment_environment, time_unix_nano \
-            FROM {{prefix}}{} \
-        ) \
-        SELECT name, service_name, deployment_environment, count(*) AS rows \
-        FROM raw_series \
-        WHERE {} \
-        GROUP BY 1,2,3 \
-        ORDER BY rows DESC, name, service_name, deployment_environment \
-        LIMIT {DISCOVERY_LIMIT}",
-        StorageSignal::MetricGauge.as_str(),
-        StorageSignal::MetricSum.as_str(),
-        raw_time_predicate(from, to)
-    );
-    let mut out = Vec::new();
-    queries.run_interactive(storage, |conn, prefix| {
-        let mut stmt = conn.prepare(&sql.replace("{prefix}", prefix))?;
-        let rows = stmt.query_map([], |row| {
-            let mut labels = Map::new();
-            labels.insert("__name__".to_string(), json!(row.get::<_, String>(0)?));
-            insert_opt(
-                &mut labels,
-                "service_name",
-                row.get::<_, Option<String>>(1)?,
-            );
-            insert_opt(
-                &mut labels,
-                "deployment_environment",
-                row.get::<_, Option<String>>(2)?,
-            );
-            Ok(Value::Object(labels))
-        })?;
-        for row in rows {
-            out.push(row?);
-        }
-        Ok(())
-    })?;
-    Ok(json!(out))
-}
 
 fn metadata_time_predicate(from: DateTime<Utc>, to: DateTime<Utc>) -> String {
     format!(

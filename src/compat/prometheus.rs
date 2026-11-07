@@ -2,7 +2,6 @@ use super::params::{
     optional_range, optional_time, parse_step, required_param, required_time, validate_range,
 };
 use crate::query::promql::{self, Grid, Value as PromValue};
-use crate::semantic_labels;
 use crate::validation::{ApiError, ApiResult};
 use crate::AppState;
 use chrono::Utc;
@@ -97,11 +96,12 @@ pub(super) fn ts_json(ms: i64) -> Value {
     }
 }
 
-pub fn prometheus_labels(_state: &AppState, params: &HashMap<String, String>) -> ApiResult<Value> {
-    let _ = optional_range(params, METRIC_RANGE_SECS)?;
-    Ok(prom_success(json!(
-        semantic_labels::prometheus_label_names()
-    )))
+pub fn prometheus_labels(state: &AppState, params: &HashMap<String, String>) -> ApiResult<Value> {
+    let (from, to) = optional_range(params, METRIC_RANGE_SECS)?;
+    let names = state
+        .metadata
+        .prometheus_label_names(&state.queries, &state.storage, from, to)?;
+    Ok(prom_success(json!(names)))
 }
 
 pub fn prometheus_label_values(

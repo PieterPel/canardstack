@@ -447,7 +447,7 @@ fn buildinfo_query_route_still_works() {
 }
 
 #[test]
-fn prometheus_metric_discovery_falls_back_to_raw_metrics() {
+fn prometheus_discovery_reads_the_raw_metric_tables() {
     let (_dir, state) = app_with_metric_without_summary();
     let params = HashMap::new();
 
@@ -478,8 +478,7 @@ fn prometheus_metric_discovery_falls_back_to_raw_metrics() {
         series.json_body()["data"],
         serde_json::json!([{
             "__name__": "demo.payment.transactions",
-            "deployment_environment": "demo",
-            "service_name": "payment"
+            "job": "payment"
         }])
     );
 }
@@ -625,6 +624,14 @@ fn prometheus_metric_attributes_are_labels() {
     assert_eq!(sums, HashMap::from([("free".into(), "60".into()), ("used".into(), "30".into())]));
     assert_eq!(query(r#"mem{instance="h2:80"}"#).as_array().unwrap().len(), 1);
     assert_eq!(query(r#"mem{type=~"fr.*", http_route!=""}"#).as_array().unwrap().len(), 1);
+
+    let window = [("start", "1767225500"), ("end", "1767225700")];
+    let names = prom_get(&state, "/api/v1/labels", &window);
+    assert_eq!(names["data"], serde_json::json!(["__name__", "http_route", "instance", "job", "type"]));
+    let types = prom_get(&state, "/api/v1/label/type/values", &window);
+    assert_eq!(types["data"], serde_json::json!(["free", "used"]));
+    let routes = prom_get(&state, "/api/v1/label/http_route/values", &window);
+    assert_eq!(routes["data"], serde_json::json!(["/a"]));
 }
 
 #[test]
