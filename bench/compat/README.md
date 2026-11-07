@@ -66,18 +66,17 @@ pass rate. The goal is to keep `canardstack-pg`'s baseline at every case in the 
 
 **PromQL is covered by the upstream suite.** The 18 PromQL cases here are a smoke test and the
 checks specific to canardstack (labels, discovery endpoints, resource caps). Breadth comes from
-[`promql/`](promql/README.md), which runs prometheus/compliance (546 of 548 queries pass without
-native histograms). LogQL and TraceQL have no upstream suite, so [`logql/`](logql/README.md)
+[`promql/`](promql/README.md), which runs prometheus/compliance (all 661 queries pass). LogQL and TraceQL have no upstream suite, so [`logql/`](logql/README.md)
 (2,406 of 2,408 queries) and [`traceql/`](traceql/README.md) (256 of 266 search queries, 116 of 119 metrics queries) run the same queries
 against a real Loki and Tempo and compare the answers.
 
 ## What the suite does not cover
 
-Native (exponential) histograms and summaries, which the storage layer does not hold; the `@`
+Summaries, which the storage layer does not hold; native histograms with custom buckets; the `@`
 modifier, recording and alerting rules (canardstack rejects `@` with an explicit
 `unsupported_promql` error rather than a wrong answer); TraceQL `select()` attributes in search
-results; and the exemplar, log-volume and tail endpoints. Explicit-bucket histograms are checked
-against Prometheus by [`histogram/`](histogram/README.md).
+results; and the exemplar, log-volume and tail endpoints. Explicit-bucket and exponential histograms
+are checked against Prometheus by [`histogram/`](histogram/README.md) and by the upstream suite.
 
 ## Adding a case
 

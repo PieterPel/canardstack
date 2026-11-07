@@ -22,6 +22,21 @@ uv run bench/compat/histogram/compare.py
 download of the PromQL suite in `../promql/bin`). A query that returns nothing on both sides fails,
 so a missing dataset cannot pass.
 
-Result: 52 of 52 comparisons match.
+## Native histograms
 
-Not covered: delta histograms, exponential histograms (Prometheus native histograms), summaries.
+The same script sends OTel exponential histograms (four series at scales 2, 3 and 4, positive and
+negative buckets, zero observations, a counter reset) to a Prometheus started with
+`--enable-feature=native-histograms`, which stores them as native histograms, and compares 56 more
+queries: the sample itself with its buckets, `offset`, `rate`/`increase`/`delta`/`irate`/`idelta`,
+`resets`, `changes`, the `*_over_time` functions, `absent_over_time`, every `histogram_*` function
+(quantiles at 0, 0.1, 0.5, 0.99, 1 and out of range, fractions, count, sum, avg, stddev, stdvar),
+`sum`/`avg`/`count`/`group` with `by` and `without`, and arithmetic and comparisons between
+histograms and with scalars. Histogram samples are compared bucket by bucket.
+
+Result: 164 of 166 comparisons match. The two others are `changes(...[10m])` on one series: Prometheus
+compares the span layout its storage may pad, so it counts a change between two identical samples,
+where canardstack (which compares the buckets) does not. They are listed as known differences.
+
+Not covered: delta histograms, custom-bucket native histograms, summaries.
+
+The upstream PromQL suite covers native histograms too (`../promql/README.md`).

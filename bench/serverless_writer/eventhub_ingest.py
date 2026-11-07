@@ -26,6 +26,7 @@ READERS = {
         ("otlp_metrics_gauge", "read_otlp_metrics_gauge"),
         ("otlp_metrics_sum", "read_otlp_metrics_sum"),
         ("otlp_metrics_histogram", "read_otlp_metrics_histogram"),
+        ("otlp_metrics_exp_histogram", "read_otlp_metrics_exp_histogram"),
     ],
 }
 

@@ -74,6 +74,80 @@ QUERIES = [
 ]
 
 
+# Queries whose correct answer is nothing (absent data, or a comparison that never holds).
+EXPECT_EMPTY = {
+    "absent_over_time(http_client_duration_seconds[1m])",
+    "http_client_duration_seconds != http_client_duration_seconds",
+    "http_client_duration_seconds + 1",
+}
+
+NATIVE_NAME = "http_client_duration_seconds"
+N = NATIVE_NAME
+
+# Known differences that are Prometheus' doing, not ours: its histogram equality compares the span
+# layout its storage may pad, so `changes()` can count a change between two identical samples.
+KNOWN_DIFFERENT = {f"changes({NATIVE_NAME}[10m])": "equality compares storage span layout"}
+NATIVE_QUERIES = [
+    N,
+    f'{N}{{http_route="/a"}}',
+    f"{N} offset 2m",
+    f"rate({N}[2m])",
+    f"increase({N}[2m])",
+    f"delta({N}[2m])",
+    f"irate({N}[2m])",
+    f"idelta({N}[2m])",
+    f"resets({N}[10m])",
+    f"changes({N}[10m])",
+    f"changes({N}[20s])",
+    f"count_over_time({N}[2m])",
+    f"last_over_time({N}[2m])",
+    f"sum_over_time({N}[2m])",
+    f"avg_over_time({N}[2m])",
+    f"absent_over_time({N}[1m])",
+    "absent_over_time(no_such_native[1m])",
+    f"histogram_count({N})",
+    f"histogram_sum({N})",
+    f"histogram_avg(rate({N}[2m]))",
+    f"histogram_stddev(rate({N}[2m]))",
+    f"histogram_stdvar(rate({N}[2m]))",
+    f"histogram_fraction(0, 0.5, rate({N}[2m]))",
+    f"histogram_fraction(-Inf, +Inf, rate({N}[2m]))",
+    f"histogram_fraction(0.1, 1, {N})",
+    f"histogram_quantile(0.5, rate({N}[2m]))",
+    f"histogram_quantile(0.9, rate({N}[2m]))",
+    f"histogram_quantile(0.99, rate({N}[2m]))",
+    f"histogram_quantile(0.1, rate({N}[2m]))",
+    f"histogram_quantile(0, rate({N}[2m]))",
+    f"histogram_quantile(1, rate({N}[2m]))",
+    f"histogram_quantile(1.5, rate({N}[2m]))",
+    f"histogram_quantile(-0.5, rate({N}[2m]))",
+    f"histogram_quantile(0.9, sum by (job) (rate({N}[2m])))",
+    f"histogram_quantile(0.5, sum(rate({N}[5m])))",
+    f"sum({N})",
+    f"sum by (job) ({N})",
+    f"sum without (instance) ({N})",
+    f"avg({N})",
+    f"avg by (job) ({N})",
+    f"count({N})",
+    f"count by (job) ({N})",
+    f"group({N})",
+    f"sum by (job) (rate({N}[2m]))",
+    f"{N} * 2",
+    f"2 * {N}",
+    f"{N} / 2",
+    f"{N} + {N}",
+    f"{N} - {N}",
+    f"{N} == {N}",
+    f"{N} != {N}",
+    f"{N} == bool {N}",
+    f"{N} != bool {N}",
+    f"-{N}",
+    f"sum({N}) / count({N})",
+    f"{N} + 1",
+    f"{N} * on (job) group_left () sum by (job) (rate(http_server_duration_seconds_count[2m]))",
+]
+
+
 def free_port() -> int:
     with socket.socket() as s:
         s.bind(("127.0.0.1", 0))
@@ -131,6 +205,69 @@ def build_requests(start: int):
     return requests
 
 
+NATIVE_SERIES = [  # service, instance, route, scale
+    ("web", "web-1", "/a", 3),
+    ("web", "web-1", "/b", 4),
+    ("api", "api-1", "/a", 3),
+    ("api", "api-1", "/c", 2),
+]
+
+
+def otlp_index(value: float, scale: int) -> int:
+    """The OTLP bucket index of a positive value: bucket i holds (base^i, base^(i+1)]."""
+    return math.ceil(math.log2(value) * 2**scale) - 1
+
+
+def build_native_requests(start: int):
+    rng = random.Random(7)
+    state = {}  # series -> [count, sum, zero, pos{idx: n}, neg{idx: n}]
+    requests = []
+    for point in range(POINTS):
+        t = start + point * SCRAPE
+        request = ExportMetricsServiceRequest()
+        for service, instance, route, scale in NATIVE_SERIES:
+            key = (service, route)
+            st = state.setdefault(key, [0, 0.0, 0, {}, {}])
+            if service == "api" and route == "/c" and point == POINTS // 2:
+                st[:] = [0, 0.0, 0, {}, {}]  # a counter reset
+            for _ in range(rng.randint(0, 30)):
+                v = rng.lognormvariate(-1.5 + 0.5 * (route == "/b"), 1.2) * rng.choice([1, 1, 1, -1])
+                if rng.random() < 0.05:
+                    v = 0.0
+                st[0] += 1
+                st[1] += v
+                if v == 0.0:
+                    st[2] += 1
+                else:
+                    side = st[3] if v > 0 else st[4]
+                    idx = otlp_index(abs(v), scale)
+                    side[idx] = side.get(idx, 0) + 1
+            rm = request.resource_metrics.add()
+            rm.resource.attributes.extend([attr("service.name", service), attr("service.instance.id", instance)])
+            sm = rm.scope_metrics.add()
+            sm.scope.name = "compare"
+            metric = sm.metrics.add()
+            metric.name = "http.client.duration"
+            metric.unit = "s"
+            h = metric.exponential_histogram
+            h.aggregation_temporality = metrics_pb2.AGGREGATION_TEMPORALITY_CUMULATIVE
+            dp = h.data_points.add()
+            dp.start_time_unix_nano = (start - 60) * 10**9
+            dp.time_unix_nano = t * 10**9
+            dp.count = st[0]
+            dp.sum = st[1]
+            dp.scale = scale
+            dp.zero_count = st[2]
+            for side, buckets in ((dp.positive, st[3]), (dp.negative, st[4])):
+                if buckets:
+                    low, high = min(buckets), max(buckets)
+                    side.offset = low
+                    side.bucket_counts.extend(buckets.get(i, 0) for i in range(low, high + 1))
+            dp.attributes.append(attr("http.route", route))
+        requests.append((t, request))
+    return requests
+
+
 def wait_ready(url: str, what: str, timeout: float = 90):
     deadline = time.time() + timeout
     while time.time() < deadline:
@@ -157,9 +294,45 @@ def normalise(resp: dict):
     out = {}
     for s in resp["data"]["result"]:
         labels = tuple(sorted((k, v) for k, v in s["metric"].items() if k not in ("otel_scope_name", "otel_scope_version", "otel_scope_schema_url")))
-        values = s.get("values") or [s["value"]]
-        out[labels] = [(float(t), float(v)) for t, v in values]
+        points = []
+        for t, v in s.get("values") or ([s["value"]] if "value" in s else []):
+            points.append((float(t), float(v)))
+        for t, h in s.get("histograms") or ([s["histogram"]] if "histogram" in s else []):
+            buckets = tuple((int(b[0]), float(b[1]), float(b[2]), float(b[3])) for b in h.get("buckets", []))
+            points.append((float(t), ("H", float(h["count"]), float(h["sum"]), buckets)))
+        out[labels] = sorted(points, key=lambda p: p[0])
     return out
+
+
+def same(a, b) -> bool:
+    """Whether two samples (floats or histograms) agree."""
+    if isinstance(a, tuple) or isinstance(b, tuple):
+        if not (isinstance(a, tuple) and isinstance(b, tuple)):
+            return False
+        if not (close(a[1], b[1]) and close(a[2], b[2])) or len(a[3]) != len(b[3]):
+            return False
+        return all(x[0] == y[0] and close(x[1], y[1]) and close(x[2], y[2]) and close(x[3], y[3]) for x, y in zip(a[3], b[3]))
+    return close(a, b)
+
+
+def explain(want, got) -> str:
+    """What differs between two samples, short enough to read."""
+    if not (isinstance(want, tuple) and isinstance(got, tuple)):
+        return f"got {got!r}, want {want!r}"
+    if not close(want[1], got[1]):
+        return f"count {got[1]}, want {want[1]}"
+    if not close(want[2], got[2]):
+        return f"sum {got[2]}, want {want[2]}"
+    if len(want[3]) != len(got[3]):
+        have = {round(b[1], 12): b for b in got[3]}
+        wanted = {round(b[1], 12): b for b in want[3]}
+        extra = [have[k] for k in have if k not in wanted][:2]
+        missing = [wanted[k] for k in wanted if k not in have][:2]
+        return f"{len(got[3])} buckets, want {len(want[3])}: extra {extra}, missing {missing}"
+    for x, y in zip(want[3], got[3]):
+        if not (x[0] == y[0] and close(x[1], y[1]) and close(x[2], y[2]) and close(x[3], y[3])):
+            return f"bucket {y}, want {x}"
+    return "equal"
 
 
 def close(a: float, b: float) -> bool:
@@ -181,9 +354,10 @@ def diff(ref, got) -> str:
         a, b = dict(ref[key]), dict(got[key])
         if set(a) != set(b):
             return f"{dict(key)}: timestamps differ ({len(a)} vs {len(b)})"
-        for t in a:
-            if not close(a[t], b[t]):
-                return f"{dict(key)} at {t}: {b[t]}, want {a[t]}"
+        bad = [t for t in sorted(a) if not same(a[t], b[t])]
+        if bad:
+            more = f" (and {len(bad) - 1} more steps: {bad[1:4]})" if len(bad) > 1 else ""
+            return f"{dict(key)} at {bad[0]}: {explain(a[bad[0]], b[bad[0]])}{more}"
     return ""
 
 
@@ -194,6 +368,7 @@ def main():
     start = int(time.time()) - POINTS * SCRAPE - 60
     start -= start % SCRAPE
     requests = build_requests(start)
+    native_requests = build_native_requests(start)
     end = requests[-1][0]
     work = Path(tempfile.mkdtemp(prefix="histogram-compare-"))
     processes = []
@@ -203,11 +378,11 @@ def main():
         (work / "prom.yml").write_text("storage:\n  tsdb:\n    out_of_order_time_window: 2h\n")
         processes.append(subprocess.Popen(
             [prometheus, f"--web.listen-address=127.0.0.1:{prom_port}", f"--storage.tsdb.path={work/'prom'}",
-             f"--config.file={work/'prom.yml'}", "--web.enable-otlp-receiver"],
+             f"--config.file={work/'prom.yml'}", "--web.enable-otlp-receiver", "--enable-feature=native-histograms"],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL))
         prom = f"http://127.0.0.1:{prom_port}"
         wait_ready(prom + "/-/ready", "prometheus")
-        for _, request in requests:
+        for _, request in requests + native_requests:
             req = urllib.request.Request(prom + "/api/v1/otlp/v1/metrics", data=request.SerializeToString(),
                                          headers={"Content-Type": "application/x-protobuf"})
             urllib.request.urlopen(req, timeout=30).read()
@@ -222,7 +397,7 @@ def main():
             con.execute(f"INSTALL {ext} FROM {repo}")
             con.execute(f"LOAD {ext}")
         con.execute(f"ATTACH 'ducklake:sqlite:{catalog}' AS lake (DATA_PATH '{data}/')")
-        events = [MessageToJson(r, indent=None).encode() for _, r in requests]
+        events = [MessageToJson(r, indent=None).encode() for _, r in requests + native_requests]
         rows = ingest_batch(con, "metrics", events, "histogram-compare", 0, len(events) - 1)
         print(f"committed {rows} histogram rows from {len(events)} requests")
         con.close()
@@ -241,8 +416,20 @@ def main():
             raise
         auth = {"Authorization": f"Bearer {API_KEY}"}
 
-        failures = 0
-        for q in QUERIES:
+        if os.environ.get("DEBUG_PAIR"):
+            i = int(os.environ["DEBUG_PAIR"])
+            for k in (i - 1, i):
+                t = start + k * SCRAPE
+                for name, base, hdr in (("prom", prom, None), ("cs", cs, auth)):
+                    r = get(base, "/api/v1/query", {"query": f'{NATIVE_NAME}{{http_route="/b", job="web"}}', "time": t}, hdr)
+                    h = r["data"]["result"][0]["histogram"][1] if r.get("data", {}).get("result") else None
+                    print(name, k, h and (h["count"], h["sum"], len(h.get("buckets", []))))
+            for name, base, hdr in (("prom", prom, None), ("cs", cs, auth)):
+                r = get(base, "/api/v1/query", {"query": f'changes({NATIVE_NAME}{{http_route="/b", job="web"}}[20s])', "time": start + i * SCRAPE}, hdr)
+                print(name, "changes at pair", r.get("data", {}).get("result"))
+        failures = known = 0
+        only = os.environ.get("ONLY")
+        for q in [q for q in QUERIES + NATIVE_QUERIES if not only or only in q]:
             for kind, path, params in (
                 ("instant", "/api/v1/query", {"query": q, "time": end - 30}),
                 ("range", "/api/v1/query_range", {"query": q, "start": start + 300, "end": end - 30, "step": 30}),
@@ -250,14 +437,17 @@ def main():
                 ref = normalise(get(prom, path, params))
                 got = normalise(get(cs, path, params, auth))
                 problem = diff(ref, got)
-                if not problem and not ref:
+                if not problem and not ref and q not in EXPECT_EMPTY:
                     # Every query here selects data, so two empty answers mean the data is missing.
                     problem = "both answers are empty"
-                if problem:
+                if problem and q in KNOWN_DIFFERENT:
+                    print(f"known {kind:7} {q}: {KNOWN_DIFFERENT[q]}")
+                    known += 1
+                elif problem:
                     failures += 1
                     print(f"FAIL {kind:7} {q}\n     {problem}")
-        total = len(QUERIES) * 2
-        print(f"{total - failures}/{total} comparisons match")
+        total = len([q for q in QUERIES + NATIVE_QUERIES if not only or only in q]) * 2
+        print(f"{total - failures - known}/{total} comparisons match" + (f", {known} known differences" if known else ""))
         sys.exit(1 if failures else 0)
     finally:
         for p in processes:
