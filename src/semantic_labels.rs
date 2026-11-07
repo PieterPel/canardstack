@@ -33,12 +33,7 @@ pub struct LabelDef {
     pub canonical: &'static str,
     pub aliases: &'static [&'static str],
     pub sources: &'static [ScopedLabelSource],
-    pub loki_stream: bool,
     pub tempo_tag: Option<&'static str>,
-    /// Scopes whose result projection is sourced from this registry. Currently
-    /// only `Logs` (its query projection is registry-derived); span and metric
-    /// projections remain explicit in their adapters.
-    pub project: &'static [LabelScope],
 }
 
 impl LabelSource {
@@ -75,89 +70,6 @@ pub fn alias_pairs(scope: LabelScope) -> Vec<(&'static str, &'static str)> {
         }
     }
     out
-}
-
-pub fn canonical_for_alias(scope: LabelScope, raw: &str) -> Option<&'static str> {
-    label_def(scope, raw)
-        .map(|label| label.canonical)
-        .or_else(|| {
-            LABELS
-                .iter()
-                .filter(|label| has_scope(label, scope))
-                .find_map(|label| label.aliases.contains(&raw).then_some(label.canonical))
-        })
-}
-
-#[cfg(test)]
-pub fn metadata_labels(scope: LabelScope) -> Vec<(&'static str, String)> {
-    LABELS
-        .iter()
-        .filter(|label| has_scope(label, scope))
-        .filter(|label| metadata_label_allowed(scope, label))
-        .filter_map(|label| {
-            let metadata_name = match scope {
-                LabelScope::Spans => label.tempo_tag?,
-                LabelScope::Logs | LabelScope::Metrics => label.canonical,
-            };
-            label_expr(scope, label.canonical).map(|expr| (metadata_name, expr))
-        })
-        .collect()
-}
-
-pub fn loki_stream_labels() -> Vec<String> {
-    LABELS
-        .iter()
-        .filter(|label| label.loki_stream && has_scope(label, LabelScope::Logs))
-        .map(|label| label.canonical.to_string())
-        .collect()
-}
-
-pub fn loki_label_names() -> Vec<String> {
-    LABELS
-        .iter()
-        .filter(|label| has_scope(label, LabelScope::Logs))
-        .filter(|label| label.loki_stream)
-        .map(|label| label.canonical.to_string())
-        .collect()
-}
-
-/// Result-projection columns sourced from the registry for a scope whose query
-/// projection is registry-derived. Returns ordered `(output_name, sql_expr)`
-/// pairs; the query adapter aliases each `expr` as `output_name` and reads the
-/// column back by name. See [`LabelDef::project`].
-pub fn projected_labels(scope: LabelScope) -> Vec<(&'static str, String)> {
-    LABELS
-        .iter()
-        .filter(|label| label.project.contains(&scope))
-        .filter_map(|label| label_expr(scope, label.canonical).map(|expr| (label.canonical, expr)))
-        .collect()
-}
-
-/// Labels whose values are effectively unbounded (per-event or per-replica
-/// identifiers). They stay selectable as filters and discoverable as label
-/// *names*, but their distinct *values* are never materialized into
-/// `metadata_summary` — enumerating them is expensive and no client value
-/// dropdown wants the result. This is the cost axis, kept orthogonal to the
-/// per-protocol surface flags (`loki_stream` / `tempo_tag`):
-/// protocol membership decides what is selectable and name-discoverable;
-/// `HIGH_CARDINALITY` independently vetoes value materialization.
-#[cfg(test)]
-const HIGH_CARDINALITY: &[&str] = &["trace_id", "span_id", "service_instance_id"];
-
-/// A label's distinct values are materialized into `metadata_summary` (and so
-/// returned by `/label/<name>/values`) when it is part of the scope's protocol
-/// surface *and* bounded enough to enumerate. See [`HIGH_CARDINALITY`].
-#[cfg(test)]
-fn metadata_label_allowed(scope: LabelScope, label: &LabelDef) -> bool {
-    if HIGH_CARDINALITY.contains(&label.canonical) {
-        return false;
-    }
-    match scope {
-        LabelScope::Logs => label.loki_stream,
-        LabelScope::Spans => label.tempo_tag.is_some(),
-        // Prometheus labels are derived from the stored series, not from this registry.
-        LabelScope::Metrics => false,
-    }
 }
 
 pub fn tempo_tag_names() -> Vec<String> {
@@ -562,8 +474,6 @@ pub const LABELS: &[LabelDef] = &[
             "service-name",
         ],
         sources: SERVICE_NAME_SOURCES,
-        project: &[LabelScope::Logs],
-        loki_stream: true,
         tempo_tag: Some("service.name"),
     },
     LabelDef {
@@ -574,8 +484,6 @@ pub const LABELS: &[LabelDef] = &[
             "service-namespace",
         ],
         sources: SERVICE_NAMESPACE_SOURCES,
-        project: &[LabelScope::Logs],
-        loki_stream: true,
         tempo_tag: Some("service.namespace"),
     },
     LabelDef {
@@ -586,8 +494,6 @@ pub const LABELS: &[LabelDef] = &[
             "service-instance-id",
         ],
         sources: SERVICE_INSTANCE_SOURCES,
-        project: &[LabelScope::Logs],
-        loki_stream: true,
         tempo_tag: Some("service.instance.id"),
     },
     LabelDef {
@@ -598,96 +504,72 @@ pub const LABELS: &[LabelDef] = &[
             "deployment-environment",
         ],
         sources: DEPLOYMENT_ENV_SOURCES,
-        project: &[LabelScope::Logs],
-        loki_stream: true,
         tempo_tag: Some("deployment.environment"),
     },
     LabelDef {
         canonical: "host_name",
         aliases: &["host.name", "resource.host.name", "host-name"],
         sources: HOST_NAME_SOURCES,
-        project: &[LabelScope::Logs],
-        loki_stream: true,
         tempo_tag: Some("host.name"),
     },
     LabelDef {
         canonical: "k8s_cluster_name",
         aliases: &["k8s.cluster.name"],
         sources: K8S_CLUSTER_SOURCES,
-        project: &[],
-        loki_stream: false,
         tempo_tag: None,
     },
     LabelDef {
         canonical: "k8s_node_name",
         aliases: &["k8s.node.name"],
         sources: K8S_NODE_SOURCES,
-        project: &[],
-        loki_stream: false,
         tempo_tag: None,
     },
     LabelDef {
         canonical: "k8s_statefulset_name",
         aliases: &["k8s.statefulset.name"],
         sources: K8S_STATEFULSET_SOURCES,
-        project: &[],
-        loki_stream: false,
         tempo_tag: None,
     },
     LabelDef {
         canonical: "k8s_deployment_name",
         aliases: &["k8s.deployment.name"],
         sources: K8S_DEPLOYMENT_SOURCES,
-        project: &[],
-        loki_stream: false,
         tempo_tag: Some("k8s.deployment.name"),
     },
     LabelDef {
         canonical: "scope_name",
         aliases: &["instrumentationScope.name", "instrumentation_scope_name"],
         sources: LOG_SCOPE_SOURCES,
-        project: &[LabelScope::Logs],
-        loki_stream: true,
         tempo_tag: None,
     },
     LabelDef {
         canonical: "severity_text",
         aliases: &["severity.text"],
         sources: LOG_SEVERITY_SOURCES,
-        project: &[LabelScope::Logs],
-        loki_stream: true,
         tempo_tag: None,
     },
     LabelDef {
         canonical: "trace_id",
         aliases: &["traceID"],
         sources: TRACE_ID_SOURCES,
-        project: &[LabelScope::Logs],
-        loki_stream: true,
         tempo_tag: Some("traceID"),
     },
     LabelDef {
         canonical: "span_id",
         aliases: &["spanID"],
         sources: SPAN_ID_SOURCES,
-        project: &[LabelScope::Logs],
-        loki_stream: true,
         tempo_tag: Some("spanID"),
     },
     LabelDef {
         canonical: "http_route",
         aliases: &["http.route", "http-route"],
         sources: HTTP_ROUTE_SOURCES,
-        project: &[LabelScope::Logs],
-        loki_stream: true,
         tempo_tag: Some("http.route"),
     },
     LabelDef {
         canonical: "http_method",
         aliases: &["http.method", "http.request.method", "http-method"],
         sources: HTTP_METHOD_SOURCES,
-        project: &[LabelScope::Logs],
-        loki_stream: true,
         tempo_tag: Some("http.method"),
     },
     LabelDef {
@@ -698,295 +580,132 @@ pub const LABELS: &[LabelDef] = &[
             "http-status-code",
         ],
         sources: HTTP_STATUS_SOURCES,
-        project: &[LabelScope::Logs],
-        loki_stream: false,
         tempo_tag: Some("http.status_code"),
     },
     LabelDef {
         canonical: "http_response_status_code",
         aliases: &["http.response.status_code"],
         sources: HTTP_RESPONSE_STATUS_METRIC_SOURCES,
-        project: &[],
-        loki_stream: false,
         tempo_tag: None,
     },
     LabelDef {
         canonical: "span_name",
         aliases: &["span.name", "span-name", "name"],
         sources: SPAN_NAME_SOURCES,
-        project: &[],
-        loki_stream: false,
         tempo_tag: Some("span.name"),
     },
     LabelDef {
         canonical: "status_code",
         aliases: &["status.code", "status"],
         sources: STATUS_CODE_SOURCES,
-        project: &[],
-        loki_stream: false,
         tempo_tag: Some("status.code"),
     },
     LabelDef {
         canonical: "job",
         aliases: &[],
         sources: JOB_SOURCES,
-        project: &[],
-        loki_stream: false,
         tempo_tag: None,
     },
     LabelDef {
         canonical: "instance",
         aliases: &[],
         sources: INSTANCE_SOURCES,
-        project: &[],
-        loki_stream: false,
         tempo_tag: None,
     },
     LabelDef {
         canonical: "state",
         aliases: &[],
         sources: METRIC_STATE_SOURCES,
-        project: &[],
-        loki_stream: false,
         tempo_tag: None,
     },
     LabelDef {
         canonical: "type",
         aliases: &[],
         sources: METRIC_TYPE_SOURCES,
-        project: &[],
-        loki_stream: false,
         tempo_tag: None,
     },
     LabelDef {
         canonical: "cpu",
         aliases: &[],
         sources: METRIC_CPU_SOURCES,
-        project: &[],
-        loki_stream: false,
         tempo_tag: None,
     },
     LabelDef {
         canonical: "exporter",
         aliases: &[],
         sources: METRIC_EXPORTER_SOURCES,
-        project: &[],
-        loki_stream: false,
         tempo_tag: None,
     },
     LabelDef {
         canonical: "receiver",
         aliases: &[],
         sources: METRIC_RECEIVER_SOURCES,
-        project: &[],
-        loki_stream: false,
         tempo_tag: None,
     },
     LabelDef {
         canonical: "processor",
         aliases: &[],
         sources: METRIC_PROCESSOR_SOURCES,
-        project: &[],
-        loki_stream: false,
         tempo_tag: None,
     },
     LabelDef {
         canonical: "otel_signal",
         aliases: &[],
         sources: OTEL_SIGNAL_SOURCES,
-        project: &[],
-        loki_stream: false,
         tempo_tag: None,
     },
     LabelDef {
         canonical: "data_type",
         aliases: &[],
         sources: DATA_TYPE_SOURCES,
-        project: &[],
-        loki_stream: false,
         tempo_tag: None,
     },
     LabelDef {
         canonical: "postgresql_database_name",
         aliases: &["postgresql.database.name"],
         sources: POSTGRES_DB_SOURCES,
-        project: &[],
-        loki_stream: false,
         tempo_tag: None,
     },
     LabelDef {
         canonical: "rpc_service",
         aliases: &["rpc.service"],
         sources: RPC_SERVICE_SOURCES,
-        project: &[],
-        loki_stream: false,
         tempo_tag: Some("rpc.service"),
     },
     LabelDef {
         canonical: "rpc_method",
         aliases: &["rpc.method"],
         sources: RPC_METHOD_SOURCES,
-        project: &[],
-        loki_stream: false,
         tempo_tag: Some("rpc.method"),
     },
     LabelDef {
         canonical: "rpc_grpc_status_code",
         aliases: &["rpc.grpc.status_code"],
         sources: RPC_GRPC_STATUS_SOURCES,
-        project: &[],
-        loki_stream: false,
         tempo_tag: Some("rpc.grpc.status_code"),
     },
     LabelDef {
         canonical: "server_address",
         aliases: &["server.address"],
         sources: SERVER_ADDRESS_SOURCES,
-        project: &[],
-        loki_stream: false,
         tempo_tag: Some("server.address"),
     },
     LabelDef {
         canonical: "url_template",
         aliases: &["url.template"],
         sources: URL_TEMPLATE_SOURCES,
-        project: &[],
-        loki_stream: false,
         tempo_tag: None,
     },
     LabelDef {
         canonical: "db_namespace",
         aliases: &["db.namespace"],
         sources: DB_NAMESPACE_SOURCES,
-        project: &[],
-        loki_stream: false,
         tempo_tag: Some("db.namespace"),
     },
     LabelDef {
         canonical: "exception_type",
         aliases: &["exception.type"],
         sources: EXCEPTION_TYPE_SOURCES,
-        project: &[],
-        loki_stream: false,
         tempo_tag: Some("exception.type"),
     },
 ];
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// The log query projection is registry-derived (`query::log_select_sql` /
-    /// `log_row`). This pins the projected set so dropping a `project` marker
-    /// fails here rather than silently removing a field from query results.
-    #[test]
-    fn logs_projection_set_is_pinned_to_registry() {
-        let projected: Vec<&str> = projected_labels(LabelScope::Logs)
-            .into_iter()
-            .map(|(name, _)| name)
-            .collect();
-        assert_eq!(
-            projected,
-            [
-                "service_name",
-                "service_namespace",
-                "service_instance_id",
-                "deployment_environment",
-                "host_name",
-                "scope_name",
-                "severity_text",
-                "trace_id",
-                "span_id",
-                "http_route",
-                "http_method",
-                "http_status_code",
-            ]
-        );
-    }
-
-    /// Every label marked `project` for a scope must resolve to a SQL expression
-    /// in that scope, otherwise `projected_labels` would silently drop it.
-    #[test]
-    fn projected_labels_all_resolve_to_an_expression() {
-        for scope in [LabelScope::Logs, LabelScope::Spans, LabelScope::Metrics] {
-            let marked = LABELS
-                .iter()
-                .filter(|label| label.project.contains(&scope))
-                .count();
-            assert_eq!(marked, projected_labels(scope).len(), "scope {scope:?}");
-        }
-    }
-
-    /// Within a scope, an input alias (or canonical) must resolve to exactly one
-    /// canonical. Two `LabelDef`s sharing an alias are only safe while their
-    /// scopes stay disjoint; this guards the moment one gains the other's scope
-    /// (e.g. giving `http_status_code` a metrics source would collide with
-    /// `http_response_status_code` on the `http.response.status_code` alias).
-    #[test]
-    fn alias_resolves_to_one_canonical_per_scope() {
-        use std::collections::HashMap;
-        for scope in [LabelScope::Logs, LabelScope::Spans, LabelScope::Metrics] {
-            let mut seen: HashMap<&str, &str> = HashMap::new();
-            for (raw, canonical) in alias_pairs(scope) {
-                if let Some(prev) = seen.insert(raw, canonical) {
-                    assert_eq!(prev, canonical, "alias {raw} is ambiguous in {scope:?}");
-                }
-            }
-        }
-    }
-
-    /// Each `HIGH_CARDINALITY` entry must name a real canonical, so a typo is a
-    /// failing test rather than a silently ineffective veto.
-    #[test]
-    fn high_cardinality_labels_are_registered() {
-        for name in HIGH_CARDINALITY {
-            assert!(
-                LABELS.iter().any(|label| label.canonical == *name),
-                "unknown high-cardinality label {name}"
-            );
-        }
-    }
-
-    /// High-cardinality (id-like) labels stay selectable and name-discoverable
-    /// but must never be materialized into `metadata_summary` in any scope.
-    #[test]
-    fn high_cardinality_labels_are_never_materialized() {
-        for label in LABELS
-            .iter()
-            .filter(|label| HIGH_CARDINALITY.contains(&label.canonical))
-        {
-            for scope in [LabelScope::Logs, LabelScope::Spans, LabelScope::Metrics] {
-                assert!(
-                    !metadata_label_allowed(scope, label),
-                    "{} materialized in {scope:?}",
-                    label.canonical
-                );
-            }
-        }
-    }
-
-    /// Pins the bounded set of log labels whose values are materialized for
-    /// discovery. The reconciliation of the historically-divergent stream /
-    /// discovery / materialization lists lives here: dropping or adding a label
-    /// (or flipping its cardinality) must be a deliberate edit to this set.
-    #[test]
-    fn logs_materialized_set_is_pinned() {
-        let names: Vec<&str> = metadata_labels(LabelScope::Logs)
-            .into_iter()
-            .map(|(name, _)| name)
-            .collect();
-        assert_eq!(
-            names,
-            [
-                "service_name",
-                "service_namespace",
-                "deployment_environment",
-                "host_name",
-                "scope_name",
-                "severity_text",
-                "http_route",
-                "http_method",
-            ]
-        );
-    }
-}

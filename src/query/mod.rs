@@ -1,5 +1,3 @@
-pub mod log;
-pub mod logmetric;
 pub mod logql;
 pub mod plan;
 pub mod prom_discovery;
@@ -13,7 +11,7 @@ use crate::config::Config;
 use crate::db::sql::{quote as sql_quote, time_predicate};
 use crate::metrics::Timer;
 use crate::query::plan::{
-    FieldMatcher, LogPlan, MatchOp, TextFilter,
+    FieldMatcher, MatchOp,
     TracePlan, TraceSort,
 };
 use crate::semantic_labels::{self, LabelScope};
@@ -79,33 +77,6 @@ impl QueryEngine {
             )
             .map_err(storage_err)
     }
-
-    pub fn execute_logs(&self, storage: &Storage, plan: &LogPlan) -> ApiResult<Value> {
-        let timer = Timer::start();
-        let where_sql = log_where_sql(plan)?;
-        let projected = semantic_labels::projected_labels(LabelScope::Logs);
-        let sql = log_select_sql(
-            &format!("{{prefix}}{}", StorageSignal::Logs.as_str()),
-            &projected,
-            &where_sql,
-            plan.direction.sql(),
-            plan.limit + 1,
-        );
-        let rows = storage
-            .with_query_execution(
-                &self.interactive_memory_limit,
-                self.interactive_timeout,
-                self.execution.as_deref(),
-                |conn, prefix| {
-                    let mut stmt = conn.prepare(&sql.replace("{prefix}", prefix))?;
-                    let mapped = stmt.query_map([], |row| log_row(row, &projected))?;
-                    Ok(collect_rows(mapped)?)
-                },
-            )
-            .map_err(storage_err)?;
-        Ok(wrap_rows(rows, plan.limit, timer.elapsed_ms()))
-    }
-
     pub fn execute_trace_search(&self, storage: &Storage, plan: &TracePlan) -> ApiResult<Value> {
         let TracePlan {
             selector,
@@ -170,87 +141,6 @@ impl QueryEngine {
     }
 
 }
-
-fn log_row(row: &Row<'_>, projected: &[(&str, String)]) -> duckdb::Result<Value> {
-    let mut obj = serde_json::Map::new();
-    obj.insert(
-        "timestamp".to_string(),
-        json!(row.get::<_, String>("timestamp")?),
-    );
-    obj.insert(
-        "body".to_string(),
-        json!(row.get::<_, Option<String>>("body")?),
-    );
-    for (name, _) in projected {
-        obj.insert(
-            (*name).to_string(),
-            json!(row.get::<_, Option<String>>(*name)?),
-        );
-    }
-    Ok(Value::Object(obj))
-}
-
-fn log_where_sql(plan: &LogPlan) -> ApiResult<Vec<String>> {
-    let mut where_sql = vec![time_predicate(
-        "time_unix_nano",
-        plan.time_bounds.from,
-        plan.time_bounds.to,
-    )];
-    for matcher in &plan.selector.matchers {
-        push_matcher(
-            &mut where_sql,
-            matcher,
-            LabelScope::Logs,
-            "unsupported_selector",
-        )?;
-    }
-    for filter in &plan.selector.text_filters {
-        match filter {
-            TextFilter::BodyContains(text) => where_sql.push(body_contains(text)),
-            TextFilter::BodyRegex(pattern) => where_sql.push(format!(
-                "regexp_matches(coalesce(body, ''), {})",
-                sql_quote(pattern)
-            )),
-            TextFilter::BodyNotContains(text) => {
-                where_sql.push(format!("NOT {}", body_contains(text)))
-            }
-            TextFilter::BodyNotRegex(pattern) => where_sql.push(format!(
-                "NOT regexp_matches(coalesce(body, ''), {})",
-                sql_quote(pattern)
-            )),
-        }
-    }
-    Ok(where_sql)
-}
-
-fn log_select_sql(
-    source: &str,
-    projected: &[(&str, String)],
-    where_sql: &[String],
-    direction: &str,
-    limit: usize,
-) -> String {
-    let mut columns = vec![
-        // Alias the `time_unix_nano` storage column back to the stable
-        // `timestamp` output column the log row reader pulls by name.
-        "time_unix_nano::VARCHAR AS timestamp".to_string(),
-        "body".to_string(),
-    ];
-    // Project every registry label as VARCHAR so the row reader can pull each
-    // column back by name with one uniform type; NULLs are preserved.
-    for (name, expr) in projected {
-        columns.push(format!("cast({expr} AS VARCHAR) AS {name}"));
-    }
-    // Pick the page of rows first on raw columns, then evaluate the projection (JSON
-    // extraction, lower(), casts) on only those rows. Projecting inline would evaluate
-    // every label expression for every row that matches the filter before the LIMIT.
-    format!(
-        "SELECT {} FROM (SELECT * FROM {source} WHERE {} ORDER BY time_unix_nano {direction} LIMIT {limit}) ORDER BY time_unix_nano {direction}",
-        columns.join(", "),
-        where_sql.join(" AND ")
-    )
-}
-
 fn collect_rows(
     iter: duckdb::MappedRows<'_, impl FnMut(&Row<'_>) -> duckdb::Result<Value>>,
 ) -> Result<Vec<Value>, duckdb::Error> {
@@ -298,11 +188,6 @@ fn push_matcher(
         )),
     }
     Ok(())
-}
-
-/// LogQL `|=`: a literal, case-sensitive substring match.
-fn body_contains(text: &str) -> String {
-    format!("contains(coalesce(body, ''), {})", sql_quote(text))
 }
 
 fn storage_err(err: anyhow::Error) -> ApiError {

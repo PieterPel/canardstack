@@ -28,7 +28,11 @@ numbers are compared to 1e-5 relative, NaN equals NaN, and a query marked `shoul
 | | queries | pass |
 | --- | --- | --- |
 | first run, before the metric engine | 2,408 | 46 |
+| with the metric engine | 2,408 | 2,403 |
 
-All 46 plain log queries that need no template pass. The rest are metric queries (range and vector
-aggregations, `unwrap`, binary operators), which the previous implementation does not cover, plus
-three `line_format` / `label_format` template queries.
+The 5 that do not pass: 3 `line_format` / `label_format` template queries (templates are not
+implemented yet), 1 `topk` whose tied values Loki breaks differently, and 1 query Loki itself
+rejects (skipped).
+
+Loki evaluates a range query on multiples of the step (the start rounds down, the end rounds up).
+canardstack does the same for metric queries, so results do not depend on the second a run starts.

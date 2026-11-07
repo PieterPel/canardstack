@@ -39,7 +39,6 @@ pub fn plan_tempo_search(
         selector: SelectorPlan {
             resource: None,
             matchers,
-            text_filters: Vec::new(),
         },
         time_bounds,
         limit,

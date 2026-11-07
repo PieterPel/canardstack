@@ -52,18 +52,9 @@ pub struct FieldMatcher {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub enum TextFilter {
-    BodyContains(String),
-    BodyRegex(String),
-    BodyNotContains(String),
-    BodyNotRegex(String),
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SelectorPlan {
     pub resource: Option<String>,
     pub matchers: Vec<FieldMatcher>,
-    pub text_filters: Vec<TextFilter>,
 }
 
 impl SelectorPlan {
@@ -79,17 +70,6 @@ impl SelectorPlan {
 pub struct TimeBounds {
     pub from: DateTime<Utc>,
     pub to: DateTime<Utc>,
-}
-
-#[derive(Clone, Debug)]
-pub struct LogPlan {
-    pub selector: SelectorPlan,
-    pub time_bounds: TimeBounds,
-    pub limit: usize,
-    pub direction: SortDirection,
-    pub stream_labels: Vec<String>,
-    /// Constant replacement for every returned line (`| line_format "text"`).
-    pub line_format: Option<String>,
 }
 
 #[derive(Clone, Debug)]

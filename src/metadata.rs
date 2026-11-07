@@ -13,9 +13,9 @@
 //! a generation mismatch invalidates the cached answer and the adapter rebuilds
 //! it from the latest summary rows.
 
-use crate::db::sql::{quote as sql_quote, time_predicate};
-use crate::query::{prom_discovery, QueryEngine};
-use crate::semantic_labels::{self, LabelScope};
+use crate::db::sql::quote as sql_quote;
+use crate::query::{logql, prom_discovery, QueryEngine};
+use crate::semantic_labels;
 use crate::signal::StorageSignal;
 use crate::storage::Storage;
 use crate::validation::ApiResult;
@@ -106,6 +106,20 @@ impl Metadata {
         })
     }
 
+    pub fn loki_label_names(
+        &self,
+        queries: &QueryEngine,
+        storage: &Storage,
+        from: DateTime<Utc>,
+        to: DateTime<Utc>,
+    ) -> ApiResult<Vec<String>> {
+        let key = CacheKey::window(Api::Loki, Discovery::LabelName, "", from, to);
+        let value = self.cached(storage, key, || {
+            logql::discovery::label_names(queries, storage, from, to).map(|v| json!(v))
+        })?;
+        Ok(string_array(value))
+    }
+
     pub fn loki_label_values(
         &self,
         queries: &QueryEngine,
@@ -114,27 +128,9 @@ impl Metadata {
         from: DateTime<Utc>,
         to: DateTime<Utc>,
     ) -> ApiResult<Vec<String>> {
-        let Some(metadata_name) = semantic_labels::canonical_for_alias(LabelScope::Logs, name)
-        else {
-            return Ok(Vec::new());
-        };
-        let key = CacheKey::window(Api::Loki, Discovery::LabelValue, metadata_name, from, to);
+        let key = CacheKey::window(Api::Loki, Discovery::LabelValue, name, from, to);
         let value = self.cached(storage, key, || {
-            let values = label_values(
-                queries,
-                storage,
-                &[StorageSignal::Logs],
-                "label_value",
-                metadata_name,
-                from,
-                to,
-            )?;
-            if values.is_empty() {
-                loki_raw_label_values(queries, storage, metadata_name, from, to)
-                    .map(|values| json!(values))
-            } else {
-                Ok(json!(values))
-            }
+            logql::discovery::label_values(queries, storage, name, from, to).map(|v| json!(v))
         })?;
         Ok(string_array(value))
     }
@@ -148,39 +144,7 @@ impl Metadata {
     ) -> ApiResult<Value> {
         let key = CacheKey::window(Api::Loki, Discovery::Series, "", from, to);
         self.cached(storage, key, || {
-            let mut out = Vec::new();
-            queries.run_interactive(storage, |conn, prefix| {
-                let log_signals = signal_in_list(&[StorageSignal::Logs]);
-                let sql = format!(
-                    "\
-                    SELECT service_name, deployment_environment, severity_text, sum(row_count) AS rows \
-                    FROM {prefix}metadata_summary \
-                    WHERE kind = 'series' \
-                      AND signal IN ({log_signals}) \
-                      AND {} \
-                    GROUP BY 1,2,3 \
-                    ORDER BY rows DESC, service_name, deployment_environment, severity_text \
-                    LIMIT {DISCOVERY_LIMIT}",
-                    metadata_time_predicate(from, to)
-                );
-                let mut stmt = conn.prepare(&sql)?;
-                let rows = stmt.query_map([], |row| {
-                    let mut labels = Map::new();
-                    insert_opt(&mut labels, "service_name", row.get::<_, Option<String>>(0)?);
-                    insert_opt(
-                        &mut labels,
-                        "deployment_environment",
-                        row.get::<_, Option<String>>(1)?,
-                    );
-                    insert_opt(&mut labels, "severity_text", row.get::<_, Option<String>>(2)?);
-                    Ok(Value::Object(labels))
-                })?;
-                for row in rows {
-                    out.push(row?);
-                }
-                Ok(())
-            })?;
-            Ok(json!(out))
+            logql::discovery::series(queries, storage, from, to).map(|sets| json!(sets))
         })
     }
 
@@ -398,43 +362,6 @@ fn label_values(
     Ok(values.into_iter().collect())
 }
 
-/// Distinct label values read straight from the log table, for when `metadata_summary` has none.
-fn loki_raw_label_values(
-    queries: &QueryEngine,
-    storage: &Storage,
-    metadata_name: &str,
-    from: DateTime<Utc>,
-    to: DateTime<Utc>,
-) -> ApiResult<Vec<String>> {
-    let Some(label_expr) = semantic_labels::label_expr(LabelScope::Logs, metadata_name) else {
-        return Ok(Vec::new());
-    };
-    let sql = format!(
-        "\
-        SELECT DISTINCT value FROM ( \
-            SELECT cast({label_expr} AS VARCHAR) AS value, time_unix_nano \
-            FROM {{prefix}}{} \
-        ) \
-        WHERE value IS NOT NULL AND value <> '' AND {} \
-        ORDER BY value \
-        LIMIT {DISCOVERY_LIMIT}",
-        StorageSignal::Logs.as_str(),
-        raw_time_predicate(from, to)
-    );
-    let mut out = Vec::new();
-    queries.run_interactive(storage, |conn, prefix| {
-        let mut stmt = conn.prepare(&sql.replace("{prefix}", prefix))?;
-        let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
-        for row in rows {
-            out.push(row?);
-        }
-        Ok(())
-    })?;
-    Ok(out)
-}
-
-
-
 fn metadata_time_predicate(from: DateTime<Utc>, to: DateTime<Utc>) -> String {
     format!(
         "first_seen < TIMESTAMP {} AND last_seen >= TIMESTAMP {}",
@@ -442,11 +369,6 @@ fn metadata_time_predicate(from: DateTime<Utc>, to: DateTime<Utc>) -> String {
         sql_quote(&from.format("%Y-%m-%d %H:%M:%S%.3f").to_string())
     )
 }
-
-fn raw_time_predicate(from: DateTime<Utc>, to: DateTime<Utc>) -> String {
-    time_predicate("time_unix_nano", from, to)
-}
-
 fn cache_time(time: DateTime<Utc>) -> String {
     time.format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string()
 }
@@ -463,13 +385,6 @@ fn string_array(value: Value) -> Vec<String> {
         })
         .unwrap_or_default()
 }
-
-fn insert_opt(labels: &mut Map<String, Value>, name: &str, value: Option<String>) {
-    if let Some(value) = value.filter(|v| !v.is_empty()) {
-        labels.insert(name.to_string(), json!(value));
-    }
-}
-
 #[cfg(test)]
 mod ttl_tests {
     use super::*;

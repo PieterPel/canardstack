@@ -4,7 +4,6 @@ use super::params::{
 use super::prometheus::{prom_value, ts_json};
 use crate::query::logql::{self, ast::Expr, MetricValue};
 use crate::query::vector::Grid;
-use crate::semantic_labels;
 use crate::validation::{ApiError, ApiResult};
 use crate::AppState;
 use chrono::Utc;
@@ -61,7 +60,11 @@ pub fn loki_query_range(state: &AppState, params: &HashMap<String, String>) -> A
         None => (seconds / 250).max(1),
     }
     .max(1);
-    let steps = seconds / step + 1;
+    // Like Loki, evaluate at multiples of the step: the start rounds down and the end rounds up.
+    let step_ms = step * 1000;
+    let start_ms = start.timestamp_millis().div_euclid(step_ms) * step_ms;
+    let end_ms = (end.timestamp_millis() + step_ms - 1).div_euclid(step_ms) * step_ms;
+    let steps = (end_ms - start_ms) / step_ms + 1;
     if steps > MAX_RANGE_STEPS {
         return Err(ApiError::new(
             400,
@@ -70,8 +73,8 @@ pub fn loki_query_range(state: &AppState, params: &HashMap<String, String>) -> A
         ));
     }
     let grid = Grid {
-        start_ms: start.timestamp_millis(),
-        step_ms: step * 1000,
+        start_ms,
+        step_ms,
         steps: steps as usize,
     };
     let series = match logql::evaluate_metric(&state.queries, &state.storage, &expr, grid)? {
@@ -93,9 +96,12 @@ pub fn loki_query_range(state: &AppState, params: &HashMap<String, String>) -> A
     Ok(loki_success(json!({"resultType": "matrix", "result": result})))
 }
 
-pub fn loki_labels(_state: &AppState, params: &HashMap<String, String>) -> ApiResult<Value> {
-    let _ = optional_range(params, INTERACTIVE_RANGE_SECS)?;
-    Ok(loki_success(json!(semantic_labels::loki_label_names())))
+pub fn loki_labels(state: &AppState, params: &HashMap<String, String>) -> ApiResult<Value> {
+    let (from, to) = optional_range(params, INTERACTIVE_RANGE_SECS)?;
+    let names = state
+        .metadata
+        .loki_label_names(&state.queries, &state.storage, from, to)?;
+    Ok(loki_success(json!(names)))
 }
 
 pub fn loki_label_values(

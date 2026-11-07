@@ -3,6 +3,7 @@
 
 pub use logql_syntax::ast;
 
+pub mod discovery;
 mod eval;
 mod extract;
 mod fetch;

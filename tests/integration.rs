@@ -768,6 +768,15 @@ fn loki_pipelines_select_on_resource_attributes_and_parse_json() {
     let errors = streams(r#"{filename="/b.log"} | json"#);
     assert_eq!(errors[0].0["__error__"], "JSONParserErr");
     assert!(streams(r#"{filename="/b.log"} | json | __error__ = """#).is_empty());
+
+    // Discovery reads the same labels.
+    let window = [("start", "1767225500"), ("end", "1767225700")];
+    let names = prom_get(&state, "/loki/api/v1/labels", &window);
+    assert_eq!(names["data"], serde_json::json!(["filename", "job", "user"]));
+    let files = prom_get(&state, "/loki/api/v1/label/filename/values", &window);
+    assert_eq!(files["data"], serde_json::json!(["/a.log", "/b.log"]));
+    let series = prom_get(&state, "/loki/api/v1/series", &window);
+    assert_eq!(series["data"].as_array().unwrap().len(), 2);
 }
 
 #[test]
