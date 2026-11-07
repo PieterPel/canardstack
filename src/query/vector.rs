@@ -291,6 +291,15 @@ pub fn group_key(labels: &Labels, grouping: &Option<Grouping>) -> Labels {
     }
 }
 
+/// The grouping labels, or every label when no grouping is given (a range aggregation keeps its
+/// series apart by default).
+pub fn group_key_or_all(labels: &Labels, grouping: &Option<Grouping>) -> Labels {
+    match grouping {
+        None => labels.clone(),
+        some => group_key(labels, some),
+    }
+}
+
 /// Series indexes per group.
 pub fn group(input: &[Series], grouping: &Option<Grouping>) -> BTreeMap<Labels, Vec<usize>> {
     let mut groups: BTreeMap<Labels, Vec<usize>> = BTreeMap::new();
@@ -404,6 +413,52 @@ pub fn quantile(q: f64, mut values: Vec<f64>) -> f64 {
     let upper = rank.ceil() as usize;
     let weight = rank - lower as f64;
     values[lower] * (1.0 - weight) + values[upper] * weight
+}
+
+/// Prometheus' `extrapolatedRate`: slope of the first and last sample in the window, extended to
+/// the window edges unless the samples stop short of them.
+pub fn extrapolated(s: &[(i64, f64)], start: i64, end: i64, counter: bool, rate: bool) -> Option<f64> {
+    if s.len() < 2 {
+        return None;
+    }
+    let (first, last) = (s[0], s[s.len() - 1]);
+    let mut result = last.1 - first.1;
+    if counter {
+        let mut prev = first.1;
+        for sample in &s[1..] {
+            if sample.1 < prev {
+                result += prev;
+            }
+            prev = sample.1;
+        }
+    }
+    let mut to_start = (first.0 - start) as f64 / 1000.0;
+    let to_end = (end - last.0) as f64 / 1000.0;
+    let sampled = (last.0 - first.0) as f64 / 1000.0;
+    let avg_gap = sampled / (s.len() - 1) as f64;
+    if counter && result > 0.0 && first.1 >= 0.0 {
+        let to_zero = sampled * (first.1 / result);
+        if to_zero < to_start {
+            to_start = to_zero;
+        }
+    }
+    let threshold = avg_gap * 1.1;
+    let mut interval = sampled;
+    interval += if to_start < threshold {
+        to_start
+    } else {
+        avg_gap / 2.0
+    };
+    interval += if to_end < threshold {
+        to_end
+    } else {
+        avg_gap / 2.0
+    };
+    let mut factor = interval / sampled;
+    if rate {
+        factor /= (end - start) as f64 / 1000.0;
+    }
+    Some(result * factor)
 }
 
 #[cfg(test)]

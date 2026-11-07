@@ -7,6 +7,7 @@ mod eval;
 mod extract;
 mod fetch;
 mod labels;
+mod metric;
 mod pipeline;
 mod values;
 
@@ -16,4 +17,6 @@ pub fn parse(input: &str) -> ApiResult<ast::Expr> {
     logql_syntax::parse(input).map_err(|e| ApiError::new(400, "bad_data", e.to_string()))
 }
 
+pub use crate::query::vector::Series;
 pub use eval::{log_streams, Stream};
+pub use metric::{evaluate as evaluate_metric, Value as MetricValue};

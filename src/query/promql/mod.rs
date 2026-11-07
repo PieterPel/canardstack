@@ -29,7 +29,7 @@ mod subquery;
 use eval::{Ev, Samples};
 use fetch::{collect, fetch, selector_key, offset_ms, Raw};
 use fetch::anchored;
-use crate::query::vector::{self, quantile, variance};
+use crate::query::vector::{self, extrapolated, quantile, variance};
 
 pub const LOOKBACK_MS: i64 = 300_000;
 const MAX_SAMPLES: usize = 1_000_000;
@@ -153,7 +153,7 @@ mod tests {
     #[test]
     fn rate_over_a_dense_window_is_the_slope() {
         let samples: Vec<(i64, f64)> = (1..=60).map(|k| (k * 1000, k as f64)).collect();
-        let rate = super::functions::extrapolated(&samples, 0, 60_000, true, true).unwrap();
+        let rate = crate::query::vector::extrapolated(&samples, 0, 60_000, true, true).unwrap();
         assert!((rate - 1.0).abs() < 1e-9, "{rate}");
     }
 }
