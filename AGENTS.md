@@ -76,7 +76,8 @@ Storage signals are `Logs`, `Spans`, `MetricGauge`, and `MetricSum`. Histograms 
 - `src/db/sql.rs` - shared SQL fragment helpers used by `storage`, `query`, and `compat`.
 - `src/runtime/memory.rs` - runtime memory-pressure probing.
 - `src/cli/` - subcommand implementations.
-- `crates/logql-syntax/` - dependency-free LogQL parser (lexer, AST, parser) in a workspace member that can be published on its own; `src/query/logql/` wraps it and will hold the evaluator.
+- `crates/logql-syntax/` - dependency-free LogQL parser (lexer, AST, parser) in a workspace member that can be published on its own; `src/query/logql/` wraps it and holds the evaluator.
+- `crates/traceql-syntax/` - dependency-free TraceQL parser and validator, tested against Tempo's own example queries; not yet used by the query path.
 
 ## Load-Bearing Constraints
 

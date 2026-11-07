@@ -46,7 +46,7 @@ promql-parser = "0.11.1"
 regex = "1.13.1"
 
 [workspace]
-members = [".", "crates/logql-syntax"]
+members = [".", "crates/logql-syntax", "crates/traceql-syntax"]
 resolver = "2"
 
 [features]
