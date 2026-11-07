@@ -230,7 +230,7 @@ fn evaluate_first_stage(
     let bucketed = matches!(kind, Kind::Histogram | Kind::Quantile);
     let from = Utc.timestamp_nanos(range.start_ns);
     let to = Utc.timestamp_nanos(range.end_ns() + 1_000_000);
-    let traces = model::load(engine, storage, from, to)?;
+    let traces = model::load(engine, storage, from, to, &super::pushdown::pipeline_requirements(&query.pipeline), super::pushdown::metrics_needs(query))?;
     let regexes = Regexes::default();
     let value_field = attr.map(|a| Field::Attribute(a.clone()));
     let is_duration = attr.is_some_and(|a| a.intrinsic == Some(Intrinsic::Duration));
@@ -380,9 +380,9 @@ fn compared_attributes(trace: &Trace, i: usize) -> Vec<(String, Val)> {
         ("statusMessage".to_string(), Val::Str(s.status_message.clone())),
         ("span:childCount".to_string(), Val::Int(s.children as i64)),
     ];
-    out.extend(s.resource.iter().map(|(k, v)| (format!("resource.{k}"), v.clone())));
-    out.extend(s.span.iter().map(|(k, v)| (format!("span.{k}"), v.clone())));
-    out.extend(s.scope.iter().map(|(k, v)| (format!("instrumentation.{k}"), v.clone())));
+    out.extend(s.resource().iter().map(|(k, v)| (format!("resource.{k}"), v.clone())));
+    out.extend(s.span_attrs().iter().map(|(k, v)| (format!("span.{k}"), v.clone())));
+    out.extend(s.scope_attrs().iter().map(|(k, v)| (format!("instrumentation.{k}"), v.clone())));
     // Durations are left out, like Tempo.
     out.retain(|(_, v)| !matches!(v, Val::Dur(_)));
     out
@@ -405,7 +405,14 @@ fn compare(
     type Counts = BTreeMap<String, BTreeMap<String, (Val, Vec<f64>)>>;
     let mut values: [Counts; 2] = [Counts::new(), Counts::new()];
     let mut totals: [BTreeMap<String, Vec<f64>>; 2] = [BTreeMap::new(), BTreeMap::new()];
-    let traces = model::load(engine, storage, Utc.timestamp_nanos(range.start_ns), Utc.timestamp_nanos(range.end_ns() + 1_000_000))?;
+    let traces = model::load(
+        engine,
+        storage,
+        Utc.timestamp_nanos(range.start_ns),
+        Utc.timestamp_nanos(range.end_ns() + 1_000_000),
+        &super::pushdown::pipeline_requirements(&query.pipeline),
+        super::pushdown::metrics_needs(query),
+    )?;
     let regexes = Regexes::default();
     for trace in &traces {
         let eval = Eval { trace, regexes: &regexes };

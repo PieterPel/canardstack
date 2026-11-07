@@ -47,10 +47,10 @@ impl Eval<'_> {
             Intrinsic::NestedSetLeft => one(Val::Int(s.left)),
             Intrinsic::NestedSetRight => one(Val::Int(s.right)),
             Intrinsic::NestedSetParent => one(Val::Int(s.parent.map_or(-1, |p| self.span(p).left))),
-            Intrinsic::EventName => s.events.iter().map(|e| Val::Str(e.name.clone())).collect(),
-            Intrinsic::EventTimeSinceStart => s.events.iter().map(|e| Val::Dur(e.time_ns - s.start_ns)).collect(),
-            Intrinsic::LinkTraceId => s.links.iter().map(|l| Val::Str(l.trace_id.clone())).collect(),
-            Intrinsic::LinkSpanId => s.links.iter().map(|l| Val::Str(l.span_id.clone())).collect(),
+            Intrinsic::EventName => s.events().iter().map(|e| Val::Str(e.name.clone())).collect(),
+            Intrinsic::EventTimeSinceStart => s.events().iter().map(|e| Val::Dur(e.time_ns - s.start_ns)).collect(),
+            Intrinsic::LinkTraceId => s.links().iter().map(|l| Val::Str(l.trace_id.clone())).collect(),
+            Intrinsic::LinkSpanId => s.links().iter().map(|l| Val::Str(l.span_id.clone())).collect(),
             Intrinsic::InstrumentationName => one(Val::Str(s.scope_name.clone())),
             Intrinsic::InstrumentationVersion => one(Val::Str(s.scope_version.clone())),
         }
@@ -71,12 +71,12 @@ impl Eval<'_> {
         let s = self.span(i);
         let name = &attr.name;
         match attr.scope {
-            Scope::Span => s.span.get(name).cloned().into_iter().collect(),
-            Scope::Resource => s.resource.get(name).cloned().into_iter().collect(),
-            Scope::Instrumentation => s.scope.get(name).cloned().into_iter().collect(),
-            Scope::Event => s.events.iter().filter_map(|e| e.attrs.get(name).cloned()).collect(),
-            Scope::Link => s.links.iter().filter_map(|l| l.attrs.get(name).cloned()).collect(),
-            Scope::None => s.span.get(name).into_iter().chain(s.resource.get(name)).cloned().collect(),
+            Scope::Span => s.span_attrs().get(name).cloned().into_iter().collect(),
+            Scope::Resource => s.resource().get(name).cloned().into_iter().collect(),
+            Scope::Instrumentation => s.scope_attrs().get(name).cloned().into_iter().collect(),
+            Scope::Event => s.events().iter().filter_map(|e| e.attrs.get(name).cloned()).collect(),
+            Scope::Link => s.links().iter().filter_map(|l| l.attrs.get(name).cloned()).collect(),
+            Scope::None => s.span_attrs().get(name).into_iter().chain(s.resource().get(name)).cloned().collect(),
         }
     }
 
@@ -333,7 +333,7 @@ impl Eval<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::query::traceql::model::{Attrs, Span};
+    use crate::query::traceql::model::{Attrs, Lazy, Span};
 
     fn span(id: &str, parent: &str, name: &str, start: i64, duration: i64, attrs: &[(&str, Val)]) -> Span {
         Span {
@@ -345,13 +345,14 @@ mod tests {
             status_message: String::new(),
             start_ns: start,
             duration_ns: duration,
-            resource: Attrs::from([("service.name".to_string(), Val::Str("svc".into()))]),
-            span: attrs.iter().map(|(k, v)| (k.to_string(), v.clone())).collect(),
+            service: [None, None, None],
+            resource: Lazy::ready(Attrs::from([("service.name".to_string(), Val::Str("svc".into()))])),
+            attributes: Lazy::ready(attrs.iter().map(|(k, v)| (k.to_string(), v.clone())).collect()),
             scope_name: String::new(),
             scope_version: String::new(),
-            scope: Attrs::new(),
-            events: Vec::new(),
-            links: Vec::new(),
+            scope: Lazy::ready(Attrs::new()),
+            events: Lazy::ready(Vec::new()),
+            links: Lazy::ready(Vec::new()),
             parent: None,
             children: 0,
             left: 0,

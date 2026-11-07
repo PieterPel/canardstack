@@ -4,6 +4,7 @@
 mod eval;
 mod metrics;
 mod model;
+mod pushdown;
 mod value;
 
 use crate::query::QueryEngine;
@@ -60,7 +61,7 @@ pub fn search(
     if matches!(query.kind, QueryKind::Metrics(_) | QueryKind::MetricsMath { .. }) {
         return Err(ApiError::new(400, "bad_data", "metrics queries are not search queries"));
     }
-    let traces = model::load(engine, storage, from, to)?;
+    let traces = model::load(engine, storage, from, to, &pushdown::requirements(&query.kind), pushdown::needs(&query.kind))?;
     let regexes = Regexes::default();
     let mut hits = Vec::new();
     for trace in &traces {
