@@ -33,7 +33,7 @@ impl Ev<'_> {
                 ),
                 Value::Str(_) => return Err(bad("unary minus on a string")),
             }),
-            Expr::VectorSelector(vs) => Ok(Value::Vector(self.instant_selector(vs)?)),
+            Expr::VectorSelector(vs) => Ok(Value::Vector(self.instant_selector(vs, false)?)),
             Expr::MatrixSelector(_) => Err(unsupported(
                 "range vectors are only supported as function arguments",
             )),
@@ -51,7 +51,13 @@ impl Ev<'_> {
             .ok_or_else(|| exec_err("selector was not fetched"))
     }
 
-    pub(super) fn instant_selector(&self, vs: &VectorSelector) -> ApiResult<Vec<Series>> {
+    /// The newest sample at or before each step within the lookback; with `timestamps`, the
+    /// value is that sample's time in seconds (for `timestamp()`).
+    pub(super) fn instant_selector(
+        &self,
+        vs: &VectorSelector,
+        timestamps: bool,
+    ) -> ApiResult<Vec<Series>> {
         let off = offset_ms(vs);
         let mut out = Vec::new();
         for raw in self.raw(vs, LOOKBACK_MS)? {
@@ -60,7 +66,8 @@ impl Ev<'_> {
                 let t = self.grid.ts(i) - off;
                 let idx = raw.samples.partition_point(|s| s.0 <= t);
                 if idx > 0 && raw.samples[idx - 1].0 > t - LOOKBACK_MS {
-                    *slot = Some(raw.samples[idx - 1].1);
+                    let (sample_ms, value) = raw.samples[idx - 1];
+                    *slot = Some(if timestamps { sample_ms as f64 / 1000.0 } else { value });
                 }
             }
             if vals.iter().any(Option::is_some) {
@@ -81,6 +88,16 @@ impl Ev<'_> {
         keep_name: bool,
         f: &dyn Fn(Samples, i64, i64) -> Option<f64>,
     ) -> ApiResult<Value> {
+        self.windowed_at(arg, keep_name, &|s, start, end, _| f(s, start, end))
+    }
+
+    /// Like [`Self::windowed`], and also passes the step index to `f`.
+    pub(super) fn windowed_at(
+        &self,
+        arg: &Expr,
+        keep_name: bool,
+        f: &dyn Fn(Samples, i64, i64, usize) -> Option<f64>,
+    ) -> ApiResult<Value> {
         let Expr::MatrixSelector(ms) = arg else {
             return Err(unsupported("expected a range vector argument"));
         };
@@ -95,7 +112,7 @@ impl Ev<'_> {
                 let lo = raw.samples.partition_point(|s| s.0 <= start);
                 let hi = raw.samples.partition_point(|s| s.0 <= end);
                 if lo < hi {
-                    *slot = f(&raw.samples[lo..hi], start, end);
+                    *slot = f(&raw.samples[lo..hi], start, end, i);
                 }
             }
             if vals.iter().any(Option::is_some) {

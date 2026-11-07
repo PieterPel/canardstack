@@ -18,9 +18,12 @@ use std::collections::{BTreeMap, HashMap};
 
 mod aggregate;
 mod binary;
+mod datetime;
 mod eval;
 mod fetch;
 mod functions;
+mod histogram;
+mod regression;
 
 use eval::{Ev, Samples};
 use fetch::{collect, fetch, selector_key, offset_ms, Raw};

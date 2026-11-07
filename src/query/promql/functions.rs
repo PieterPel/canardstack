@@ -2,7 +2,32 @@
 
 use super::*;
 
+/// Label names given to `label_replace` / `label_join` must be non-empty.
+fn valid_label_names(names: &[&str]) -> ApiResult<()> {
+    match names.iter().find(|n| n.is_empty()) {
+        Some(_) => Err(bad("invalid label name: it must not be empty")),
+        None => Ok(()),
+    }
+}
+
 impl Ev<'_> {
+    /// `absent()` / `absent_over_time()`: one series with value 1 at every step where `input` has
+    /// no samples. Labels come from the equality matchers of the selector.
+    fn absent(&self, selector: &Expr, input: &[Series]) -> Value {
+        let mut labels = Labels::new();
+        if let Expr::VectorSelector(vs) = selector {
+            for m in &vs.matchers.matchers {
+                if matches!(m.op, MatchOp::Equal) && m.name != METRIC_NAME {
+                    labels.insert(unescape(&m.name), m.value.clone());
+                }
+            }
+        }
+        let vals = (0..self.n())
+            .map(|i| input.iter().all(|s| s.vals[i].is_none()).then_some(1.0))
+            .collect();
+        Value::Vector(vec![Series { labels, vals }])
+    }
+
     pub(super) fn call(&self, name: &str, args: &[Box<Expr>]) -> ApiResult<Value> {
         let arg = |i: usize| -> ApiResult<&Expr> {
             args.get(i)
@@ -103,34 +128,32 @@ impl Ev<'_> {
                         self.scalar_arg(arg(1)?)?.first().copied().unwrap_or(f64::NAN),
                     ),
                 };
-                self.map_vector(arg(0)?, |x| {
-                    if lo > hi {
-                        f64::NAN
-                    } else {
-                        x.max(lo).min(hi)
-                    }
-                })
+                if lo > hi {
+                    // Prometheus returns nothing when the bounds are inverted.
+                    return Ok(Value::Vector(Vec::new()));
+                }
+                self.map_vector(arg(0)?, |x| x.max(lo).min(hi))
             }
             "absent" => {
                 let input = self.vector_arg(arg(0)?)?;
-                let mut labels = Labels::new();
-                if let Expr::VectorSelector(vs) = arg(0)? {
-                    for m in &vs.matchers.matchers {
-                        if matches!(m.op, MatchOp::Equal) && m.name != METRIC_NAME {
-                            labels.insert(unescape(&m.name), m.value.clone());
-                        }
-                    }
-                }
-                let vals = (0..self.n())
-                    .map(|i| {
-                        input
-                            .iter()
-                            .all(|s| s.vals[i].is_none())
-                            .then_some(1.0)
-                    })
-                    .collect();
-                Ok(Value::Vector(vec![Series { labels, vals }]))
+                Ok(self.absent(arg(0)?, &input))
             }
+            "absent_over_time" => {
+                let Value::Vector(input) = self.windowed(arg(0)?, false, &|_, _, _| Some(1.0))?
+                else {
+                    unreachable!("windowed returns a vector")
+                };
+                let selector = match arg(0)? {
+                    Expr::MatrixSelector(ms) => Expr::VectorSelector(ms.vs.clone()),
+                    other => other.clone(),
+                };
+                Ok(self.absent(&selector, &input))
+            }
+            "year" | "month" | "day_of_month" | "day_of_week" | "day_of_year" | "days_in_month"
+            | "hour" | "minute" => self.datetime(name, args),
+            "timestamp" => self.timestamp(arg(0)?),
+            "deriv" | "predict_linear" => self.regression(name, args),
+            "histogram_quantile" => self.histogram_quantile(args),
             "vector" => {
                 let vals = self.scalar_arg(arg(0)?)?.into_iter().map(Some).collect();
                 Ok(Value::Vector(vec![Series {
@@ -172,6 +195,7 @@ impl Ev<'_> {
                 let dst = self.string_arg(arg(1)?)?;
                 let repl = self.string_arg(arg(2)?)?;
                 let src = self.string_arg(arg(3)?)?;
+                valid_label_names(&[&dst, &src])?;
                 let rx = anchored(&self.string_arg(arg(4)?)?)?;
                 for s in &mut series {
                     let value = s.labels.get(&src).cloned().unwrap_or_default();
@@ -191,6 +215,7 @@ impl Ev<'_> {
                 let mut series = self.vector_arg(arg(0)?)?;
                 let dst = self.string_arg(arg(1)?)?;
                 let sep = self.string_arg(arg(2)?)?;
+                valid_label_names(&[&dst])?;
                 let srcs = args[3..]
                     .iter()
                     .map(|e| self.string_arg(e))

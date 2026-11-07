@@ -635,6 +635,30 @@ fn prometheus_metric_attributes_are_labels() {
 }
 
 #[test]
+fn promql_calendar_regression_and_bucket_functions() {
+    let (_dir, state) = app_with_gauge_series();
+    // sem_gauge{job="a"} is 1, 9, 2 at 2026-01-01T00:00:00..02Z; evaluate at :02.
+    let value = |q: &str| -> Option<String> {
+        let body = prom_get(&state, "/api/v1/query", &[("query", q), ("time", "1767225602")]);
+        body["data"]["result"][0]["value"][1].as_str().map(str::to_string)
+    };
+    assert_eq!(value(r#"timestamp(sem_gauge{job="a"})"#).as_deref(), Some("1767225602"));
+    assert_eq!(value("year(vector(1767225602))").as_deref(), Some("2026"));
+    assert_eq!(value("month(vector(1767225602))").as_deref(), Some("1"));
+    assert_eq!(value("day_of_week(vector(1767225602))").as_deref(), Some("4")); // a Thursday
+    assert_eq!(value("days_in_month(vector(1767225602))").as_deref(), Some("31"));
+    assert_eq!(value("hour(vector(1767225602 + 3600))").as_deref(), Some("1"));
+    assert_eq!(value(r#"absent_over_time(sem_gauge{job="a"}[1m])"#), None);
+    assert_eq!(value(r#"absent_over_time(sem_gauge{job="nobody"}[1m])"#).as_deref(), Some("1"));
+    // Points (0,1), (1,9), (2,2): slope (2-1)/2 = 0.5 per second.
+    // The fitted line is 4.5 at :02 with slope 0.5, so two seconds later it is 5.5.
+    assert_eq!(value(r#"deriv(sem_gauge{job="a"}[10s])"#).as_deref(), Some("0.5"));
+    assert_eq!(value(r#"predict_linear(sem_gauge{job="a"}[10s], 2)"#).as_deref(), Some("5.5"));
+    // Inverted clamp bounds give an empty result, as in Prometheus.
+    assert_eq!(value(r#"clamp(sem_gauge{job="a"}, 5, 1)"#), None);
+}
+
+#[test]
 fn loki_label_values_fall_back_to_raw_logs_when_the_summary_is_empty() {
     let (_dir, state) = app_with_log_lines();
     let body = prom_get(
