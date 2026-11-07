@@ -1,5 +1,6 @@
 pub mod log;
 pub mod logmetric;
+pub mod logql;
 pub mod plan;
 pub mod prom_discovery;
 pub mod prom_labels;
