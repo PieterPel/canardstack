@@ -3,12 +3,16 @@
   canardstack
 </h1>
 
-[![Crates.io](https://img.shields.io/crates/v/canardstack)](https://crates.io/crates/canardstack)
-[![CI](https://github.com/smithclay/canardstack/actions/workflows/ci.yml/badge.svg)](https://github.com/smithclay/canardstack/actions/workflows/ci.yml)
+[![CI](https://github.com/PieterPel/canardstack/actions/workflows/ci.yml/badge.svg)](https://github.com/PieterPel/canardstack/actions/workflows/ci.yml)
 [![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![DuckLake](https://img.shields.io/badge/storage-DuckLake-fff000.svg?logo=duckdb&logoColor=black)](https://ducklake.select/)
 
 > Query OpenTelemetry-shaped logs, traces, and metrics stored in DuckLake.
+
+This is a fork of [smithclay/canardstack](https://github.com/smithclay/canardstack) (Apache-2.0,
+copyright Clay Smith). It has diverged: PromQL, LogQL and TraceQL are evaluated by in-process
+engines (with the LogQL and TraceQL parsers as separate crates in `crates/`) and measured against
+Prometheus, Loki and Tempo with differential harnesses under [`bench/compat`](bench/compat/README.md).
 
 canardstack is an experimental query server for observability data stored in [DuckLake](https://ducklake.select/). It exposes bounded Prometheus, Loki, and Tempo-compatible HTTP APIs for Grafana-style clients.
 

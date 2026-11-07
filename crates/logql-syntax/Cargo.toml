@@ -5,7 +5,8 @@ edition = "2021"
 description = "A dependency-free parser for LogQL, Grafana Loki's query language"
 readme = "README.md"
 license = "Apache-2.0"
-repository = "https://github.com/smithclay/canardstack"
+authors = ["Pieter Pel"]
+repository = "https://github.com/PieterPel/canardstack"
 keywords = ["logql", "loki", "parser", "logs", "observability"]
 categories = ["parser-implementations"]
 
