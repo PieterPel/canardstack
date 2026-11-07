@@ -3,7 +3,7 @@
 
 use crate::db::sql::time_predicate;
 use crate::query::prom_labels::{labels_from_row, Labels, SERIES_COLUMNS};
-use crate::query::prom_names::{prom_name, Kind};
+use crate::query::prom_names::{le_text, prom_name, Kind};
 use crate::query::QueryEngine;
 use crate::signal::StorageSignal;
 use crate::storage::Storage;
@@ -130,7 +130,56 @@ pub fn series(
         }
         Ok(())
     })?;
+    histogram_series(queries, storage, selectors, from, to, &mut sets)?;
     Ok(sets.into_iter().collect())
+}
+
+/// The `_bucket{le}`, `_sum` and `_count` series of the histograms with data in the window.
+fn histogram_series(
+    queries: &QueryEngine,
+    storage: &Storage,
+    selectors: &Selectors,
+    from: DateTime<Utc>,
+    to: DateTime<Utc>,
+    sets: &mut BTreeSet<Labels>,
+) -> ApiResult<()> {
+    let sql = format!(
+        "SELECT DISTINCT name, {SERIES_COLUMNS}, unit, to_json(explicit_bounds) FROM {{prefix}}{} WHERE {} LIMIT {SERIES_LIMIT}",
+        StorageSignal::MetricHistogram.as_str(),
+        time_predicate("time_unix_nano", from, to)
+    );
+    let suffixes = queries.prom_name_suffixes();
+    queries.run_interactive(storage, |conn, prefix| {
+        let mut stmt = conn.prepare(&sql.replace("{prefix}", prefix))?;
+        let mut rows = stmt.query([])?;
+        while let Some(row) = rows.next()? {
+            let col = |i: usize| row.get::<_, Option<String>>(i);
+            let base = labels_from_row(col(1)?.as_deref(), col(2)?.as_deref(), col(3)?.as_deref(), col(4)?.as_deref(), col(5)?.as_deref(), col(6)?.as_deref());
+            let name: String = row.get(0)?;
+            let unit: Option<String> = row.get(7)?;
+            let family = prom_name(&name, unit.as_deref(), Kind::Histogram, suffixes);
+            let bounds: Vec<f64> = col(8)?
+                .and_then(|j| serde_json::from_str(&j).ok())
+                .unwrap_or_default();
+            let mut add = |suffix: &str, le: Option<String>| {
+                let mut labels = base.clone();
+                labels.insert(METRIC_NAME.to_string(), format!("{family}{suffix}"));
+                if let Some(le) = le {
+                    labels.insert("le".to_string(), le);
+                }
+                if selectors.matches(&labels) {
+                    sets.insert(labels);
+                }
+            };
+            add("_sum", None);
+            add("_count", None);
+            for bound in bounds {
+                add("_bucket", Some(le_text(Some(bound))));
+            }
+            add("_bucket", Some(le_text(None)));
+        }
+        Ok(())
+    })
 }
 
 pub fn label_names(
@@ -188,6 +237,21 @@ pub fn metric_metadata(
             let shown = prom_name(&name, Some(&unit), kind, suffixes);
             let kind_name = if monotonic { "counter" } else { "gauge" };
             out.insert(shown, (kind_name.to_string(), unit, row.get(3)?));
+        }
+        Ok(())
+    })?;
+    queries.run_interactive(storage, |conn, prefix| {
+        let sql = format!(
+            "SELECT name, max(coalesce(unit, '')), max(coalesce(description, '')) FROM {prefix}{} GROUP BY name, unit LIMIT {SERIES_LIMIT}",
+            StorageSignal::MetricHistogram.as_str()
+        );
+        let mut stmt = conn.prepare(&sql)?;
+        let mut rows = stmt.query([])?;
+        while let Some(row) = rows.next()? {
+            let name: String = row.get(0)?;
+            let unit: String = row.get(1)?;
+            let shown = prom_name(&name, Some(&unit), Kind::Histogram, suffixes);
+            out.insert(shown, ("histogram".to_string(), unit, row.get(2)?));
         }
         Ok(())
     })?;

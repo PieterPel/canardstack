@@ -56,7 +56,7 @@ OpenTelemetry producers
   -> bounded Prometheus / Loki / Tempo compatibility APIs
 ```
 
-Storage signals are `Logs`, `Spans`, `MetricGauge`, and `MetricSum`. Histograms and exponential histograms are not part of the v0 query surface.
+Storage signals are `Logs`, `Spans`, `MetricGauge`, `MetricSum`, and `MetricHistogram`. Explicit-bucket histograms are read as Prometheus `_bucket{le}`, `_sum` and `_count` series (the histogram table is only scanned for selectors that can match them). Exponential histograms (Prometheus native histograms) and summaries are not part of the query surface.
 
 ## Source Map
 

@@ -3,7 +3,7 @@
 use super::*;
 use crate::db::sql::{quote, time_predicate};
 use crate::query::prom_labels::{labels_from_row, INSTANCE_SQL, JOB_SQL, SERIES_COLUMNS};
-use crate::query::prom_names::{prom_name, stored_name_candidates, Kind, ESCAPED_NAME_SQL};
+use crate::query::prom_names::{le_text, prom_name, stored_name_candidates, Kind, ESCAPED_NAME_SQL, HISTOGRAM_COMPONENTS};
 use crate::signal::StorageSignal;
 use chrono::{TimeZone, Utc};
 
@@ -125,6 +125,9 @@ struct Compiled {
     /// Escaped stored names that could hold the series, when the selector names the metric by
     /// equality. It narrows the SQL; the exact check is on the translated name.
     names: Vec<String>,
+    /// Whether the selector can match a histogram series (`_bucket`, `_sum`, `_count`), which are
+    /// read from the histogram table: only then is that table scanned.
+    histogram: bool,
 }
 
 fn compile(vs: &VectorSelector) -> ApiResult<Compiled> {
@@ -146,10 +149,12 @@ fn compile(vs: &VectorSelector) -> ApiResult<Compiled> {
     let mut compiled = Compiled {
         matchers: Vec::new(),
         names: Vec::new(),
+        histogram: true,
     };
     for (label, op, value) in raw {
         if label == METRIC_NAME && matches!(op, MatchOp::Equal) && compiled.names.is_empty() {
             compiled.names = stored_name_candidates(&value);
+            compiled.histogram = HISTOGRAM_COMPONENTS.iter().any(|c| value.ends_with(c));
         }
         let test = match op {
             MatchOp::Equal => Test::Eq(value),
@@ -211,7 +216,7 @@ pub(super) fn fetch(
         }
         let select = |signal: StorageSignal| {
             format!(
-                "SELECT name, concat_ws(chr(31), coalesce(service_name, ''), coalesce(service_namespace, ''), coalesce(service_instance_id, ''), coalesce(CAST(resource_attributes AS VARCHAR), ''), coalesce(scope_name, ''), coalesce(CAST(metric_attributes AS VARCHAR), '')) AS sid, epoch_ms(time_unix_nano) AS t, coalesce(double_value, int_value::DOUBLE) AS v, {SERIES_COLUMNS}, unit, {} FROM {{prefix}}{} WHERE {}",
+                "SELECT name, concat_ws(chr(31), coalesce(service_name, ''), coalesce(service_namespace, ''), coalesce(service_instance_id, ''), coalesce(CAST(resource_attributes AS VARCHAR), ''), coalesce(scope_name, ''), coalesce(CAST(metric_attributes AS VARCHAR), '')) AS sid, epoch_ms(time_unix_nano) AS t, coalesce(double_value, int_value::DOUBLE) AS v, {SERIES_COLUMNS}, unit, {}, NULL::VARCHAR AS comp, NULL::DOUBLE AS le FROM {{prefix}}{} WHERE {}",
                 match signal {
                     StorageSignal::MetricSum => "is_monotonic",
                     _ => "NULL::BOOLEAN",
@@ -220,12 +225,27 @@ pub(super) fn fetch(
                 filters.join(" AND ")
             )
         };
-        let sql = format!(
-            "{} UNION ALL {} LIMIT {}",
-            select(StorageSignal::MetricGauge),
-            select(StorageSignal::MetricSum),
-            MAX_SAMPLES + 1
-        );
+        // A histogram row is `_sum`, `_count` and one cumulative `_bucket` per bound.
+        let histogram = |value: &str, comp: &str, le: &str, from: &str, extra: &str| {
+            format!(
+                "SELECT name, concat_ws(chr(31), coalesce(service_name, ''), coalesce(service_namespace, ''), coalesce(service_instance_id, ''), coalesce(CAST(resource_attributes AS VARCHAR), ''), coalesce(scope_name, ''), coalesce(CAST(metric_attributes AS VARCHAR), '')) AS sid, epoch_ms(time_unix_nano) AS t, {value} AS v, {SERIES_COLUMNS}, unit, NULL::BOOLEAN, '{comp}' AS comp, {le} AS le FROM {{prefix}}{}{from} WHERE {}{extra}",
+                StorageSignal::MetricHistogram.as_str(),
+                filters.join(" AND ")
+            )
+        };
+        let mut parts = vec![select(StorageSignal::MetricGauge), select(StorageSignal::MetricSum)];
+        if compiled.histogram {
+            parts.push(histogram("sum", "_sum", "NULL::DOUBLE", "", " AND sum IS NOT NULL"));
+            parts.push(histogram("count::DOUBLE", "_count", "NULL::DOUBLE", "", " AND count IS NOT NULL"));
+            parts.push(histogram(
+                "list_sum(bucket_counts[1:i])::DOUBLE",
+                "_bucket",
+                "CASE WHEN i <= len(explicit_bounds) THEN explicit_bounds[i] END",
+                ", UNNEST(range(1, coalesce(len(bucket_counts), 0) + 1)) AS u(i)",
+                "",
+            ));
+        }
+        let sql = format!("{} LIMIT {}", parts.join(" UNION ALL "), MAX_SAMPLES + 1);
         plans.push(Plan {
             key: req.key.clone(),
             sql,
@@ -253,12 +273,26 @@ pub(super) fn fetch(
                 let Some(v) = row.get::<_, Option<f64>>(3)? else {
                     continue;
                 };
-                let kind = match row.get::<_, Option<bool>>(11)? {
-                    Some(true) => Kind::Counter,
+                let comp: Option<String> = row.get(12)?;
+                let kind = match (&comp, row.get::<_, Option<bool>>(11)?) {
+                    (Some(_), _) => Kind::Histogram,
+                    (None, Some(true)) => Kind::Counter,
                     _ => Kind::Gauge,
                 };
                 let unit: Option<String> = row.get(10)?;
-                let name = prom_name(&name, unit.as_deref(), kind, suffixes);
+                let mut name = prom_name(&name, unit.as_deref(), kind, suffixes);
+                // Only the bucket series carry `le`; the bound is part of what tells series apart.
+                let le = match comp.as_deref() {
+                    Some("_bucket") => Some(le_text(row.get::<_, Option<f64>>(13)?)),
+                    _ => None,
+                };
+                if let Some(comp) = &comp {
+                    name.push_str(comp);
+                }
+                let sid = match &le {
+                    Some(le) => format!("{sid}{}{le}", '\u{1f}'),
+                    None => sid,
+                };
                 let entry = by_series.entry((name.clone(), sid));
                 let raw = match entry {
                     std::collections::hash_map::Entry::Occupied(e) => e.into_mut(),
@@ -273,6 +307,9 @@ pub(super) fn fetch(
                             col(5)?.as_deref(),
                         );
                         labels.insert(METRIC_NAME.to_string(), name);
+                        if let Some(le) = le {
+                            labels.insert("le".to_string(), le);
+                        }
                         e.insert(Raw {
                             labels,
                             samples: Vec::new(),

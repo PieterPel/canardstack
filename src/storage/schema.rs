@@ -2,7 +2,7 @@
 //!
 //! The table schema is STATIC in v0: every column list is a fixed `const`
 //! (`LOGS_COLUMNS`, `SPANS_COLUMNS`, `METRIC_GAUGE_COLUMNS`,
-//! `METRIC_SUM_COLUMNS`, `METADATA_SUMMARY_COLUMNS`) and tables are created with
+//! `METRIC_SUM_COLUMNS`, `METRIC_HISTOGRAM_COLUMNS`, `METADATA_SUMMARY_COLUMNS`) and tables are created with
 //! `CREATE TABLE IF NOT EXISTS`. There is no online schema evolution, no
 //! migration tool, and no `ALTER TABLE ... ADD COLUMN` path. Changing a column
 //! set is a deliberate v0 non-goal: it requires a coordinated manual migration
@@ -26,6 +26,7 @@ pub(super) fn create_tables_on(conn: &Connection, prefix: &str) -> Result<()> {
         StorageSignal::Spans,
         StorageSignal::MetricGauge,
         StorageSignal::MetricSum,
+        StorageSignal::MetricHistogram,
     ] {
         ddl.push_str(&create_table_sql(
             prefix,
@@ -51,6 +52,7 @@ pub(super) fn configure_telemetry_partitioning_on(conn: &Connection, prefix: &st
         StorageSignal::Spans,
         StorageSignal::MetricGauge,
         StorageSignal::MetricSum,
+        StorageSignal::MetricHistogram,
     ] {
         let ts = table_timestamp_column(table);
         conn.execute_batch(&format!(
@@ -71,7 +73,7 @@ pub(crate) fn table_timestamp_column(signal: StorageSignal) -> &'static str {
     match signal {
         StorageSignal::Logs => "time_unix_nano",
         StorageSignal::Spans => "start_time_unix_nano",
-        StorageSignal::MetricGauge | StorageSignal::MetricSum => "time_unix_nano",
+        StorageSignal::MetricGauge | StorageSignal::MetricSum | StorageSignal::MetricHistogram => "time_unix_nano",
     }
 }
 // The read-side table contract follows duckdb-otlp's DuckDB-facing schema.
@@ -167,6 +169,33 @@ pub(super) const METRIC_SUM_COLUMNS: &[(&str, &str)] = &[
     ("is_monotonic", "BOOLEAN"),
 ];
 
+/// Explicit-bucket histograms. `bucket_counts` holds one more entry than `explicit_bounds` (the
+/// last bucket is unbounded); neither is cumulative.
+pub(super) const METRIC_HISTOGRAM_COLUMNS: &[(&str, &str)] = &[
+    ("time_unix_nano", "TIMESTAMP_NS"),
+    ("start_time_unix_nano", "TIMESTAMP_NS"),
+    ("name", "VARCHAR"),
+    ("description", "VARCHAR"),
+    ("unit", "VARCHAR"),
+    ("count", "UBIGINT"),
+    ("sum", "DOUBLE"),
+    ("min", "DOUBLE"),
+    ("max", "DOUBLE"),
+    ("bucket_counts", "UBIGINT[]"),
+    ("explicit_bounds", "DOUBLE[]"),
+    ("service_name", "VARCHAR"),
+    ("service_namespace", "VARCHAR"),
+    ("service_instance_id", "VARCHAR"),
+    ("resource_attributes", "VARCHAR"),
+    ("scope_name", "VARCHAR"),
+    ("scope_version", "VARCHAR"),
+    ("scope_attributes", "VARCHAR"),
+    ("metric_attributes", "VARCHAR"),
+    ("flags", "UINTEGER"),
+    ("exemplars_json", "VARCHAR"),
+    ("aggregation_temporality", "INTEGER"),
+];
+
 pub(super) const METADATA_SUMMARY_COLUMNS: &[(&str, &str)] = &[
     ("signal", "VARCHAR"),
     ("event_date", "DATE"),
@@ -192,6 +221,7 @@ pub(super) fn table_columns(
         StorageSignal::Spans => SPANS_COLUMNS,
         StorageSignal::MetricGauge => METRIC_GAUGE_COLUMNS,
         StorageSignal::MetricSum => METRIC_SUM_COLUMNS,
+        StorageSignal::MetricHistogram => METRIC_HISTOGRAM_COLUMNS,
     }
 }
 
@@ -210,7 +240,10 @@ pub(super) fn create_table_sql(prefix: &str, name: &str, cols: &[(&str, &str)]) 
 /// v3 is the query-only cutover to duckdb-otlp-owned tables: physical table
 /// names use the `otlp_*` prefix, trace/span IDs are hex VARCHAR, and
 /// canardstack no longer owns `ingested_at`/`source_format` bookkeeping columns.
-pub(super) const SCHEMA_VERSION: u32 = 3;
+///
+/// v4 adds the `otlp_metrics_histogram` table. It is additive (an older catalog is read as is and
+/// gets the table created), so the minimum compatible version stays at v3.
+pub(super) const SCHEMA_VERSION: u32 = 4;
 /// The oldest catalog schema generation this binary can safely operate on. Keep
 /// it equal to [`SCHEMA_VERSION`] for a breaking change; an additive,
 /// schema-on-read-tolerant (expand/contract) change can leave this low so a
@@ -407,14 +440,14 @@ mod tests {
             StorageSignal::Spans => "spans",
             StorageSignal::MetricGauge => "gauge",
             StorageSignal::MetricSum => "sum",
+            StorageSignal::MetricHistogram => "histogram",
         }
     }
 
     /// The DuckDB column type canardstack declares to read an otlp2records field
     /// of the given type after duckdb-otlp has materialized it. JSON attribute
     /// fields and trace/span fixed-size binary IDs are stored as VARCHAR by the
-    /// extension. List columns are only present on the histogram tables, which
-    /// this query service does not expose.
+    /// extension. List columns are only present on the histogram tables.
     fn expected_duckdb_type(field_type: FieldType) -> &'static str {
         match field_type {
             FieldType::Timestamp => "TIMESTAMP_NS",
@@ -428,10 +461,9 @@ mod tests {
             FieldType::String => "VARCHAR",
             FieldType::Json => "VARCHAR",
             FieldType::FixedSizeBinary16 | FieldType::FixedSizeBinary8 => "VARCHAR",
-            // List columns only appear on histogram/exp_histogram schemas, which
-            // canardstack v0 rejects at ingest — keep the variants explicit so a
-            // future histogram column trips the alignment test.
-            FieldType::ListUInt64 | FieldType::ListFloat64 => "<list-unsupported>",
+            // List columns only appear on the histogram schemas.
+            FieldType::ListUInt64 => "UBIGINT[]",
+            FieldType::ListFloat64 => "DOUBLE[]",
         }
     }
 

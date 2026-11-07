@@ -1,7 +1,8 @@
 //! OpenTelemetry metric name to Prometheus metric name, as Prometheus' OTLP receiver does with
 //! its default translation (underscore escaping with suffixes): characters outside
 //! `[a-zA-Z0-9_:]` become `_`, a known unit adds a suffix (`s` -> `_seconds`), a gauge with unit `1`
-//! gets `_ratio`, and a monotonic sum gets `_total`. With suffixes off only the escaping applies.
+//! gets `_ratio`, and a monotonic sum gets `_total`; a histogram is exposed as `<name>_bucket{le}`,
+//! `<name>_sum` and `<name>_count`. With suffixes off only the escaping applies.
 
 /// What the stored metric is, as far as naming goes.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -9,6 +10,8 @@ pub enum Kind {
     Gauge,
     /// A monotonic sum.
     Counter,
+    /// An explicit-bucket histogram: the unit suffix applies, then `_bucket`, `_sum` or `_count`.
+    Histogram,
 }
 
 /// SQL for a stored name after escaping, for narrowing a fetch before the exact comparison.
@@ -181,5 +184,17 @@ mod tests {
         assert!(c.contains(&"http_server_duration_seconds".to_string()));
         let c = stored_name_candidates("net_rate_bytes_per_second_total");
         assert!(c.contains(&"net_rate".to_string()));
+    }
+}
+
+/// The part of a histogram's series name that says which of its series it is.
+pub const HISTOGRAM_COMPONENTS: [&str; 3] = ["_bucket", "_sum", "_count"];
+
+/// `le` label text for a bucket bound, as Prometheus prints it.
+pub fn le_text(bound: Option<f64>) -> String {
+    match bound {
+        Some(b) if b.is_finite() => b.to_string(),
+        Some(b) if b < 0.0 => "-Inf".to_string(),
+        _ => "+Inf".to_string(),
     }
 }

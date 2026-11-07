@@ -634,6 +634,85 @@ fn prometheus_metric_attributes_are_labels() {
     assert_eq!(routes["data"], serde_json::json!(["/a"]));
 }
 
+/// One cumulative histogram series, `http.server.duration` in seconds with bounds 0.1, 0.5 and 1,
+/// scraped twice ten seconds apart.
+fn app_with_histogram() -> (tempfile::TempDir, AppState) {
+    let dir = tempdir().unwrap();
+    let mut config = Config::test(dir.path().join("canardstack.duckdb"));
+    config.operator.local_storage_dir = dir.path().join("storage");
+    let state = AppState::new_with_storage_hook_for_tests(config, |storage| {
+        storage
+            .with_conn(|conn, prefix| {
+                conn.execute_batch(&format!(
+                    "INSERT INTO {prefix}otlp_metrics_histogram \
+                     (time_unix_nano, start_time_unix_nano, name, unit, count, sum, bucket_counts, explicit_bounds, \
+                      service_name, service_instance_id, resource_attributes, metric_attributes, aggregation_temporality) VALUES \
+                     (TIMESTAMP_NS '2026-01-01 00:00:00', TIMESTAMP_NS '2025-12-31 23:59:00', 'http.server.duration', 's', 10, 12.5, \
+                      [1, 2, 3, 4], [0.1, 0.5, 1.0], 'web', 'h1', '{{}}', '{{\"route\":\"/a\"}}', 2), \
+                     (TIMESTAMP_NS '2026-01-01 00:00:10', TIMESTAMP_NS '2025-12-31 23:59:00', 'http.server.duration', 's', 20, 30.0, \
+                      [2, 4, 6, 8], [0.1, 0.5, 1.0], 'web', 'h1', '{{}}', '{{\"route\":\"/a\"}}', 2);"
+                ))?;
+                Ok(())
+            })
+            .unwrap();
+    })
+    .unwrap();
+    (dir, state)
+}
+
+#[test]
+fn promql_reads_explicit_histograms_as_classic_bucket_sum_and_count_series() {
+    let (_dir, state) = app_with_histogram();
+    let at = |q: &str, t: &str| prom_get(&state, "/api/v1/query", &[("query", q), ("time", t)])["data"]["result"].clone();
+    // 2026-01-01T00:00:00Z is 1767225600; the first scrape.
+    let buckets = at("http_server_duration_seconds_bucket", "1767225600");
+    let mut by_le: Vec<(String, String)> = buckets
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| (s["metric"]["le"].as_str().unwrap().to_string(), s["value"][1].as_str().unwrap().to_string()))
+        .collect();
+    by_le.sort_by(|a, b| a.0.cmp(&b.0));
+    // Bucket counts are cumulative and the last bucket is `+Inf`.
+    assert_eq!(
+        by_le,
+        [("+Inf", "10"), ("0.1", "1"), ("0.5", "3"), ("1", "6")].map(|(a, b)| (a.to_string(), b.to_string()))
+    );
+    let first = &buckets[0]["metric"];
+    assert_eq!(first["__name__"], "http_server_duration_seconds_bucket");
+    assert_eq!(first["job"], "web");
+    assert_eq!(first["instance"], "h1");
+    assert_eq!(first["route"], "/a");
+    assert_eq!(at("http_server_duration_seconds_count", "1767225600")[0]["value"][1], "10");
+    assert_eq!(at("http_server_duration_seconds_sum", "1767225600")[0]["value"][1], "12.5");
+    assert_eq!(at(r#"http_server_duration_seconds_bucket{le="0.5"}"#, "1767225610")[0]["value"][1], "6");
+    // The quantile interpolates inside the bucket: rank 5 of 10 lies between 0.5 (3) and 1 (6).
+    let q = at("histogram_quantile(0.5, http_server_duration_seconds_bucket)", "1767225600");
+    let value: f64 = q[0]["value"][1].as_str().unwrap().parse().unwrap();
+    assert!((value - (0.5 + 0.5 * 2.0 / 3.0)).abs() < 1e-9, "{q}");
+    // Over the two scrapes, 10 more observations arrived, spread like the first ten.
+    let rate = at("histogram_quantile(0.5, sum by (le) (rate(http_server_duration_seconds_bucket[1m])))", "1767225610");
+    let value: f64 = rate[0]["value"][1].as_str().unwrap().parse().unwrap();
+    assert!((value - (0.5 + 0.5 * 2.0 / 3.0)).abs() < 1e-9, "{rate}");
+    // A selector that cannot be a histogram series does not see them.
+    assert_eq!(at("http_server_duration_seconds", "1767225600").as_array().unwrap().len(), 0);
+
+    // Discovery lists the three kinds of series, the `le` bounds and the histogram's type.
+    let window = [("start", "1767225500"), ("end", "1767225700")];
+    let names = prom_get(&state, "/api/v1/label/__name__/values", &window)["data"].clone();
+    assert_eq!(
+        names,
+        serde_json::json!(["http_server_duration_seconds_bucket", "http_server_duration_seconds_count", "http_server_duration_seconds_sum"])
+    );
+    let les = prom_get(&state, "/api/v1/label/le/values", &window)["data"].clone();
+    assert_eq!(les, serde_json::json!(["+Inf", "0.1", "0.5", "1"]));
+    assert!(prom_get(&state, "/api/v1/labels", &window)["data"].as_array().unwrap().iter().any(|l| l == "le"));
+    let series = prom_get(&state, "/api/v1/series", &[("start", "1767225500"), ("end", "1767225700"), ("match[]", "http_server_duration_seconds_sum")])["data"].clone();
+    assert_eq!(series.as_array().unwrap().len(), 1, "{series}");
+    let metadata = prom_get(&state, "/api/v1/metadata", &[])["data"].clone();
+    assert_eq!(metadata["http_server_duration_seconds"][0]["type"], "histogram");
+}
+
 #[test]
 fn prometheus_discovery_endpoints_honour_match_selectors() {
     let (_dir, state) = app_with_attribute_labels();
