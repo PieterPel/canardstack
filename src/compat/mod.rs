@@ -9,7 +9,9 @@ pub use prometheus::{
     prometheus_query_range, prometheus_series,
 };
 use serde_json::{json, Value};
-pub use tempo::{tempo_metrics_range, tempo_search, tempo_tag_values, tempo_tags, tempo_trace, tempo_trace_proto};
+pub use tempo::{
+    tempo_metrics_range, tempo_search, tempo_tag_values, tempo_tags, tempo_trace, tempo_trace_proto,
+};
 
 use crate::validation::ApiError;
 

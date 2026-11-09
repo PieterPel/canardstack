@@ -31,7 +31,11 @@ fn pushdown(matchers: &[Matcher], stages: &[Stage]) -> Vec<String> {
     }
     // Leading plain-text line filters run before any parser can change the line.
     for stage in stages {
-        let Stage::LineFilter { op: op @ (LineOp::Contains | LineOp::NotContains), values } = stage else {
+        let Stage::LineFilter {
+            op: op @ (LineOp::Contains | LineOp::NotContains),
+            values,
+        } = stage
+        else {
             break;
         };
         let texts: Option<Vec<String>> = values
@@ -43,7 +47,11 @@ fn pushdown(matchers: &[Matcher], stages: &[Stage]) -> Vec<String> {
             .collect();
         let Some(texts) = texts else { break };
         let any = format!("({})", texts.join(" OR "));
-        sql.push(if *op == LineOp::Contains { any } else { format!("NOT {any}") });
+        sql.push(if *op == LineOp::Contains {
+            any
+        } else {
+            format!("NOT {any}")
+        });
     }
     sql
 }
@@ -88,14 +96,23 @@ pub fn fetch(
     stages: &[Stage],
     window: Window,
 ) -> ApiResult<Fetched> {
-    let Window { from, to, order, rows } = window;
+    let Window {
+        from,
+        to,
+        order,
+        rows,
+    } = window;
     let tests = matchers
         .iter()
         .map(|m| Ok((m.name.clone(), ValueTest::new(m.op, &m.value)?)))
         .collect::<ApiResult<Vec<_>>>()?;
     let mut filters = vec![time_predicate("time_unix_nano", from, to)];
     filters.extend(pushdown(matchers, stages));
-    let direction = if order == Order::Oldest { "ASC" } else { "DESC" };
+    let direction = if order == Order::Oldest {
+        "ASC"
+    } else {
+        "DESC"
+    };
     let sql = format!(
         "SELECT epoch_ns(time_unix_nano), coalesce(body, ''), {ROW_COLUMNS} FROM {{prefix}}otlp_logs WHERE {} ORDER BY time_unix_nano {direction} LIMIT {rows}",
         filters.join(" AND "),
@@ -112,7 +129,11 @@ pub fn fetch(
             for i in 0..8 {
                 cols.push(row.get(2 + i)?);
             }
-            let key = cols.iter().map(|c| c.as_deref().unwrap_or("")).collect::<Vec<_>>().join("\u{1f}");
+            let key = cols
+                .iter()
+                .map(|c| c.as_deref().unwrap_or(""))
+                .collect::<Vec<_>>()
+                .join("\u{1f}");
             let labels = streams.entry(key).or_insert_with(|| {
                 let refs: [Option<&str>; 8] = std::array::from_fn(|i| cols[i].as_deref());
                 let labels = labels_from_row(refs);
@@ -122,10 +143,17 @@ pub fn fetch(
                     .then(|| Arc::new(labels))
             });
             if let Some(labels) = labels {
-                out.push(Entry { ts_ns: row.get(0)?, line: row.get(1)?, labels: labels.clone() });
+                out.push(Entry {
+                    ts_ns: row.get(0)?,
+                    line: row.get(1)?,
+                    labels: labels.clone(),
+                });
             }
         }
-        Ok(Fetched { entries: out, exhausted: seen < rows })
+        Ok(Fetched {
+            entries: out,
+            exhausted: seen < rows,
+        })
     })
 }
 
@@ -140,7 +168,12 @@ pub fn fetch_all(
     to: DateTime<Utc>,
 ) -> ApiResult<Vec<Entry>> {
     let max = engine.max_log_lines();
-    let window = Window { from, to, order: Order::Oldest, rows: max + 1 };
+    let window = Window {
+        from,
+        to,
+        order: Order::Oldest,
+        rows: max + 1,
+    };
     let fetched = fetch(engine, storage, matchers, stages, window)?;
     if !fetched.exhausted {
         return Err(cap_error(max));
@@ -187,7 +220,8 @@ pub fn counts(
     let ms = |ns: i64| Utc.timestamp_millis_opt(ns.div_euclid(1_000_000)).single();
     let (from, to) = (
         ms(origin_ns).ok_or_else(|| ApiError::new(400, "bad_data", "time out of range"))?,
-        ms(end_ns + 1_000_000).ok_or_else(|| ApiError::new(400, "bad_data", "time out of range"))?,
+        ms(end_ns + 1_000_000)
+            .ok_or_else(|| ApiError::new(400, "bad_data", "time out of range"))?,
     );
     // The coarse predicate lets the files be skipped; the nanosecond one makes the window exact.
     let mut filters = vec![

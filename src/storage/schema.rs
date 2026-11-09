@@ -75,7 +75,10 @@ pub(crate) fn table_timestamp_column(signal: StorageSignal) -> &'static str {
     match signal {
         StorageSignal::Logs => "time_unix_nano",
         StorageSignal::Spans => "start_time_unix_nano",
-        StorageSignal::MetricGauge | StorageSignal::MetricSum | StorageSignal::MetricHistogram | StorageSignal::MetricExpHistogram => "time_unix_nano",
+        StorageSignal::MetricGauge
+        | StorageSignal::MetricSum
+        | StorageSignal::MetricHistogram
+        | StorageSignal::MetricExpHistogram => "time_unix_nano",
     }
 }
 // The read-side table contract follows duckdb-otlp's DuckDB-facing schema.

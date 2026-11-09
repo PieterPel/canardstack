@@ -13,10 +13,7 @@ pub mod vector;
 use crate::config::Config;
 use crate::db::sql::{quote as sql_quote, time_predicate};
 use crate::metrics::Timer;
-use crate::query::plan::{
-    FieldMatcher, MatchOp,
-    TracePlan, TraceSort,
-};
+use crate::query::plan::{FieldMatcher, MatchOp, TracePlan, TraceSort};
 use crate::semantic_labels::{self, LabelScope};
 use crate::signal::StorageSignal;
 use crate::storage::QueryExecution;
@@ -69,7 +66,10 @@ impl QueryEngine {
         }
         let present = self
             .run_interactive(storage, |conn, prefix| {
-                let sql = format!("SELECT count(*) FROM (SELECT 1 FROM {prefix}{} LIMIT 1)", StorageSignal::MetricExpHistogram.as_str());
+                let sql = format!(
+                    "SELECT count(*) FROM (SELECT 1 FROM {prefix}{} LIMIT 1)",
+                    StorageSignal::MetricExpHistogram.as_str()
+                );
                 Ok(conn.query_row(&sql, [], |row| row.get::<_, i64>(0))? > 0)
             })
             // When in doubt, look.
@@ -173,7 +173,6 @@ impl QueryEngine {
             .map_err(storage_err)?;
         Ok(wrap_rows(rows, *limit, timer.elapsed_ms()))
     }
-
 }
 fn collect_rows(
     iter: duckdb::MappedRows<'_, impl FnMut(&Row<'_>) -> duckdb::Result<Value>>,

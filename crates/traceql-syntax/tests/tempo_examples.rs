@@ -5,7 +5,11 @@ use traceql_syntax::{parse, validate, ValidateError};
 use yaml_rust2::YamlLoader;
 
 fn examples(section: &str) -> Vec<String> {
-    let text = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/test_examples.yaml")).unwrap();
+    let text = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/test_examples.yaml"
+    ))
+    .unwrap();
     let docs = YamlLoader::load_from_str(&text).unwrap();
     docs[0][section]
         .as_vec()
@@ -17,13 +21,22 @@ fn examples(section: &str) -> Vec<String> {
 
 fn check(section: &str, verdict: impl Fn(&str) -> Result<(), String>) {
     let list = examples(section);
-    assert!(list.len() > 20, "the {section} section is suspiciously small: {}", list.len());
+    assert!(
+        list.len() > 20,
+        "the {section} section is suspiciously small: {}",
+        list.len()
+    );
     eprintln!("{section}: {} queries", list.len());
     let failures: Vec<String> = list
         .iter()
         .filter_map(|q| verdict(q).err().map(|why| format!("  {q}\n      {why}")))
         .collect();
-    assert!(failures.is_empty(), "{} of the {section} examples are classified differently:\n{}", failures.len(), failures.join("\n"));
+    assert!(
+        failures.is_empty(),
+        "{} of the {section} examples are classified differently:\n{}",
+        failures.len(),
+        failures.join("\n")
+    );
 }
 
 #[test]

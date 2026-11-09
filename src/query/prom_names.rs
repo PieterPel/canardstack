@@ -21,7 +21,11 @@ pub const ESCAPED_NAME_SQL: &str =
 pub fn escape(name: &str) -> String {
     let mut out = String::with_capacity(name.len());
     for c in name.chars() {
-        let c = if c.is_ascii_alphanumeric() || c == '_' || c == ':' { c } else { '_' };
+        let c = if c.is_ascii_alphanumeric() || c == '_' || c == ':' {
+            c
+        } else {
+            '_'
+        };
         if c == '_' && out.ends_with('_') {
             continue;
         }
@@ -117,9 +121,8 @@ pub fn prom_name(name: &str, unit: Option<&str>, kind: Kind, suffixes: bool) -> 
         return out;
     }
     let unit = unit.unwrap_or("");
-    let word = unit_suffix(unit).or_else(|| {
-        (kind == Kind::Gauge && unit.trim() == "1").then(|| "ratio".to_string())
-    });
+    let word = unit_suffix(unit)
+        .or_else(|| (kind == Kind::Gauge && unit.trim() == "1").then(|| "ratio".to_string()));
     if let Some(word) = word {
         if !out.ends_with(&format!("_{word}")) {
             out.push('_');
@@ -166,13 +169,31 @@ mod tests {
     #[test]
     fn translates_like_the_prometheus_otlp_receiver() {
         let t = |n, u, k| prom_name(n, u, k, true);
-        assert_eq!(t("http.server.duration", Some("s"), Kind::Gauge), "http_server_duration_seconds");
-        assert_eq!(t("http.server.requests", Some("{request}"), Kind::Counter), "http_server_requests_total");
-        assert_eq!(t("process.memory", Some("By"), Kind::Gauge), "process_memory_bytes");
-        assert_eq!(t("cpu.utilization", Some("1"), Kind::Gauge), "cpu_utilization_ratio");
-        assert_eq!(t("net.rate", Some("By/s"), Kind::Gauge), "net_rate_bytes_per_second");
+        assert_eq!(
+            t("http.server.duration", Some("s"), Kind::Gauge),
+            "http_server_duration_seconds"
+        );
+        assert_eq!(
+            t("http.server.requests", Some("{request}"), Kind::Counter),
+            "http_server_requests_total"
+        );
+        assert_eq!(
+            t("process.memory", Some("By"), Kind::Gauge),
+            "process_memory_bytes"
+        );
+        assert_eq!(
+            t("cpu.utilization", Some("1"), Kind::Gauge),
+            "cpu_utilization_ratio"
+        );
+        assert_eq!(
+            t("net.rate", Some("By/s"), Kind::Gauge),
+            "net_rate_bytes_per_second"
+        );
         assert_eq!(t("already_total", None, Kind::Counter), "already_total");
-        assert_eq!(t("latency_seconds", Some("s"), Kind::Gauge), "latency_seconds");
+        assert_eq!(
+            t("latency_seconds", Some("s"), Kind::Gauge),
+            "latency_seconds"
+        );
         assert_eq!(t("9lives.count", None, Kind::Gauge), "_9lives_count");
         assert_eq!(prom_name("a.b", Some("s"), Kind::Counter, false), "a_b");
     }

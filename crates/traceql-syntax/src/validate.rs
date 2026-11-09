@@ -46,8 +46,12 @@ pub fn validate_with(query: &Query, regex_ok: &dyn Fn(&str) -> bool) -> Result {
         QueryKind::MetricsMath { expr, second } => {
             v.metrics_expr(expr)?;
             v.second_stages(second)?;
-            if (!second.is_empty() || !matches!(expr, MetricsExpr::Pipeline(_))) && has_compare(expr) {
-                return Err(invalid("`compare()` cannot be used with second stage functions"));
+            if (!second.is_empty() || !matches!(expr, MetricsExpr::Pipeline(_)))
+                && has_compare(expr)
+            {
+                return Err(invalid(
+                    "`compare()` cannot be used with second stage functions",
+                ));
             }
             Ok(())
         }
@@ -81,7 +85,12 @@ impl Ty {
     }
 
     fn matches(self, other: Ty) -> bool {
-        self == Ty::Attribute || other == Ty::Attribute || self == other || (self.numeric() && other.numeric()) || self == Ty::Nil || other == Ty::Nil
+        self == Ty::Attribute
+            || other == Ty::Attribute
+            || self == other
+            || (self.numeric() && other.numeric())
+            || self == Ty::Nil
+            || other == Ty::Nil
     }
 }
 
@@ -91,9 +100,23 @@ fn binary_type_valid(op: Op, t: Ty) -> bool {
         Ty::Bool => matches!(op, Op::And | Op::Or | Op::Eq | Op::Ne),
         Ty::Int | Ty::Float | Ty::Duration => matches!(
             op,
-            Op::Add | Op::Sub | Op::Mul | Op::Div | Op::Mod | Op::Pow | Op::Eq | Op::Ne | Op::Gt | Op::Ge | Op::Lt | Op::Le
+            Op::Add
+                | Op::Sub
+                | Op::Mul
+                | Op::Div
+                | Op::Mod
+                | Op::Pow
+                | Op::Eq
+                | Op::Ne
+                | Op::Gt
+                | Op::Ge
+                | Op::Lt
+                | Op::Le
         ),
-        Ty::Str => matches!(op, Op::Eq | Op::Ne | Op::Re | Op::NotRe | Op::Gt | Op::Ge | Op::Lt | Op::Le),
+        Ty::Str => matches!(
+            op,
+            Op::Eq | Op::Ne | Op::Re | Op::NotRe | Op::Gt | Op::Ge | Op::Lt | Op::Le
+        ),
         Ty::Nil | Ty::Status | Ty::Kind => matches!(op, Op::Eq | Op::Ne),
     }
 }
@@ -127,8 +150,13 @@ fn attribute_ty(a: &Attribute) -> Ty {
     match a.intrinsic {
         None => Ty::Attribute,
         Some(i) => match i {
-            Intrinsic::Duration | Intrinsic::EventTimeSinceStart | Intrinsic::TraceDuration => Ty::Duration,
-            Intrinsic::ChildCount | Intrinsic::NestedSetLeft | Intrinsic::NestedSetRight | Intrinsic::NestedSetParent => Ty::Int,
+            Intrinsic::Duration | Intrinsic::EventTimeSinceStart | Intrinsic::TraceDuration => {
+                Ty::Duration
+            }
+            Intrinsic::ChildCount
+            | Intrinsic::NestedSetLeft
+            | Intrinsic::NestedSetRight
+            | Intrinsic::NestedSetParent => Ty::Int,
             Intrinsic::Status => Ty::Status,
             Intrinsic::Kind => Ty::Kind,
             Intrinsic::Parent => Ty::Nil,
@@ -224,7 +252,11 @@ impl Validator<'_> {
                                 return Err(invalid(format!("invalid regex: {pattern:?}")));
                             }
                         }
-                        _ => return Err(invalid("a regex operator needs a constant string on the right")),
+                        _ => {
+                            return Err(invalid(
+                                "a regex operator needs a constant string on the right",
+                            ))
+                        }
                     }
                 }
                 Ok(())
@@ -254,7 +286,9 @@ impl Validator<'_> {
         self.field(f)?;
         let t = field_ty(f);
         if t != Ty::Attribute && t != Ty::Bool {
-            return Err(invalid("span filter field expressions must resolve to a boolean"));
+            return Err(invalid(
+                "span filter field expressions must resolve to a boolean",
+            ));
         }
         Ok(())
     }
@@ -275,10 +309,14 @@ impl Validator<'_> {
         self.field(e)?;
         let t = field_ty(e);
         if t != Ty::Attribute && !t.numeric() {
-            return Err(invalid("aggregate field expressions must resolve to a number type"));
+            return Err(invalid(
+                "aggregate field expressions must resolve to a number type",
+            ));
         }
         if !references_span(e) {
-            return Err(invalid("aggregate field expressions must reference the span"));
+            return Err(invalid(
+                "aggregate field expressions must reference the span",
+            ));
         }
         Ok(())
     }
@@ -329,7 +367,9 @@ impl Validator<'_> {
                 Element::ScalarFilter(f) => self.scalar_filter(f)?,
                 Element::Group(f) => {
                     if !references_span(f) {
-                        return Err(invalid("grouping field expressions must reference the span"));
+                        return Err(invalid(
+                            "grouping field expressions must reference the span",
+                        ));
                     }
                     self.field(f)?;
                 }
@@ -346,37 +386,57 @@ impl Validator<'_> {
         const MAX_GROUP_BYS: usize = 5;
         match &m.agg.func {
             MetricsFn::Rate | MetricsFn::CountOverTime => {}
-            MetricsFn::MinOverTime(a) | MetricsFn::MaxOverTime(a) | MetricsFn::AvgOverTime(a) | MetricsFn::SumOverTime(a) => {
-                self.attribute(a)?
-            }
+            MetricsFn::MinOverTime(a)
+            | MetricsFn::MaxOverTime(a)
+            | MetricsFn::AvgOverTime(a)
+            | MetricsFn::SumOverTime(a) => self.attribute(a)?,
             MetricsFn::HistogramOverTime(a) => {
                 self.attribute(a)?;
                 if m.agg.by.len() >= MAX_GROUP_BYS {
-                    return Err(ValidateError::Unsupported(format!("metrics group by {} values", m.agg.by.len())));
+                    return Err(ValidateError::Unsupported(format!(
+                        "metrics group by {} values",
+                        m.agg.by.len()
+                    )));
                 }
             }
             MetricsFn::QuantileOverTime(a, quantiles) => {
                 self.attribute(a)?;
                 if m.agg.by.len() >= MAX_GROUP_BYS {
-                    return Err(ValidateError::Unsupported(format!("metrics group by {} values", m.agg.by.len())));
+                    return Err(ValidateError::Unsupported(format!(
+                        "metrics group by {} values",
+                        m.agg.by.len()
+                    )));
                 }
                 if let Some(q) = quantiles.iter().find(|q| **q < 0.0 || **q > 1.0) {
                     return Err(invalid(format!("quantile must be between 0 and 1: {q}")));
                 }
             }
-            MetricsFn::Compare { filter, top_n, start, end } => {
+            MetricsFn::Compare {
+                filter,
+                top_n,
+                start,
+                end,
+            } => {
                 self.spanset_filter_field(filter)?;
                 if *top_n <= 0 || *top_n > 1000 {
-                    return Err(invalid("compare() top number of values must be an integer between 1 and 1000"));
+                    return Err(invalid(
+                        "compare() top number of values must be an integer between 1 and 1000",
+                    ));
                 }
                 if (*start != 0 || *end != 0) && (*start <= 0 || *end <= 0) {
-                    return Err(invalid("compare() timestamps must be positive integer unix nanoseconds"));
+                    return Err(invalid(
+                        "compare() timestamps must be positive integer unix nanoseconds",
+                    ));
                 }
                 if (*start != 0 || *end != 0) && end <= start {
-                    return Err(invalid("compare() end timestamp must be greater than start timestamp"));
+                    return Err(invalid(
+                        "compare() end timestamp must be greater than start timestamp",
+                    ));
                 }
                 if !m.second.is_empty() {
-                    return Err(invalid("`compare()` cannot be used with second stage functions"));
+                    return Err(invalid(
+                        "`compare()` cannot be used with second stage functions",
+                    ));
                 }
             }
         }
@@ -422,8 +482,12 @@ pub fn regex_syntax_ok(pattern: &str) -> bool {
         let c = chars[i];
         match c {
             '\\' => {
-                let Some(&e) = chars.get(i + 1) else { return false };
-                if e.is_ascii_digit() && e != '0' || (e.is_alphabetic() && !"dDsSwWbBAzZnrtfvaxpPQE".contains(e)) {
+                let Some(&e) = chars.get(i + 1) else {
+                    return false;
+                };
+                if e.is_ascii_digit() && e != '0'
+                    || (e.is_alphabetic() && !"dDsSwWbBAzZnrtfvaxpPQE".contains(e))
+                {
                     return false;
                 }
                 i += 2;
@@ -443,13 +507,18 @@ pub fn regex_syntax_ok(pattern: &str) -> bool {
                     match chars.get(i) {
                         None => return false,
                         Some(']') => break,
-                        Some('[') if chars.get(i + 1) == Some(&':') => match pattern_find(&chars, i + 2, ":]") {
-                            Some(end) => i = end + 2,
-                            None => return false,
-                        },
+                        Some('[') if chars.get(i + 1) == Some(&':') => {
+                            match pattern_find(&chars, i + 2, ":]") {
+                                Some(end) => i = end + 2,
+                                None => return false,
+                            }
+                        }
                         Some('\\') => i += 2,
                         Some(&lo) => {
-                            if chars.get(i + 1) == Some(&'-') && chars.get(i + 2).is_some_and(|c| *c != ']' && *c != '\\') && chars[i + 2] < lo {
+                            if chars.get(i + 1) == Some(&'-')
+                                && chars.get(i + 2).is_some_and(|c| *c != ']' && *c != '\\')
+                                && chars[i + 2] < lo
+                            {
                                 return false;
                             }
                             i += 1;
@@ -558,15 +627,26 @@ enum Repeat {
 }
 
 fn repeat_at(chars: &[char], start: usize) -> Repeat {
-    let Some(close) = (start..chars.len()).find(|&i| chars[i] == '}') else { return Repeat::NotARepeat };
+    let Some(close) = (start..chars.len()).find(|&i| chars[i] == '}') else {
+        return Repeat::NotARepeat;
+    };
     let body: String = chars[start + 1..close].iter().collect();
     let digits = |t: &str| !t.is_empty() && t.chars().all(|c| c.is_ascii_digit());
     let (min, max) = match body.split_once(',') {
-        Some((a, b)) if digits(a) && (b.is_empty() || digits(b)) => (a.parse::<u32>(), if b.is_empty() { Ok(None) } else { b.parse::<u32>().map(Some) }),
+        Some((a, b)) if digits(a) && (b.is_empty() || digits(b)) => (
+            a.parse::<u32>(),
+            if b.is_empty() {
+                Ok(None)
+            } else {
+                b.parse::<u32>().map(Some)
+            },
+        ),
         None if digits(&body) => (body.parse::<u32>(), body.parse::<u32>().map(Some)),
         _ => return Repeat::NotARepeat,
     };
-    let (Ok(min), Ok(max)) = (min, max) else { return Repeat::Invalid };
+    let (Ok(min), Ok(max)) = (min, max) else {
+        return Repeat::Invalid;
+    };
     if min > 1000 || max.is_some_and(|m| m > 1000 || m < min) {
         return Repeat::Invalid;
     }
@@ -579,10 +659,25 @@ mod tests {
 
     #[test]
     fn regex_syntax_check_accepts_valid_and_rejects_broken_patterns() {
-        for ok in ["test", ".*", "a.*b", "(a|b)+", "[a-z]{2,4}", r"\d+\.\d*", "(?i)abc", "(?:x)?y", "(?P<n>a)", "[[:alpha:]]", "a{,3}", "^a$"] {
+        for ok in [
+            "test",
+            ".*",
+            "a.*b",
+            "(a|b)+",
+            "[a-z]{2,4}",
+            r"\d+\.\d*",
+            "(?i)abc",
+            "(?:x)?y",
+            "(?P<n>a)",
+            "[[:alpha:]]",
+            "a{,3}",
+            "^a$",
+        ] {
             assert!(regex_syntax_ok(ok), "{ok} should be valid");
         }
-        for bad in ["[", "(", ")", "*a", "a**", "a{2,1}", r"a\", "[z-a]", "(?=a)", r"\1", "a|*"] {
+        for bad in [
+            "[", "(", ")", "*a", "a**", "a{2,1}", r"a\", "[z-a]", "(?=a)", r"\1", "a|*",
+        ] {
             assert!(!regex_syntax_ok(bad), "{bad} should be invalid");
         }
     }

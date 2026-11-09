@@ -20,7 +20,13 @@ pub const SERIES_COLUMNS: &str =
 pub fn sanitize_label_name(key: &str) -> String {
     let mut out: String = key
         .chars()
-        .map(|c| if c.is_ascii_alphanumeric() || c == '_' { c } else { '_' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect();
     if out.starts_with(|c: char| c.is_ascii_digit()) {
         out.insert(0, '_');

@@ -63,7 +63,10 @@ impl Parser {
         if self.eat(&tok) {
             Ok(())
         } else {
-            Err(err(self.pos(), format!("expected {tok:?}, found {:?}", self.peek())))
+            Err(err(
+                self.pos(),
+                format!("expected {tok:?}, found {:?}", self.peek()),
+            ))
         }
     }
 
@@ -81,7 +84,10 @@ impl Parser {
     fn string(&mut self) -> Result<String> {
         match self.next() {
             Tok::Str(s) => Ok(s),
-            other => Err(err(self.pos(), format!("expected a string, found {other:?}"))),
+            other => Err(err(
+                self.pos(),
+                format!("expected a string, found {other:?}"),
+            )),
         }
     }
 
@@ -89,7 +95,10 @@ impl Parser {
         let negative = self.eat(&Tok::Minus);
         match self.next() {
             Tok::Num(n) => Ok(if negative { -n } else { n }),
-            other => Err(err(self.pos(), format!("expected a number, found {other:?}"))),
+            other => Err(err(
+                self.pos(),
+                format!("expected a number, found {other:?}"),
+            )),
         }
     }
 
@@ -141,7 +150,11 @@ impl Parser {
     #[allow(clippy::type_complexity)]
     fn binary_modifiers(
         &mut self,
-    ) -> Result<(bool, Option<(bool, Vec<String>)>, Option<(bool, Vec<String>)>)> {
+    ) -> Result<(
+        bool,
+        Option<(bool, Vec<String>)>,
+        Option<(bool, Vec<String>)>,
+    )> {
         let bool_modifier = if self.is_ident("bool") {
             self.next();
             true
@@ -327,7 +340,10 @@ impl Parser {
         self.expect(Tok::RParen)?;
         let grouping = self.grouping()?;
         if op.needs_unwrap() && unwrap.is_none() {
-            return Err(err(self.pos(), "this range aggregation needs `| unwrap <label>`"));
+            return Err(err(
+                self.pos(),
+                "this range aggregation needs `| unwrap <label>`",
+            ));
         }
         Ok(Expr::Range(Box::new(RangeAgg {
             op,
@@ -343,7 +359,10 @@ impl Parser {
     fn duration_ms(&mut self) -> Result<i64> {
         match self.next() {
             Tok::Duration(secs) => Ok((secs * 1000.0).round() as i64),
-            other => Err(err(self.pos(), format!("expected a duration, found {other:?}"))),
+            other => Err(err(
+                self.pos(),
+                format!("expected a duration, found {other:?}"),
+            )),
         }
     }
 
@@ -355,7 +374,10 @@ impl Parser {
         let mut unwrap = None;
         self.stages(&mut stages, &mut unwrap)?;
         if unwrap.is_some() {
-            return Err(err(self.pos(), "`unwrap` is only valid inside a range aggregation"));
+            return Err(err(
+                self.pos(),
+                "`unwrap` is only valid inside a range aggregation",
+            ));
         }
         Ok(LogExpr { matchers, stages })
     }
@@ -370,7 +392,12 @@ impl Parser {
                 Tok::Ne => MatchOp::Ne,
                 Tok::Re => MatchOp::Re,
                 Tok::NotRe => MatchOp::NotRe,
-                other => return Err(err(self.pos(), format!("expected a matcher operator, found {other:?}"))),
+                other => {
+                    return Err(err(
+                        self.pos(),
+                        format!("expected a matcher operator, found {other:?}"),
+                    ))
+                }
             };
             matchers.push(Matcher {
                 name,
@@ -383,7 +410,10 @@ impl Parser {
         }
         self.expect(Tok::RBrace)?;
         if matchers.is_empty() {
-            return Err(err(self.pos(), "a stream selector needs at least one matcher"));
+            return Err(err(
+                self.pos(),
+                "a stream selector needs at least one matcher",
+            ));
         }
         Ok(matchers)
     }
@@ -443,13 +473,30 @@ impl Parser {
         };
         let keyword = matches!(
             word.as_str(),
-            "json" | "logfmt" | "regexp" | "pattern" | "unpack" | "line_format" | "label_format"
-                | "decolorize" | "drop" | "keep" | "unwrap"
+            "json"
+                | "logfmt"
+                | "regexp"
+                | "pattern"
+                | "unpack"
+                | "line_format"
+                | "label_format"
+                | "decolorize"
+                | "drop"
+                | "keep"
+                | "unwrap"
         );
         // A label named like a keyword is still a label filter: `| json = "x"`.
         let is_filter = matches!(
             self.peek_at(1),
-            Tok::Eq | Tok::EqEq | Tok::Ne | Tok::Re | Tok::NotRe | Tok::Gt | Tok::Ge | Tok::Lt | Tok::Le
+            Tok::Eq
+                | Tok::EqEq
+                | Tok::Ne
+                | Tok::Re
+                | Tok::NotRe
+                | Tok::Gt
+                | Tok::Ge
+                | Tok::Lt
+                | Tok::Le
         ) && !matches!(word.as_str(), "drop" | "keep");
         if !keyword || is_filter {
             return Ok(Parsed::Stage(Stage::LabelFilter(self.label_filter(0)?)));
@@ -507,7 +554,12 @@ impl Parser {
             out.push(match self.next() {
                 Tok::Ident(src) => LabelFormatItem::Rename { dst, src },
                 Tok::Str(template) => LabelFormatItem::Template { dst, template },
-                other => return Err(err(self.pos(), format!("expected a label or template, found {other:?}"))),
+                other => {
+                    return Err(err(
+                        self.pos(),
+                        format!("expected a label or template, found {other:?}"),
+                    ))
+                }
             });
             if !self.eat(&Tok::Comma) {
                 return Ok(out);
@@ -580,8 +632,20 @@ impl Parser {
                 true
             } else {
                 // Adjacent filters: the next token starts another comparison.
-                matches!(self.peek(), Tok::LParen) || (matches!(self.peek(), Tok::Ident(w) if w != "or")
-                    && matches!(self.peek_at(1), Tok::Eq | Tok::EqEq | Tok::Ne | Tok::Re | Tok::NotRe | Tok::Gt | Tok::Ge | Tok::Lt | Tok::Le))
+                matches!(self.peek(), Tok::LParen)
+                    || (matches!(self.peek(), Tok::Ident(w) if w != "or")
+                        && matches!(
+                            self.peek_at(1),
+                            Tok::Eq
+                                | Tok::EqEq
+                                | Tok::Ne
+                                | Tok::Re
+                                | Tok::NotRe
+                                | Tok::Gt
+                                | Tok::Ge
+                                | Tok::Lt
+                                | Tok::Le
+                        ))
             };
             if !joined {
                 return Ok(left);
@@ -607,7 +671,12 @@ impl Parser {
             Tok::Ge => CmpOp::Ge,
             Tok::Lt => CmpOp::Lt,
             Tok::Le => CmpOp::Le,
-            other => return Err(err(self.pos(), format!("expected a comparison, found {other:?}"))),
+            other => {
+                return Err(err(
+                    self.pos(),
+                    format!("expected a comparison, found {other:?}"),
+                ))
+            }
         };
         let value = match self.peek().clone() {
             Tok::Str(s) => {
@@ -630,7 +699,12 @@ impl Parser {
                 self.expect(Tok::RParen)?;
                 LabelValue::Ip(ip)
             }
-            other => return Err(err(self.pos(), format!("expected a value, found {other:?}"))),
+            other => {
+                return Err(err(
+                    self.pos(),
+                    format!("expected a value, found {other:?}"),
+                ))
+            }
         };
         Ok(LabelFilter::Cmp { name, op, value })
     }
@@ -670,55 +744,109 @@ mod tests {
     #[test]
     fn label_filter_precedence_matches_loki() {
         // (a and b) or c
-        let Expr::Log(log) = ok(r#"{j="x"} | a > 1 and b > 2 or c > 3"#) else { panic!() };
-        let Stage::LabelFilter(LabelFilter::Or(left, _)) = &log.stages[0] else { panic!() };
+        let Expr::Log(log) = ok(r#"{j="x"} | a > 1 and b > 2 or c > 3"#) else {
+            panic!()
+        };
+        let Stage::LabelFilter(LabelFilter::Or(left, _)) = &log.stages[0] else {
+            panic!()
+        };
         assert!(matches!(**left, LabelFilter::And(..)));
         // a and (b or c)
-        let Expr::Log(log) = ok(r#"{j="x"} | a > 1 and (b > 2 or c > 3)"#) else { panic!() };
-        let Stage::LabelFilter(LabelFilter::And(_, right)) = &log.stages[0] else { panic!() };
+        let Expr::Log(log) = ok(r#"{j="x"} | a > 1 and (b > 2 or c > 3)"#) else {
+            panic!()
+        };
+        let Stage::LabelFilter(LabelFilter::And(_, right)) = &log.stages[0] else {
+            panic!()
+        };
         assert!(matches!(**right, LabelFilter::Or(..)));
         // whitespace is AND too
-        let Expr::Log(log) = ok(r#"{j="x"} | a > 1 b > 2"#) else { panic!() };
-        assert!(matches!(&log.stages[0], Stage::LabelFilter(LabelFilter::And(..))));
+        let Expr::Log(log) = ok(r#"{j="x"} | a > 1 b > 2"#) else {
+            panic!()
+        };
+        assert!(matches!(
+            &log.stages[0],
+            Stage::LabelFilter(LabelFilter::And(..))
+        ));
     }
 
     #[test]
     fn metric_queries_parse() {
-        let Expr::Vector(v) = ok(r#"sum by (level) (rate({app="foo"} |= "x" [1m] offset 5m))"#) else { panic!() };
+        let Expr::Vector(v) = ok(r#"sum by (level) (rate({app="foo"} |= "x" [1m] offset 5m))"#)
+        else {
+            panic!()
+        };
         let Expr::Range(r) = &v.expr else { panic!() };
         assert_eq!((r.range_ms, r.offset_ms), (60_000, 300_000));
         assert_eq!(v.grouping.as_ref().unwrap().labels, ["level"]);
 
-        let Expr::Range(r) = ok(r#"quantile_over_time(0.99, {a="b"} | json | unwrap duration(took) [5m]) by (x)"#) else { panic!() };
+        let Expr::Range(r) =
+            ok(r#"quantile_over_time(0.99, {a="b"} | json | unwrap duration(took) [5m]) by (x)"#)
+        else {
+            panic!()
+        };
         assert_eq!(r.param, Some(0.99));
-        assert_eq!(r.unwrap, Some(Unwrap { conv: Conv::Duration, label: "took".into() }));
+        assert_eq!(
+            r.unwrap,
+            Some(Unwrap {
+                conv: Conv::Duration,
+                label: "took".into()
+            })
+        );
         assert!(r.grouping.is_some());
 
-        let Expr::Range(r) = ok(r#"avg_over_time(({a="b"} | unwrap bytes(size))[1h30m])"#) else { panic!() };
+        let Expr::Range(r) = ok(r#"avg_over_time(({a="b"} | unwrap bytes(size))[1h30m])"#) else {
+            panic!()
+        };
         assert_eq!(r.range_ms, 5_400_000);
 
-        assert!(matches!(ok(r#"topk(3, sum by (a) (rate({j=~".+"}[1m])))"#), Expr::Vector(_)));
-        assert!(matches!(ok(r#"label_replace(rate({a="b"}[1m]), "x", "$1", "a", "(.*)")"#), Expr::LabelReplace(_)));
-        assert!(matches!(ok("sort_desc(sum by (a) (rate({a=\"b\"}[1m])))"), Expr::Vector(_)));
+        assert!(matches!(
+            ok(r#"topk(3, sum by (a) (rate({j=~".+"}[1m])))"#),
+            Expr::Vector(_)
+        ));
+        assert!(matches!(
+            ok(r#"label_replace(rate({a="b"}[1m]), "x", "$1", "a", "(.*)")"#),
+            Expr::LabelReplace(_)
+        ));
+        assert!(matches!(
+            ok("sort_desc(sum by (a) (rate({a=\"b\"}[1m])))"),
+            Expr::Vector(_)
+        ));
     }
 
     #[test]
     fn binary_expressions_follow_precedence_and_modifiers() {
-        let Expr::Binary(b) = ok("1 + 2 * 3") else { panic!() };
+        let Expr::Binary(b) = ok("1 + 2 * 3") else {
+            panic!()
+        };
         assert_eq!(b.op, BinOp::Add);
-        let Expr::Binary(b) = ok("2 ^ 3 ^ 2") else { panic!() };
+        let Expr::Binary(b) = ok("2 ^ 3 ^ 2") else {
+            panic!()
+        };
         assert!(matches!(b.rhs, Expr::Binary(_))); // right associative
-        let Expr::Binary(b) = ok(r#"sum(rate({a="b"}[1m])) > bool on(x) group_left(y) 3"#) else { panic!() };
+        let Expr::Binary(b) = ok(r#"sum(rate({a="b"}[1m])) > bool on(x) group_left(y) 3"#) else {
+            panic!()
+        };
         assert!(b.bool_modifier);
         assert_eq!(b.matching, Some((true, vec!["x".to_string()])));
         assert_eq!(b.group, Some((true, vec!["y".to_string()])));
-        assert_eq!(ok("vector(1) + vector(2) / vector(3)"), ok("vector(1) + (vector(2) / vector(3))"));
+        assert_eq!(
+            ok("vector(1) + vector(2) / vector(3)"),
+            ok("vector(1) + (vector(2) / vector(3))")
+        );
         assert_eq!(ok("-3"), Expr::Number(-3.0));
     }
 
     #[test]
     fn errors_are_reported_not_panicked() {
-        for q in [r#"{a="b""#, "{}", r#"{a="b"} |"#, "rate({a=\"b\"})", r#"count_over_time({a="b"}[5x])"#, "nosuchfn(1)", r#"sum_over_time({a="b"}[1m])"#] {
+        for q in [
+            r#"{a="b""#,
+            "{}",
+            r#"{a="b"} |"#,
+            "rate({a=\"b\"})",
+            r#"count_over_time({a="b"}[5x])"#,
+            "nosuchfn(1)",
+            r#"sum_over_time({a="b"}[1m])"#,
+        ] {
             assert!(parse(q).is_err(), "{q} should not parse");
         }
     }

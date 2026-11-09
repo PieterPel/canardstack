@@ -45,7 +45,10 @@ pub fn label_names(
     from: DateTime<Utc>,
     to: DateTime<Utc>,
 ) -> ApiResult<Vec<String>> {
-    let names: BTreeSet<String> = series(engine, storage, from, to)?.into_iter().flat_map(Labels::into_keys).collect();
+    let names: BTreeSet<String> = series(engine, storage, from, to)?
+        .into_iter()
+        .flat_map(Labels::into_keys)
+        .collect();
     Ok(names.into_iter().collect())
 }
 

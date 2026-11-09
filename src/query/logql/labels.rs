@@ -9,7 +9,8 @@ use crate::query::prom_labels::{attribute_labels, Labels};
 pub const ROW_COLUMNS: &str = "service_name, service_namespace, service_instance_id, resource_attributes, log_attributes, severity_text, trace_id, span_id";
 
 pub fn labels_from_row(cols: [Option<&str>; 8]) -> Labels {
-    let [service_name, service_namespace, service_instance_id, resource, log, severity, trace_id, span_id] = cols;
+    let [service_name, service_namespace, service_instance_id, resource, log, severity, trace_id, span_id] =
+        cols;
     // Log attributes first so a resource attribute of the same name wins the stream label.
     let mut labels = attribute_labels(log);
     labels.extend(attribute_labels(resource));

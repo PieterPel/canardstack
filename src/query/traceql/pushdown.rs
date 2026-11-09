@@ -60,7 +60,11 @@ fn spansets(s: &Spansets, out: &mut Vec<String>) {
                 spansets(rhs, out);
             }
             // The result is made of right-hand spans only.
-            SpansetOp::NotChild | SpansetOp::NotParent | SpansetOp::NotDescendant | SpansetOp::NotAncestor | SpansetOp::NotSibling => {
+            SpansetOp::NotChild
+            | SpansetOp::NotParent
+            | SpansetOp::NotDescendant
+            | SpansetOp::NotAncestor
+            | SpansetOp::NotSibling => {
                 spansets(rhs, out);
             }
             SpansetOp::Union => {}
@@ -70,7 +74,11 @@ fn spansets(s: &Spansets, out: &mut Vec<String>) {
 
 fn conjuncts(f: &Field, out: &mut Vec<String>) {
     match f {
-        Field::Binary { op: Op::And, lhs, rhs } => {
+        Field::Binary {
+            op: Op::And,
+            lhs,
+            rhs,
+        } => {
             conjuncts(lhs, out);
             conjuncts(rhs, out);
         }
@@ -122,7 +130,9 @@ fn attribute_expressions(a: &Attribute) -> Option<Vec<String>> {
         _ => None,
     };
     let resource = match service_column {
-        Some(column) => format!("coalesce(json_extract_string(resource_attributes, {path}), NULLIF({column}, ''))"),
+        Some(column) => format!(
+            "coalesce(json_extract_string(resource_attributes, {path}), NULLIF({column}, ''))"
+        ),
         None => format!("json_extract_string(resource_attributes, {path})"),
     };
     match a.scope {
@@ -135,10 +145,22 @@ fn attribute_expressions(a: &Attribute) -> Option<Vec<String>> {
 
 fn condition(f: &Field) -> Option<String> {
     match f {
-        Field::Unary { op: Op::Exists, operand } => {
-            let Field::Attribute(a) = operand.as_ref() else { return None };
+        Field::Unary {
+            op: Op::Exists,
+            operand,
+        } => {
+            let Field::Attribute(a) = operand.as_ref() else {
+                return None;
+            };
             let exprs = attribute_expressions(a)?;
-            Some(format!("({})", exprs.iter().map(|e| format!("{e} IS NOT NULL")).collect::<Vec<_>>().join(" OR ")))
+            Some(format!(
+                "({})",
+                exprs
+                    .iter()
+                    .map(|e| format!("{e} IS NOT NULL"))
+                    .collect::<Vec<_>>()
+                    .join(" OR ")
+            ))
         }
         Field::Binary { op, lhs, rhs } => {
             let (op, attr, value) = match (lhs.as_ref(), rhs.as_ref()) {
@@ -160,7 +182,9 @@ fn compare(op: Op, a: &Attribute, value: &Static) -> Option<String> {
         }
         return match (intrinsic, value) {
             (Intrinsic::Name, Static::Str(s)) => Some(format!("name {symbol} {}", quote(s))),
-            (Intrinsic::Duration, Static::Duration(n)) => Some(format!("duration_time_unix_nano {symbol} {n}")),
+            (Intrinsic::Duration, Static::Duration(n)) => {
+                Some(format!("duration_time_unix_nano {symbol} {n}"))
+            }
             (Intrinsic::Status, Static::Status(s)) if matches!(op, Op::Eq | Op::Ne) => {
                 let code = match s {
                     Status::Unset => 0,
@@ -185,10 +209,22 @@ fn compare(op: Op, a: &Attribute, value: &Static) -> Option<String> {
     }
     let exprs = attribute_expressions(a)?;
     let parts: Vec<String> = match value {
-        Static::Str(s) if matches!(op, Op::Eq | Op::Ne) => exprs.iter().map(|e| format!("{e} {symbol} {}", quote(s))).collect(),
-        Static::Bool(b) if matches!(op, Op::Eq | Op::Ne) => exprs.iter().map(|e| format!("{e} {symbol} '{b}'")).collect(),
-        Static::Int(n) => exprs.iter().map(|e| format!("TRY_CAST({e} AS DOUBLE) {symbol} {n}")).collect(),
-        Static::Float(n) if n.is_finite() => exprs.iter().map(|e| format!("TRY_CAST({e} AS DOUBLE) {symbol} {n:?}")).collect(),
+        Static::Str(s) if matches!(op, Op::Eq | Op::Ne) => exprs
+            .iter()
+            .map(|e| format!("{e} {symbol} {}", quote(s)))
+            .collect(),
+        Static::Bool(b) if matches!(op, Op::Eq | Op::Ne) => exprs
+            .iter()
+            .map(|e| format!("{e} {symbol} '{b}'"))
+            .collect(),
+        Static::Int(n) => exprs
+            .iter()
+            .map(|e| format!("TRY_CAST({e} AS DOUBLE) {symbol} {n}"))
+            .collect(),
+        Static::Float(n) if n.is_finite() => exprs
+            .iter()
+            .map(|e| format!("TRY_CAST({e} AS DOUBLE) {symbol} {n:?}"))
+            .collect(),
         _ => return None,
     };
     Some(format!("({})", parts.join(" OR ")))
@@ -209,7 +245,15 @@ pub struct Needs {
 
 impl Needs {
     fn all() -> Needs {
-        Needs { resource: true, span_attrs: true, scope_attrs: true, scope_names: true, events: true, links: true, status_message: true }
+        Needs {
+            resource: true,
+            span_attrs: true,
+            scope_attrs: true,
+            scope_names: true,
+            events: true,
+            links: true,
+            status_message: true,
+        }
     }
 
     fn attribute(&mut self, a: &Attribute) {
@@ -217,7 +261,9 @@ impl Needs {
             Some(Intrinsic::StatusMessage) => self.status_message = true,
             Some(Intrinsic::EventName | Intrinsic::EventTimeSinceStart) => self.events = true,
             Some(Intrinsic::LinkTraceId | Intrinsic::LinkSpanId) => self.links = true,
-            Some(Intrinsic::InstrumentationName | Intrinsic::InstrumentationVersion) => self.scope_names = true,
+            Some(Intrinsic::InstrumentationName | Intrinsic::InstrumentationVersion) => {
+                self.scope_names = true
+            }
             Some(_) => {}
             None => match a.scope {
                 Scope::Span => self.span_attrs = true,
@@ -348,17 +394,34 @@ mod tests {
 
     #[test]
     fn simple_filters_become_conditions_on_one_span() {
-        assert_eq!(reqs(r#"{ name = "a" && status = error }"#), ["name = 'a' AND coalesce(status_code, 0) = 2"]);
-        assert_eq!(reqs("{ duration > 1s }"), ["duration_time_unix_nano > 1000000000"]);
-        assert_eq!(reqs("{ 1s < duration }"), ["duration_time_unix_nano > 1000000000"]);
-        assert_eq!(reqs(r#"{ span.http.method = "GET" }"#), [r#"(json_extract_string(span_attributes, '$."http.method"') = 'GET')"#]);
+        assert_eq!(
+            reqs(r#"{ name = "a" && status = error }"#),
+            ["name = 'a' AND coalesce(status_code, 0) = 2"]
+        );
+        assert_eq!(
+            reqs("{ duration > 1s }"),
+            ["duration_time_unix_nano > 1000000000"]
+        );
+        assert_eq!(
+            reqs("{ 1s < duration }"),
+            ["duration_time_unix_nano > 1000000000"]
+        );
+        assert_eq!(
+            reqs(r#"{ span.http.method = "GET" }"#),
+            [r#"(json_extract_string(span_attributes, '$."http.method"') = 'GET')"#]
+        );
     }
 
     #[test]
     fn unscoped_attributes_look_at_span_and_resource() {
         let r = reqs(r#"{ .service.name = "x" }"#);
         assert_eq!(r.len(), 1);
-        assert!(r[0].contains("span_attributes") && r[0].contains("resource_attributes") && r[0].contains("NULLIF(service_name"), "{r:?}");
+        assert!(
+            r[0].contains("span_attributes")
+                && r[0].contains("resource_attributes")
+                && r[0].contains("NULLIF(service_name"),
+            "{r:?}"
+        );
     }
 
     #[test]
@@ -373,7 +436,10 @@ mod tests {
 
     #[test]
     fn spanset_operators_require_what_must_be_present() {
-        assert_eq!(reqs(r#"{ name = "a" } >> { name = "b" }"#), ["name = 'a'", "name = 'b'"]);
+        assert_eq!(
+            reqs(r#"{ name = "a" } >> { name = "b" }"#),
+            ["name = 'a'", "name = 'b'"]
+        );
         assert_eq!(reqs(r#"{ name = "a" } !>> { name = "b" }"#), ["name = 'b'"]);
         assert_eq!(reqs(r#"{ name = "a" } | count() > 2"#), ["name = 'a'"]);
         assert_eq!(reqs(r#"{ name = "a" } | rate() by (name)"#), ["name = 'a'"]);
@@ -383,9 +449,28 @@ mod tests {
     fn only_the_columns_a_query_reads_are_needed() {
         let n = |q: &str| needs(&traceql_syntax::parse(q).unwrap().kind);
         assert_eq!(n(r#"{ name = "a" && duration > 1s }"#), Needs::default());
-        assert_eq!(n("{ .a = 1 }"), Needs { span_attrs: true, resource: true, ..Needs::default() });
-        assert_eq!(n("{ span.a = 1 }"), Needs { span_attrs: true, ..Needs::default() });
-        assert_eq!(n(r#"{ resource.service.name = "x" }"#), Needs { resource: true, ..Needs::default() });
+        assert_eq!(
+            n("{ .a = 1 }"),
+            Needs {
+                span_attrs: true,
+                resource: true,
+                ..Needs::default()
+            }
+        );
+        assert_eq!(
+            n("{ span.a = 1 }"),
+            Needs {
+                span_attrs: true,
+                ..Needs::default()
+            }
+        );
+        assert_eq!(
+            n(r#"{ resource.service.name = "x" }"#),
+            Needs {
+                resource: true,
+                ..Needs::default()
+            }
+        );
         assert!(n(r#"{ statusMessage = "x" }"#).status_message);
         assert!(n(r#"{ event.exception.type = "x" }"#).events);
         assert!(n(r#"{ link:spanID = "x" }"#).links);

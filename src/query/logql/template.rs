@@ -63,7 +63,11 @@ struct Pipe(Vec<Vec<Operand>>);
 enum Node {
     Text(String),
     Action(Pipe),
-    If { cond: Pipe, then: Vec<Node>, otherwise: Vec<Node> },
+    If {
+        cond: Pipe,
+        then: Vec<Node>,
+        otherwise: Vec<Node>,
+    },
 }
 
 #[derive(Debug)]
@@ -137,29 +141,46 @@ fn tokenize(action: &str) -> Result<Vec<Tok>, String> {
                 out.push(Tok::Str(s));
             }
             '`' => {
-                let end = chars[i + 1..].iter().position(|c| *c == '`').ok_or("unterminated raw string")?;
+                let end = chars[i + 1..]
+                    .iter()
+                    .position(|c| *c == '`')
+                    .ok_or("unterminated raw string")?;
                 out.push(Tok::Str(chars[i + 1..i + 1 + end].iter().collect()));
                 i += end + 2;
             }
-            '.' if chars.get(i + 1).is_some_and(|c| c.is_alphabetic() || *c == '_') => {
+            '.' if chars
+                .get(i + 1)
+                .is_some_and(|c| c.is_alphabetic() || *c == '_') =>
+            {
                 let start = i + 1;
                 i += 1;
-                while chars.get(i).is_some_and(|c| c.is_alphanumeric() || *c == '_') {
+                while chars
+                    .get(i)
+                    .is_some_and(|c| c.is_alphanumeric() || *c == '_')
+                {
                     i += 1;
                 }
                 out.push(Tok::Field(chars[start..i].iter().collect()));
             }
-            c if c.is_ascii_digit() || (c == '-' && chars.get(i + 1).is_some_and(|d| d.is_ascii_digit())) => {
+            c if c.is_ascii_digit()
+                || (c == '-' && chars.get(i + 1).is_some_and(|d| d.is_ascii_digit())) =>
+            {
                 let start = i;
                 i += 1;
-                while chars.get(i).is_some_and(|c| c.is_ascii_digit() || *c == '.') {
+                while chars
+                    .get(i)
+                    .is_some_and(|c| c.is_ascii_digit() || *c == '.')
+                {
                     i += 1;
                 }
                 out.push(Tok::Num(chars[start..i].iter().collect()));
             }
             c if c.is_alphabetic() || c == '_' => {
                 let start = i;
-                while chars.get(i).is_some_and(|c| c.is_alphanumeric() || *c == '_') {
+                while chars
+                    .get(i)
+                    .is_some_and(|c| c.is_alphanumeric() || *c == '_')
+                {
                     i += 1;
                 }
                 out.push(Tok::Ident(chars[start..i].iter().collect()));
@@ -186,7 +207,9 @@ fn parse_pipe(toks: &[Tok], pos: &mut usize) -> Result<Pipe, String> {
                     Tok::Str(s) => Operand::Str(s.clone()),
                     Tok::Num(n) => Operand::Num(match n.parse::<i64>() {
                         Ok(i) => V::Int(i),
-                        Err(_) => V::Float(n.parse::<f64>().map_err(|_| format!("bad number {n}"))?),
+                        Err(_) => {
+                            V::Float(n.parse::<f64>().map_err(|_| format!("bad number {n}"))?)
+                        }
                     }),
                     Tok::LParen => {
                         *pos += 1;
@@ -224,7 +247,9 @@ fn split(source: &str) -> Result<Vec<Piece>, String> {
             text = text.trim_start();
         }
         let mut inner_start = open + 2;
-        if rest[inner_start..].starts_with('-') && rest[inner_start + 1..].starts_with(char::is_whitespace) {
+        if rest[inner_start..].starts_with('-')
+            && rest[inner_start + 1..].starts_with(char::is_whitespace)
+        {
             text = text.trim_end();
             inner_start += 1;
         }
@@ -248,7 +273,10 @@ fn split(source: &str) -> Result<Vec<Piece>, String> {
     Ok(pieces)
 }
 
-fn parse_nodes(pieces: &mut std::iter::Peekable<std::vec::IntoIter<Piece>>, until_end: bool) -> Result<(Vec<Node>, String), String> {
+fn parse_nodes(
+    pieces: &mut std::iter::Peekable<std::vec::IntoIter<Piece>>,
+    until_end: bool,
+) -> Result<(Vec<Node>, String), String> {
     let mut nodes = Vec::new();
     while let Some(piece) = pieces.next() {
         match piece {
@@ -268,7 +296,10 @@ fn parse_nodes(pieces: &mut std::iter::Peekable<std::vec::IntoIter<Piece>>, unti
                     "end" | "else" => return Err(format!("unexpected {{{{ {keyword} }}}}")),
                     _ => {
                         let toks = tokenize(&a)?;
-                        if toks.contains(&Tok::Ident(":=".into())) || a.contains(":=") || a.starts_with('$') {
+                        if toks.contains(&Tok::Ident(":=".into()))
+                            || a.contains(":=")
+                            || a.starts_with('$')
+                        {
                             return Err("template variables are not supported".into());
                         }
                         nodes.push(Node::Action(parse_pipe(&toks, &mut 0)?));
@@ -283,7 +314,10 @@ fn parse_nodes(pieces: &mut std::iter::Peekable<std::vec::IntoIter<Piece>>, unti
     Ok((nodes, String::new()))
 }
 
-fn parse_if(condition: &str, pieces: &mut std::iter::Peekable<std::vec::IntoIter<Piece>>) -> Result<Node, String> {
+fn parse_if(
+    condition: &str,
+    pieces: &mut std::iter::Peekable<std::vec::IntoIter<Piece>>,
+) -> Result<Node, String> {
     let cond = parse_pipe(&tokenize(condition)?, &mut 0)?;
     let (then, stop) = parse_nodes(pieces, true)?;
     let otherwise = if stop == "end" {
@@ -304,7 +338,11 @@ fn parse_if(condition: &str, pieces: &mut std::iter::Peekable<std::vec::IntoIter
     } else {
         return Err("malformed if".into());
     };
-    Ok(Node::If { cond, then, otherwise })
+    Ok(Node::If {
+        cond,
+        then,
+        otherwise,
+    })
 }
 
 impl Template {
@@ -326,8 +364,16 @@ fn render_nodes(nodes: &[Node], ctx: &Ctx, out: &mut String) -> Result<(), Strin
         match node {
             Node::Text(t) => out.push_str(t),
             Node::Action(pipe) => out.push_str(&eval_pipe(pipe, ctx)?.text()),
-            Node::If { cond, then, otherwise } => {
-                let branch = if eval_pipe(cond, ctx)?.truthy() { then } else { otherwise };
+            Node::If {
+                cond,
+                then,
+                otherwise,
+            } => {
+                let branch = if eval_pipe(cond, ctx)?.truthy() {
+                    then
+                } else {
+                    otherwise
+                };
                 render_nodes(branch, ctx, out)?;
             }
         }
@@ -355,7 +401,10 @@ fn eval_operand(op: &Operand, ctx: &Ctx) -> Result<V, String> {
 
 fn eval_command(command: &[Operand], piped: Option<V>, ctx: &Ctx) -> Result<V, String> {
     if let Operand::Ident(name) = &command[0] {
-        let mut args = command[1..].iter().map(|o| eval_operand(o, ctx)).collect::<Result<Vec<_>, _>>()?;
+        let mut args = command[1..]
+            .iter()
+            .map(|o| eval_operand(o, ctx))
+            .collect::<Result<Vec<_>, _>>()?;
         args.extend(piped);
         return call(name, args, ctx);
     }
@@ -380,19 +429,32 @@ fn equal(a: &V, b: &V) -> bool {
         (V::Bool(x), V::Bool(y)) => x == y,
         (V::Nil, V::Nil) => true,
         (V::Str(x), V::Str(y)) => x == y,
-        _ => a.number().is_some() && b.number().is_some() && cmp(a, b).is_eq() || a.text() == b.text() && !matches!((a, b), (V::Str(_), V::Int(_) | V::Float(_)) | (V::Int(_) | V::Float(_), V::Str(_))),
+        _ => {
+            a.number().is_some() && b.number().is_some() && cmp(a, b).is_eq()
+                || a.text() == b.text()
+                    && !matches!(
+                        (a, b),
+                        (V::Str(_), V::Int(_) | V::Float(_)) | (V::Int(_) | V::Float(_), V::Str(_))
+                    )
+        }
     }
 }
 
 fn go_time(ts_ns: i64) -> String {
     let t = Utc.timestamp_nanos(ts_ns);
     let nanos = t.timestamp_subsec_nanos();
-    let fraction = if nanos == 0 { String::new() } else { format!(".{nanos:09}").trim_end_matches('0').to_string() };
+    let fraction = if nanos == 0 {
+        String::new()
+    } else {
+        format!(".{nanos:09}").trim_end_matches('0').to_string()
+    };
     format!("{}{} +0000 UTC", t.format("%Y-%m-%d %H:%M:%S"), fraction)
 }
 
 fn string_arg(args: &[V], i: usize, name: &str) -> Result<String, String> {
-    args.get(i).map(V::text).ok_or_else(|| format!("{name}: missing argument"))
+    args.get(i)
+        .map(V::text)
+        .ok_or_else(|| format!("{name}: missing argument"))
 }
 
 fn printf(args: &[V]) -> Result<String, String> {
@@ -420,14 +482,31 @@ fn printf(args: &[V]) -> Result<String, String> {
             continue;
         }
         let arg = rest.next().ok_or("printf: too few arguments")?;
-        let precision = spec.split_once('.').and_then(|(_, p)| p.parse::<usize>().ok());
-        let width: usize = spec.split('.').next().unwrap_or("").trim_start_matches(['-', '+']).parse().unwrap_or(0);
+        let precision = spec
+            .split_once('.')
+            .and_then(|(_, p)| p.parse::<usize>().ok());
+        let width: usize = spec
+            .split('.')
+            .next()
+            .unwrap_or("")
+            .trim_start_matches(['-', '+'])
+            .parse()
+            .unwrap_or(0);
         let body = match verb {
             's' | 'v' => arg.text(),
             'q' => format!("{:?}", arg.text()),
-            'd' => arg.number().map(|n| (n as i64).to_string()).ok_or("printf: %d needs a number")?,
-            'f' => arg.number().map(|n| format!("{:.*}", precision.unwrap_or(6), n)).ok_or("printf: %f needs a number")?,
-            'x' => arg.number().map(|n| format!("{:x}", n as i64)).ok_or("printf: %x needs a number")?,
+            'd' => arg
+                .number()
+                .map(|n| (n as i64).to_string())
+                .ok_or("printf: %d needs a number")?,
+            'f' => arg
+                .number()
+                .map(|n| format!("{:.*}", precision.unwrap_or(6), n))
+                .ok_or("printf: %f needs a number")?,
+            'x' => arg
+                .number()
+                .map(|n| format!("{:x}", n as i64))
+                .ok_or("printf: %x needs a number")?,
             other => return Err(format!("printf: unsupported verb %{other}")),
         };
         if spec.starts_with('-') {
@@ -440,7 +519,12 @@ fn printf(args: &[V]) -> Result<String, String> {
 }
 
 fn number_args(args: &[V], name: &str) -> Result<Vec<f64>, String> {
-    args.iter().map(|a| a.number().ok_or_else(|| format!("{name}: {} is not a number", a.text()))).collect()
+    args.iter()
+        .map(|a| {
+            a.number()
+                .ok_or_else(|| format!("{name}: {} is not a number", a.text()))
+        })
+        .collect()
 }
 
 fn call(name: &str, args: Vec<V>, ctx: &Ctx) -> Result<V, String> {
@@ -452,9 +536,15 @@ fn call(name: &str, args: Vec<V>, ctx: &Ctx) -> Result<V, String> {
             let first = args.first().ok_or("eq: missing argument")?;
             V::Bool(args[1..].iter().any(|b| equal(first, b)))
         }
-        "ne" => V::Bool(!equal(args.first().ok_or("ne: missing argument")?, args.get(1).ok_or("ne: missing argument")?)),
+        "ne" => V::Bool(!equal(
+            args.first().ok_or("ne: missing argument")?,
+            args.get(1).ok_or("ne: missing argument")?,
+        )),
         "lt" | "le" | "gt" | "ge" => {
-            let ord = cmp(args.first().ok_or("missing argument")?, args.get(1).ok_or("missing argument")?);
+            let ord = cmp(
+                args.first().ok_or("missing argument")?,
+                args.get(1).ok_or("missing argument")?,
+            );
             V::Bool(match name {
                 "lt" => ord.is_lt(),
                 "le" => ord.is_le(),
@@ -462,8 +552,18 @@ fn call(name: &str, args: Vec<V>, ctx: &Ctx) -> Result<V, String> {
                 _ => ord.is_ge(),
             })
         }
-        "and" => args.iter().find(|a| !a.truthy()).or(args.last()).cloned().unwrap_or(V::Nil),
-        "or" => args.iter().find(|a| a.truthy()).or(args.last()).cloned().unwrap_or(V::Nil),
+        "and" => args
+            .iter()
+            .find(|a| !a.truthy())
+            .or(args.last())
+            .cloned()
+            .unwrap_or(V::Nil),
+        "or" => args
+            .iter()
+            .find(|a| a.truthy())
+            .or(args.last())
+            .cloned()
+            .unwrap_or(V::Nil),
         "not" => V::Bool(!args.first().ok_or("not: missing argument")?.truthy()),
         "len" => V::Int(s(0)?.chars().count() as i64),
         "ToLower" | "lower" => V::Str(s(0)?.to_lowercase()),
@@ -473,15 +573,31 @@ fn call(name: &str, args: Vec<V>, ctx: &Ctx) -> Result<V, String> {
                 .split(' ')
                 .map(|w| {
                     let mut cs = w.chars();
-                    cs.next().map(|f| f.to_uppercase().collect::<String>() + cs.as_str()).unwrap_or_default()
+                    cs.next()
+                        .map(|f| f.to_uppercase().collect::<String>() + cs.as_str())
+                        .unwrap_or_default()
                 })
                 .collect::<Vec<_>>()
                 .join(" "),
         ),
         "trim" => V::Str(s(0)?.trim().to_string()),
-        "trimAll" => V::Str(s(1)?.trim_matches(|c| s(0).is_ok_and(|set| set.contains(c))).to_string()),
-        "trimPrefix" => V::Str(s(1)?.strip_prefix(&s(0)?).map(str::to_string).unwrap_or(s(1)?)),
-        "trimSuffix" => V::Str(s(1)?.strip_suffix(&s(0)?).map(str::to_string).unwrap_or(s(1)?)),
+        "trimAll" => V::Str(
+            s(1)?
+                .trim_matches(|c| s(0).is_ok_and(|set| set.contains(c)))
+                .to_string(),
+        ),
+        "trimPrefix" => V::Str(
+            s(1)?
+                .strip_prefix(&s(0)?)
+                .map(str::to_string)
+                .unwrap_or(s(1)?),
+        ),
+        "trimSuffix" => V::Str(
+            s(1)?
+                .strip_suffix(&s(0)?)
+                .map(str::to_string)
+                .unwrap_or(s(1)?),
+        ),
         "replace" => V::Str(s(2)?.replace(&s(0)?, &s(1)?)),
         "contains" => V::Bool(s(1)?.contains(&s(0)?)),
         "hasPrefix" => V::Bool(s(1)?.starts_with(&s(0)?)),
@@ -501,14 +617,22 @@ fn call(name: &str, args: Vec<V>, ctx: &Ctx) -> Result<V, String> {
             let n = number_args(&args[..2], name)?;
             let chars: Vec<char> = s(2)?.chars().collect();
             let start = (n[0].max(0.0) as usize).min(chars.len());
-            let end = if n[1] < 0.0 { chars.len() } else { (n[1] as usize).min(chars.len()) };
+            let end = if n[1] < 0.0 {
+                chars.len()
+            } else {
+                (n[1] as usize).min(chars.len())
+            };
             V::Str(chars[start..end.max(start)].iter().collect())
         }
         "quote" => V::Str(format!("{:?}", s(0)?)),
         "squote" => V::Str(format!("'{}'", s(0)?)),
         "default" => {
             let given = args.get(1).ok_or("default: missing value")?;
-            if given.truthy() { given.clone() } else { args[0].clone() }
+            if given.truthy() {
+                given.clone()
+            } else {
+                args[0].clone()
+            }
         }
         "print" => V::Str(args.iter().map(V::text).collect::<Vec<_>>().join("")),
         "printf" => V::Str(printf(&args)?),
@@ -529,8 +653,16 @@ fn call(name: &str, args: Vec<V>, ctx: &Ctx) -> Result<V, String> {
             let n = number_args(&args[..2], name)?;
             V::Float(n[0] % n[1])
         }
-        "max" => V::Float(number_args(&args, name)?.into_iter().fold(f64::NEG_INFINITY, f64::max)),
-        "min" => V::Float(number_args(&args, name)?.into_iter().fold(f64::INFINITY, f64::min)),
+        "max" => V::Float(
+            number_args(&args, name)?
+                .into_iter()
+                .fold(f64::NEG_INFINITY, f64::max),
+        ),
+        "min" => V::Float(
+            number_args(&args, name)?
+                .into_iter()
+                .fold(f64::INFINITY, f64::min),
+        ),
         "floor" => V::Float(number_args(&args[..1], name)?[0].floor()),
         "ceil" => V::Float(number_args(&args[..1], name)?[0].ceil()),
         "round" => {
@@ -544,7 +676,8 @@ fn call(name: &str, args: Vec<V>, ctx: &Ctx) -> Result<V, String> {
             V::Str(if name == "regexReplaceAll" {
                 re.replace_all(&s(1)?, replacement.as_str()).into_owned()
             } else {
-                re.replace_all(&s(1)?, regex::NoExpand(&replacement)).into_owned()
+                re.replace_all(&s(1)?, regex::NoExpand(&replacement))
+                    .into_owned()
             })
         }
         other => return Err(format!("function {other:?} is not defined")),
@@ -556,8 +689,15 @@ mod tests {
     use super::*;
 
     fn render(source: &str, labels: &[(&str, &str)]) -> Result<String, String> {
-        let labels: Labels = labels.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
-        Template::parse(source)?.render(&Ctx { labels: &labels, line: "the line", ts_ns: 1_700_000_000_123_456_789 })
+        let labels: Labels = labels
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
+        Template::parse(source)?.render(&Ctx {
+            labels: &labels,
+            line: "the line",
+            ts_ns: 1_700_000_000_123_456_789,
+        })
     }
 
     #[test]
@@ -565,15 +705,33 @@ mod tests {
         let l = [("method", "GET"), ("status", "503"), ("name", "  padded  ")];
         assert_eq!(render("{{ .method }}", &l).unwrap(), "GET");
         assert_eq!(render("{{ .method | ToLower }}", &l).unwrap(), "get");
-        assert_eq!(render("{{ .method | lower | trunc 2 | upper }}-{{ .status }}", &l).unwrap(), "GE-503");
-        assert_eq!(render("{{ .name | trim }}|{{ .missing }}|", &l).unwrap(), "padded||");
-        assert_eq!(render(r#"{{ replace "a" "b" "banana" }}"#, &l).unwrap(), "bbnbnb");
-        assert_eq!(render(r#"{{ printf "%s=%d (%.1f)" .method .status 2.25 }}"#, &l).unwrap(), "GET=503 (2.2)");
-        assert_eq!(render(r#"{{ regexReplaceAll "[0-9]+" .status "N" }}"#, &l).unwrap(), "N");
+        assert_eq!(
+            render("{{ .method | lower | trunc 2 | upper }}-{{ .status }}", &l).unwrap(),
+            "GE-503"
+        );
+        assert_eq!(
+            render("{{ .name | trim }}|{{ .missing }}|", &l).unwrap(),
+            "padded||"
+        );
+        assert_eq!(
+            render(r#"{{ replace "a" "b" "banana" }}"#, &l).unwrap(),
+            "bbnbnb"
+        );
+        assert_eq!(
+            render(r#"{{ printf "%s=%d (%.1f)" .method .status 2.25 }}"#, &l).unwrap(),
+            "GET=503 (2.2)"
+        );
+        assert_eq!(
+            render(r#"{{ regexReplaceAll "[0-9]+" .status "N" }}"#, &l).unwrap(),
+            "N"
+        );
         assert_eq!(render("{{ add 1 2 3 }}", &l).unwrap(), "6");
         assert_eq!(render(r#"{{ .method | quote }}"#, &l).unwrap(), "\"GET\"");
         assert_eq!(render("{{ __line__ }}", &l).unwrap(), "the line");
-        assert_eq!(render("{{ __timestamp__ }}", &l).unwrap(), "2023-11-14 22:13:20.123456789 +0000 UTC");
+        assert_eq!(
+            render("{{ __timestamp__ }}", &l).unwrap(),
+            "2023-11-14 22:13:20.123456789 +0000 UTC"
+        );
     }
 
     #[test]
@@ -583,9 +741,22 @@ mod tests {
         assert_eq!(render(t, &l).unwrap(), "error");
         assert_eq!(render(t, &[("status", "200")]).unwrap(), "ok");
         assert_eq!(render(t, &[("status", "404")]).unwrap(), "other");
-        assert_eq!(render("{{ if .level }}has{{ else }}none{{ end }}", &l).unwrap(), "none");
-        assert_eq!(render("{{ if and (gt (.status | int) 400) (not .level) }}y{{ end }}", &l).unwrap(), "y");
-        assert_eq!(render("{{ .level | default \"info\" }}", &l).unwrap(), "info");
+        assert_eq!(
+            render("{{ if .level }}has{{ else }}none{{ end }}", &l).unwrap(),
+            "none"
+        );
+        assert_eq!(
+            render(
+                "{{ if and (gt (.status | int) 400) (not .level) }}y{{ end }}",
+                &l
+            )
+            .unwrap(),
+            "y"
+        );
+        assert_eq!(
+            render("{{ .level | default \"info\" }}", &l).unwrap(),
+            "info"
+        );
     }
 
     #[test]

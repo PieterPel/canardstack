@@ -78,7 +78,10 @@ pub fn loki_query_range(state: &AppState, params: &HashMap<String, String>) -> A
         steps: steps as usize,
     };
     let series = match logql::evaluate_metric(&state.queries, &state.storage, &expr, grid)? {
-        MetricValue::Scalar(v) => vec![logql::Series { labels: Default::default(), vals: v.into_iter().map(Some).collect() }],
+        MetricValue::Scalar(v) => vec![logql::Series {
+            labels: Default::default(),
+            vals: v.into_iter().map(Some).collect(),
+        }],
         MetricValue::Vector(series) => series,
     };
     let result: Vec<Value> = series
@@ -93,7 +96,9 @@ pub fn loki_query_range(state: &AppState, params: &HashMap<String, String>) -> A
             (!values.is_empty()).then(|| json!({"metric": s.labels, "values": values}))
         })
         .collect();
-    Ok(loki_success(json!({"resultType": "matrix", "result": result})))
+    Ok(loki_success(
+        json!({"resultType": "matrix", "result": result}),
+    ))
 }
 
 pub fn loki_labels(state: &AppState, params: &HashMap<String, String>) -> ApiResult<Value> {
@@ -132,14 +137,32 @@ fn loki_log_query(
     range: bool,
 ) -> ApiResult<Value> {
     let end = optional_time(params, "end")?
-        .or(if range { None } else { optional_time(params, "time")? })
+        .or(if range {
+            None
+        } else {
+            optional_time(params, "time")?
+        })
         .unwrap_or_else(Utc::now);
     let start = optional_time(params, "start")?.unwrap_or(end - chrono::Duration::hours(1));
     validate_range(start, end, INTERACTIVE_RANGE_SECS)?;
     let limit = parse_usize(params.get("limit"), 100, 1000)?;
-    let forward = params.get("direction").is_some_and(|d| d.eq_ignore_ascii_case("forward"));
-    let to = if range { end } else { end + chrono::Duration::seconds(1) };
-    let streams = logql::log_streams(&state.queries, &state.storage, log, start, to, limit, forward)?;
+    let forward = params
+        .get("direction")
+        .is_some_and(|d| d.eq_ignore_ascii_case("forward"));
+    let to = if range {
+        end
+    } else {
+        end + chrono::Duration::seconds(1)
+    };
+    let streams = logql::log_streams(
+        &state.queries,
+        &state.storage,
+        log,
+        start,
+        to,
+        limit,
+        forward,
+    )?;
     let result: Vec<Value> = streams
         .into_iter()
         .map(|s| {
@@ -151,7 +174,9 @@ fn loki_log_query(
             json!({"stream": s.labels, "values": values})
         })
         .collect();
-    Ok(loki_success(json!({"resultType": "streams", "result": result})))
+    Ok(loki_success(
+        json!({"resultType": "streams", "result": result}),
+    ))
 }
 
 fn loki_success(data: Value) -> Value {

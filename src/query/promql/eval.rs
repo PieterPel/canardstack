@@ -39,7 +39,11 @@ impl Ev<'_> {
             Expr::VectorSelector(vs) => {
                 let floats = self.instant_selector(vs, false)?;
                 let hists = self.hist_instant(vs)?;
-                Ok(if hists.is_empty() { Value::Vector(floats) } else { Value::Samples(super::native::combine(floats, hists)) })
+                Ok(if hists.is_empty() {
+                    Value::Vector(floats)
+                } else {
+                    Value::Samples(super::native::combine(floats, hists))
+                })
             }
             Expr::MatrixSelector(_) => Err(unsupported(
                 "range vectors are only supported as function arguments",
@@ -74,7 +78,11 @@ impl Ev<'_> {
                 let idx = raw.samples.partition_point(|s| s.0 <= t);
                 if idx > 0 && raw.samples[idx - 1].0 > t - LOOKBACK_MS {
                     let (sample_ms, value) = raw.samples[idx - 1];
-                    *slot = Some(if timestamps { sample_ms as f64 / 1000.0 } else { value });
+                    *slot = Some(if timestamps {
+                        sample_ms as f64 / 1000.0
+                    } else {
+                        value
+                    });
                 }
             }
             if vals.iter().any(Option::is_some) {

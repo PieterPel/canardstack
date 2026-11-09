@@ -17,10 +17,14 @@ pub fn parse_duration_secs(s: &str) -> Option<f64> {
     }
     let mut total = 0.0;
     while !rest.is_empty() {
-        let digits = rest.find(|c: char| !(c.is_ascii_digit() || c == '.')).unwrap_or(rest.len());
+        let digits = rest
+            .find(|c: char| !(c.is_ascii_digit() || c == '.'))
+            .unwrap_or(rest.len());
         let value: f64 = rest[..digits].parse().ok()?;
         rest = &rest[digits..];
-        let unit_len = rest.find(|c: char| c.is_ascii_digit() || c == '.').unwrap_or(rest.len());
+        let unit_len = rest
+            .find(|c: char| c.is_ascii_digit() || c == '.')
+            .unwrap_or(rest.len());
         let scale = match &rest[..unit_len] {
             "ns" => 1e-9,
             "us" | "µs" | "μs" => 1e-6,
@@ -39,7 +43,9 @@ pub fn parse_duration_secs(s: &str) -> Option<f64> {
 /// `10KB`, `1.5 GiB`, `512`: byte sizes as humanize parses them.
 pub fn parse_bytes(s: &str) -> Option<f64> {
     let s = s.trim();
-    let split = s.find(|c: char| !(c.is_ascii_digit() || c == '.')).unwrap_or(s.len());
+    let split = s
+        .find(|c: char| !(c.is_ascii_digit() || c == '.'))
+        .unwrap_or(s.len());
     let value: f64 = s[..split].parse().ok()?;
     let scale = match s[split..].trim().to_ascii_lowercase().as_str() {
         "" | "b" => 1.0,
@@ -87,11 +93,23 @@ impl IpMatcher {
             let (v6, base) = as_u128(addr.trim().parse().ok()?);
             let width: u32 = if v6 { 128 } else { 32 };
             let bits: u32 = bits.trim().parse().ok().filter(|b| *b <= width)?;
-            let host = if bits == width { 0 } else { (1u128 << (width - bits)) - 1 };
-            return Some(Self { v6, low: base & !host, high: base | host });
+            let host = if bits == width {
+                0
+            } else {
+                (1u128 << (width - bits)) - 1
+            };
+            return Some(Self {
+                v6,
+                low: base & !host,
+                high: base | host,
+            });
         }
         let (v6, value) = as_u128(spec.parse().ok()?);
-        Some(Self { v6, low: value, high: value })
+        Some(Self {
+            v6,
+            low: value,
+            high: value,
+        })
     }
 
     pub fn contains(&self, ip: IpAddr) -> bool {
@@ -132,7 +150,9 @@ mod tests {
         let range = IpMatcher::parse("127.0.0.1-127.0.0.6").unwrap();
         assert!(range.contains("127.0.0.4".parse().unwrap()));
         assert!(!range.contains("127.0.0.7".parse().unwrap()));
-        assert!(IpMatcher::parse("127.0.0.1").unwrap().matches_text(r#"{"ip":"127.0.0.1","x":1}"#));
+        assert!(IpMatcher::parse("127.0.0.1")
+            .unwrap()
+            .matches_text(r#"{"ip":"127.0.0.1","x":1}"#));
         assert!(!IpMatcher::parse("::1").unwrap().matches_text("127.0.0.1"));
     }
 }

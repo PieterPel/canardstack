@@ -18,7 +18,11 @@ fn flatten(prefix: &str, value: &Value, out: &mut Vec<(String, String)>) {
         Value::Object(map) => {
             for (key, inner) in map {
                 let key = sanitize_label_name(key);
-                let name = if prefix.is_empty() { key } else { format!("{prefix}_{key}") };
+                let name = if prefix.is_empty() {
+                    key
+                } else {
+                    format!("{prefix}_{key}")
+                };
                 flatten(&name, inner, out);
             }
         }
@@ -135,7 +139,9 @@ pub fn logfmt_extract(line: &str, wanted: &[Extraction]) -> Result<Vec<(String, 
         .filter_map(|w| {
             let source = w.expr.as_deref().unwrap_or(&w.label);
             let source = sanitize_label_name(source);
-            out.iter().find(|(k, _)| *k == source).map(|(_, v)| (w.label.clone(), v.clone()))
+            out.iter()
+                .find(|(k, _)| *k == source)
+                .map(|(_, v)| (w.label.clone(), v.clone()))
         })
         .collect())
 }
@@ -195,7 +201,10 @@ impl PatternMatcher {
         if !pieces.iter().any(|p| matches!(p, Piece::Capture(_))) && pieces.len() != 1 {
             return Err("a pattern needs at least one capture".to_string());
         }
-        if pieces.windows(2).any(|w| matches!((&w[0], &w[1]), (Piece::Capture(_), Piece::Capture(_)))) {
+        if pieces
+            .windows(2)
+            .any(|w| matches!((&w[0], &w[1]), (Piece::Capture(_), Piece::Capture(_))))
+        {
             return Err("two captures in a row are ambiguous".to_string());
         }
         Ok(Self { pieces })
@@ -234,7 +243,10 @@ mod tests {
     use super::*;
 
     fn wanted(label: &str, expr: Option<&str>) -> Extraction {
-        Extraction { label: label.into(), expr: expr.map(str::to_string) }
+        Extraction {
+            label: label.into(),
+            expr: expr.map(str::to_string),
+        }
     }
 
     #[test]
@@ -245,8 +257,23 @@ mod tests {
         assert!(all.contains(&("status".into(), "200".into())));
         assert!(all.contains(&("req_id".into(), "a-1".into())));
         assert!(all.contains(&("req_tags".into(), r#"["x"]"#.into())));
-        let some = json_extract(line, &[wanted("m", Some("method")), wanted("rid", Some("req.id")), wanted("t0", Some(r#"req["tags"][0]"#))]).unwrap();
-        assert_eq!(some, [("m".into(), "GET".into()), ("rid".into(), "a-1".into()), ("t0".into(), "x".into())]);
+        let some = json_extract(
+            line,
+            &[
+                wanted("m", Some("method")),
+                wanted("rid", Some("req.id")),
+                wanted("t0", Some(r#"req["tags"][0]"#)),
+            ],
+        )
+        .unwrap();
+        assert_eq!(
+            some,
+            [
+                ("m".into(), "GET".into()),
+                ("rid".into(), "a-1".into()),
+                ("t0".into(), "x".into())
+            ]
+        );
         assert!(json_extract("not json", &[]).is_err());
     }
 
@@ -262,10 +289,20 @@ mod tests {
     fn patterns_capture_between_literals() {
         let p = PatternMatcher::compile(r#"<ip> - <user> "<method> <_>""#).unwrap();
         let got = p.captures(r#"10.0.0.1 - bob "GET /x""#).unwrap();
-        assert_eq!(got, [("ip".into(), "10.0.0.1".into()), ("user".into(), "bob".into()), ("method".into(), "GET".into())]);
+        assert_eq!(
+            got,
+            [
+                ("ip".into(), "10.0.0.1".into()),
+                ("user".into(), "bob".into()),
+                ("method".into(), "GET".into())
+            ]
+        );
         assert!(p.captures("nothing like it").is_none());
         let p = PatternMatcher::compile(r#"<_>"method":"<method>"<_>"#).unwrap();
-        assert_eq!(p.captures(r#"{"method":"HEAD","x":1}"#).unwrap(), [("method".into(), "HEAD".into())]);
+        assert_eq!(
+            p.captures(r#"{"method":"HEAD","x":1}"#).unwrap(),
+            [("method".into(), "HEAD".into())]
+        );
         assert!(PatternMatcher::compile("<a><b>").is_err());
     }
 }

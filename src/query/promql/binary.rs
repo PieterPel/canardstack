@@ -9,12 +9,22 @@ fn matching(modifier: &Option<parser::BinModifier>) -> Matching {
         return Matching::one_to_one();
     };
     let on = m.matching.as_ref().map(|l| match l {
-        LabelModifier::Include(labels) => (true, labels.labels.iter().map(|n| unescape(n)).collect()),
-        LabelModifier::Exclude(labels) => (false, labels.labels.iter().map(|n| unescape(n)).collect()),
+        LabelModifier::Include(labels) => {
+            (true, labels.labels.iter().map(|n| unescape(n)).collect())
+        }
+        LabelModifier::Exclude(labels) => {
+            (false, labels.labels.iter().map(|n| unescape(n)).collect())
+        }
     });
     let (card, include) = match &m.card {
-        VectorMatchCardinality::ManyToOne(l) => (Card::ManyToOne, l.labels.iter().map(|n| unescape(n)).collect()),
-        VectorMatchCardinality::OneToMany(l) => (Card::OneToMany, l.labels.iter().map(|n| unescape(n)).collect()),
+        VectorMatchCardinality::ManyToOne(l) => (
+            Card::ManyToOne,
+            l.labels.iter().map(|n| unescape(n)).collect(),
+        ),
+        VectorMatchCardinality::OneToMany(l) => (
+            Card::OneToMany,
+            l.labels.iter().map(|n| unescape(n)).collect(),
+        ),
         _ => (Card::OneToOne, Vec::new()),
     };
     Matching { on, card, include }
@@ -34,7 +44,9 @@ impl Ev<'_> {
         match (lhs, rhs) {
             (Value::Scalar(a), Value::Scalar(c)) => {
                 if comparison && !as_bool {
-                    return Err(bad("comparisons between scalars must use the bool modifier"));
+                    return Err(bad(
+                        "comparisons between scalars must use the bool modifier",
+                    ));
                 }
                 Ok(Value::Scalar(
                     (0..n)

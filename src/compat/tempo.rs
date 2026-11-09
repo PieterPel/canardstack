@@ -162,7 +162,11 @@ pub fn tempo_trace_proto(state: &AppState, trace_id: &str) -> ApiResult<Vec<u8>>
 pub fn tempo_search(state: &AppState, params: &HashMap<String, String>) -> ApiResult<Value> {
     let (from, to) = optional_range(params, INTERACTIVE_RANGE_SECS)?;
     let limit = parse_usize(params.get("limit"), 20, 1000)?;
-    if let Some(q) = params.get("q").or_else(|| params.get("query")).filter(|q| !q.trim().is_empty()) {
+    if let Some(q) = params
+        .get("q")
+        .or_else(|| params.get("query"))
+        .filter(|q| !q.trim().is_empty())
+    {
         return traceql_search(state, params, q, from, to, limit);
     }
     let plan = plan_tempo_search(params, TimeBounds { from, to }, limit)?;
@@ -218,7 +222,15 @@ fn traceql_search(
 ) -> ApiResult<Value> {
     let spss = parse_usize(params.get("spss"), 3, 1000)?;
     let query = traceql::parse(q)?;
-    let hits = traceql::search(&state.queries, &state.storage, &query, from, to, limit, spss)?;
+    let hits = traceql::search(
+        &state.queries,
+        &state.storage,
+        &query,
+        from,
+        to,
+        limit,
+        spss,
+    )?;
     let traces: Vec<Value> = hits
         .iter()
         .map(|hit| {
@@ -260,7 +272,9 @@ fn traceql_search(
             trace
         })
         .collect();
-    Ok(json!({"traces": traces, "metrics": {"inspectedTraces": traces.len(), "completedJobs": 1, "totalJobs": 1}}))
+    Ok(
+        json!({"traces": traces, "metrics": {"inspectedTraces": traces.len(), "completedJobs": 1, "totalJobs": 1}}),
+    )
 }
 
 /// `10s`, `1m`, `500ms`, `1h` or plain seconds, in nanoseconds.
@@ -280,7 +294,11 @@ fn parse_step_ns(raw: &str) -> ApiResult<i64> {
     };
     match number.parse::<f64>() {
         Ok(n) if unit_ns > 0.0 && n > 0.0 => Ok((n * unit_ns).round() as i64),
-        _ => Err(ApiError::new(400, "invalid_step", "step must be a positive duration such as 10s or 1m")),
+        _ => Err(ApiError::new(
+            400,
+            "invalid_step",
+            "step must be a positive duration such as 10s or 1m",
+        )),
     }
 }
 
@@ -293,7 +311,9 @@ fn label_value(value: &traceql::Val) -> Value {
         Val::Float(v) => json!({"doubleValue": v}),
         Val::Bool(v) => json!({"boolValue": v}),
         Val::Dur(v) => json!({"stringValue": format!("{v}ns")}),
-        Val::Status(s) => json!({"stringValue": match s { Status::Ok => "ok", Status::Error => "error", Status::Unset => "unset" }}),
+        Val::Status(s) => {
+            json!({"stringValue": match s { Status::Ok => "ok", Status::Error => "error", Status::Unset => "unset" }})
+        }
         Val::Kind(k) => json!({"stringValue": match k {
             Kind::Unspecified => "unspecified",
             Kind::Internal => "internal",
@@ -313,7 +333,10 @@ pub fn tempo_metrics_range(state: &AppState, params: &HashMap<String, String>) -
         .filter(|q| !q.trim().is_empty())
         .ok_or_else(|| ApiError::new(400, "missing_parameter", "q is required"))?;
     let query = traceql::parse(q)?;
-    if !matches!(query.kind, traceql::ast::QueryKind::Metrics(_) | traceql::ast::QueryKind::MetricsMath { .. }) {
+    if !matches!(
+        query.kind,
+        traceql::ast::QueryKind::Metrics(_) | traceql::ast::QueryKind::MetricsMath { .. }
+    ) {
         return Err(ApiError::new(400, "bad_data", "not a metrics query"));
     }
     let (from, to) = optional_range(params, INTERACTIVE_RANGE_SECS)?;
@@ -329,20 +352,28 @@ pub fn tempo_metrics_range(state: &AppState, params: &HashMap<String, String>) -
     let series: Vec<Value> = series
         .iter()
         .filter_map(|s| {
-            let labels: Vec<Value> = s.labels.iter().map(|(k, v)| json!({"key": k, "value": label_value(v)})).collect();
+            let labels: Vec<Value> = s
+                .labels
+                .iter()
+                .map(|(k, v)| json!({"key": k, "value": label_value(v)}))
+                .collect();
             let samples: Vec<Value> = s
                 .samples
                 .iter()
                 .enumerate()
                 .filter_map(|(i, v)| {
                     let v = (*v)?;
-                    (!v.is_nan()).then(|| json!({"timestampMs": range.timestamp_ms(i).to_string(), "value": v}))
+                    (!v.is_nan()).then(
+                        || json!({"timestampMs": range.timestamp_ms(i).to_string(), "value": v}),
+                    )
                 })
                 .collect();
             (!samples.is_empty()).then(|| json!({"labels": labels, "samples": samples}))
         })
         .collect();
-    Ok(json!({"series": series, "metrics": {"completedJobs": 1, "totalJobs": 1}, "step": step_ns.to_string()}))
+    Ok(
+        json!({"series": series, "metrics": {"completedJobs": 1, "totalJobs": 1}, "step": step_ns.to_string()}),
+    )
 }
 
 pub fn tempo_tags() -> Value {

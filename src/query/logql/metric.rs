@@ -8,7 +8,9 @@ use super::fetch::{countable, counts, fetch_all};
 use super::pipeline::{anchored, Pipeline};
 use super::values::{parse_bytes, parse_duration_secs};
 use crate::query::prom_labels::Labels;
-use crate::query::vector::{self, extrapolated, quantile, variance, Card, Grid, Grouping, Matching, Series};
+use crate::query::vector::{
+    self, extrapolated, quantile, variance, Card, Grid, Grouping, Matching, Series,
+};
 use crate::query::QueryEngine;
 use crate::storage::Storage;
 use crate::validation::{ApiError, ApiResult};
@@ -36,8 +38,18 @@ fn bad(msg: impl Into<String>) -> ApiError {
     ApiError::new(400, "bad_data", msg)
 }
 
-pub fn evaluate(engine: &QueryEngine, storage: &Storage, expr: &Expr, grid: Grid) -> ApiResult<Value> {
-    Ev { engine, storage, grid }.eval(expr)
+pub fn evaluate(
+    engine: &QueryEngine,
+    storage: &Storage,
+    expr: &Expr,
+    grid: Grid,
+) -> ApiResult<Value> {
+    Ev {
+        engine,
+        storage,
+        grid,
+    }
+    .eval(expr)
 }
 
 struct Ev<'a> {
@@ -53,7 +65,10 @@ struct Sample {
 }
 
 fn grouping(g: &Option<ast::Grouping>) -> Option<Grouping> {
-    g.as_ref().map(|g| Grouping { by: g.by, labels: g.labels.clone() })
+    g.as_ref().map(|g| Grouping {
+        by: g.by,
+        labels: g.labels.clone(),
+    })
 }
 
 fn op_name(op: BinOp) -> &'static str {
@@ -145,7 +160,9 @@ impl Ev<'_> {
         match (lhs, rhs) {
             (Value::Scalar(a), Value::Scalar(c)) => {
                 if comparison && !b.bool_modifier {
-                    return Err(bad("comparisons between scalars must use the bool modifier"));
+                    return Err(bad(
+                        "comparisons between scalars must use the bool modifier",
+                    ));
                 }
                 Ok(Value::Scalar(
                     (0..n)
@@ -156,12 +173,22 @@ impl Ev<'_> {
                         .collect(),
                 ))
             }
-            (Value::Vector(s), Value::Scalar(c)) => {
-                Ok(Value::Vector(vector::vector_scalar(s, &c, op, comparison, b.bool_modifier, false)))
-            }
-            (Value::Scalar(c), Value::Vector(s)) => {
-                Ok(Value::Vector(vector::vector_scalar(s, &c, op, comparison, b.bool_modifier, true)))
-            }
+            (Value::Vector(s), Value::Scalar(c)) => Ok(Value::Vector(vector::vector_scalar(
+                s,
+                &c,
+                op,
+                comparison,
+                b.bool_modifier,
+                false,
+            ))),
+            (Value::Scalar(c), Value::Vector(s)) => Ok(Value::Vector(vector::vector_scalar(
+                s,
+                &c,
+                op,
+                comparison,
+                b.bool_modifier,
+                true,
+            ))),
             (Value::Vector(l), Value::Vector(r)) => {
                 let matching = Matching {
                     on: b.matching.clone(),
@@ -170,7 +197,11 @@ impl Ev<'_> {
                         Some((false, _)) => Card::OneToMany,
                         None => Card::OneToOne,
                     },
-                    include: b.group.as_ref().map(|(_, labels)| labels.clone()).unwrap_or_default(),
+                    include: b
+                        .group
+                        .as_ref()
+                        .map(|(_, labels)| labels.clone())
+                        .unwrap_or_default(),
                 };
                 if b.op.is_set() {
                     Ok(Value::Vector(vector::set_op(n, op, l, r, &matching.on)))
@@ -188,7 +219,11 @@ impl Ev<'_> {
             return Ok(series);
         }
         let pipeline = Pipeline::compile(&r.log.stages)?;
-        let at = |ms: i64| Utc.timestamp_millis_opt(ms).single().ok_or_else(|| bad("time out of range"));
+        let at = |ms: i64| {
+            Utc.timestamp_millis_opt(ms)
+                .single()
+                .ok_or_else(|| bad("time out of range"))
+        };
         let entries = fetch_all(
             self.engine,
             self.storage,
@@ -200,16 +235,24 @@ impl Ev<'_> {
         let group = grouping(&r.grouping);
         let mut by_series: BTreeMap<Labels, Vec<Sample>> = BTreeMap::new();
         for entry in &entries {
-            let Some((line, mut labels)) = pipeline.process(entry.ts_ns, &entry.line, &entry.labels) else { continue };
+            let Some((line, mut labels)) =
+                pipeline.process(entry.ts_ns, &entry.line, &entry.labels)
+            else {
+                continue;
+            };
             if let Some(kind) = labels.get("__error__") {
-                let detail = labels.get("__error_details__").map(String::as_str).unwrap_or("");
+                let detail = labels
+                    .get("__error_details__")
+                    .map(String::as_str)
+                    .unwrap_or("");
                 return Err(bad(format!(
                     "pipeline error: '{kind}' ({detail}). Use a label filter to intentionally skip this error. (e.g | __error__!=\"{kind}\")"
                 )));
             }
             // Loki groups `by (...)` on the labels as they are before the unwrapped one is
             // removed, so `by (status)` can keep the label that was unwrapped.
-            let before_unwrap = matches!(group, Some(Grouping { by: true, .. })).then(|| labels.clone());
+            let before_unwrap =
+                matches!(group, Some(Grouping { by: true, .. })).then(|| labels.clone());
             let value = match &r.unwrap {
                 Some(u) => unwrap_value(u, &mut labels)?,
                 None => 1.0,
@@ -218,7 +261,11 @@ impl Ev<'_> {
                 Some(before) => vector::group_key(before, &group),
                 None => vector::group_key_or_all(&labels, &group),
             };
-            by_series.entry(key).or_default().push(Sample { ts_ns: entry.ts_ns, value, bytes: line.len() as f64 });
+            by_series.entry(key).or_default().push(Sample {
+                ts_ns: entry.ts_ns,
+                value,
+                bytes: line.len() as f64,
+            });
         }
         if r.op == RangeOp::AbsentOverTime {
             return Ok(self.absent(r, &by_series));
@@ -257,7 +304,11 @@ impl Ev<'_> {
         // Every window edge falls on a bucket edge when the buckets are as wide as the greatest
         // common divisor of the step and the range.
         let steps = self.n();
-        let step_ms = if steps > 1 { self.grid.step_ms } else { r.range_ms };
+        let step_ms = if steps > 1 {
+            self.grid.step_ms
+        } else {
+            r.range_ms
+        };
         if step_ms <= 0 {
             return Ok(None);
         }
@@ -306,7 +357,10 @@ impl Ev<'_> {
             }
             let vals: Vec<Option<f64>> = (0..steps as i64)
                 .map(|i| {
-                    let (lo, hi) = ((i * per_step) as usize, (i * per_step + per_window) as usize);
+                    let (lo, hi) = (
+                        (i * per_step) as usize,
+                        (i * per_step + per_window) as usize,
+                    );
                     let (n, b) = (lines[hi] - lines[lo], bytes[hi] - bytes[lo]);
                     if n == 0 {
                         return None;
@@ -356,14 +410,23 @@ fn window(samples: &[Sample], start_ms: i64, end_ms: i64) -> &[Sample] {
 }
 
 fn unwrap_value(u: &ast::Unwrap, labels: &mut Labels) -> ApiResult<f64> {
-    let err = |detail: String| bad(format!("pipeline error: 'SampleExtractionErr' ({detail}). Use a label filter to intentionally skip this error."));
-    let raw = labels.remove(&u.label).ok_or_else(|| err(format!("label {} is missing", u.label)))?;
+    let err = |detail: String| {
+        bad(format!("pipeline error: 'SampleExtractionErr' ({detail}). Use a label filter to intentionally skip this error."))
+    };
+    let raw = labels
+        .remove(&u.label)
+        .ok_or_else(|| err(format!("label {} is missing", u.label)))?;
     let parsed = match u.conv {
         Conv::None => raw.parse::<f64>().ok(),
         Conv::Bytes => parse_bytes(&raw),
         Conv::Duration | Conv::DurationSeconds => parse_duration_secs(&raw),
     };
-    parsed.ok_or_else(|| err(format!("label {} has the value {raw:?}, which cannot be converted", u.label)))
+    parsed.ok_or_else(|| {
+        err(format!(
+            "label {} has the value {raw:?}, which cannot be converted",
+            u.label
+        ))
+    })
 }
 
 fn apply(r: &RangeAgg, win: &[Sample], range_secs: f64, end_ms: i64) -> Option<f64> {
@@ -377,7 +440,8 @@ fn apply(r: &RangeAgg, win: &[Sample], range_secs: f64, end_ms: i64) -> Option<f
         RangeOp::BytesOverTime => sum_bytes,
         RangeOp::BytesRate => sum_bytes / range_secs,
         RangeOp::RateCounter => {
-            let points: Vec<(i64, f64)> = win.iter().map(|s| (s.ts_ns / 1_000_000, s.value)).collect();
+            let points: Vec<(i64, f64)> =
+                win.iter().map(|s| (s.ts_ns / 1_000_000, s.value)).collect();
             // Loki gives a window with fewer than two samples the rate 0.
             extrapolated(&points, end_ms - r.range_ms, end_ms, true, true).unwrap_or(0.0)
         }

@@ -14,7 +14,10 @@ fn bucket_quantile(q: f64, mut buckets: Vec<(f64, f64)>) -> f64 {
         return f64::INFINITY;
     }
     buckets.sort_by(|a, b| a.0.total_cmp(&b.0));
-    if buckets.last().is_none_or(|b| !b.0.is_infinite() || b.0 < 0.0) {
+    if buckets
+        .last()
+        .is_none_or(|b| !b.0.is_infinite() || b.0 < 0.0)
+    {
         return f64::NAN;
     }
     // Merge duplicate bounds, then make the cumulative counts monotonic.

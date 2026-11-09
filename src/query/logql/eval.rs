@@ -27,18 +27,37 @@ pub fn log_streams(
     forward: bool,
 ) -> ApiResult<Vec<Stream>> {
     let pipeline = Pipeline::compile(&log.stages)?;
-    let order = if forward { Order::Oldest } else { Order::Newest };
+    let order = if forward {
+        Order::Oldest
+    } else {
+        Order::Newest
+    };
     // Read a few times the lines wanted, in the order wanted, and read more only when the pipeline
     // dropped too many of them to fill the limit. The database stops at the row limit, so a query for
     // the newest 100 lines does not read the window.
     let max = engine.max_log_lines();
     let mut rows = limit.saturating_mul(2).max(1_000).min(max);
     let mut kept = loop {
-        let fetched = fetch(engine, storage, &log.matchers, &log.stages, Window { from, to, order, rows })?;
+        let fetched = fetch(
+            engine,
+            storage,
+            &log.matchers,
+            &log.stages,
+            Window {
+                from,
+                to,
+                order,
+                rows,
+            },
+        )?;
         let kept: Vec<(i64, String, Labels)> = fetched
             .entries
             .iter()
-            .filter_map(|e| pipeline.process(e.ts_ns, &e.line, &e.labels).map(|(line, labels)| (e.ts_ns, line, labels)))
+            .filter_map(|e| {
+                pipeline
+                    .process(e.ts_ns, &e.line, &e.labels)
+                    .map(|(line, labels)| (e.ts_ns, line, labels))
+            })
             .collect();
         if kept.len() >= limit || fetched.exhausted {
             break kept;
@@ -57,5 +76,8 @@ pub fn log_streams(
     for (ts, line, labels) in kept {
         streams.entry(labels).or_default().push((ts, line));
     }
-    Ok(streams.into_iter().map(|(labels, entries)| Stream { labels, entries }).collect())
+    Ok(streams
+        .into_iter()
+        .map(|(labels, entries)| Stream { labels, entries })
+        .collect())
 }

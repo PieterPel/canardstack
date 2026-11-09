@@ -20,7 +20,8 @@ pub use traceql_syntax::ast;
 pub use value::Val;
 
 pub fn parse(input: &str) -> ApiResult<Query> {
-    let query = traceql_syntax::parse(input).map_err(|e| ApiError::new(400, "bad_data", e.to_string()))?;
+    let query =
+        traceql_syntax::parse(input).map_err(|e| ApiError::new(400, "bad_data", e.to_string()))?;
     traceql_syntax::validate(&query).map_err(|e| ApiError::new(400, "bad_data", e.to_string()))?;
     Ok(query)
 }
@@ -58,20 +59,42 @@ pub fn search(
     limit: usize,
     spss: usize,
 ) -> ApiResult<Vec<TraceHit>> {
-    if matches!(query.kind, QueryKind::Metrics(_) | QueryKind::MetricsMath { .. }) {
-        return Err(ApiError::new(400, "bad_data", "metrics queries are not search queries"));
+    if matches!(
+        query.kind,
+        QueryKind::Metrics(_) | QueryKind::MetricsMath { .. }
+    ) {
+        return Err(ApiError::new(
+            400,
+            "bad_data",
+            "metrics queries are not search queries",
+        ));
     }
-    let traces = model::load(engine, storage, from, to, &pushdown::requirements(&query.kind), pushdown::needs(&query.kind))?;
+    let traces = model::load(
+        engine,
+        storage,
+        from,
+        to,
+        &pushdown::requirements(&query.kind),
+        pushdown::needs(&query.kind),
+    )?;
     let regexes = Regexes::default();
     let mut hits = Vec::new();
     for trace in &traces {
-        let eval = Eval { trace, regexes: &regexes };
+        let eval = Eval {
+            trace,
+            regexes: &regexes,
+        };
         let groups = match &query.kind {
             QueryKind::Pipeline(p) => eval.pipeline(p, eval.input())?,
             QueryKind::Spansets(s) => {
                 let mut out = Vec::new();
                 for group in eval.input() {
-                    out.extend(eval.pipeline(&ast::Pipeline { elements: vec![ast::Element::Spanset(s.clone())] }, vec![group])?);
+                    out.extend(eval.pipeline(
+                        &ast::Pipeline {
+                            elements: vec![ast::Element::Spanset(s.clone())],
+                        },
+                        vec![group],
+                    )?);
                 }
                 out
             }
@@ -90,7 +113,12 @@ pub fn search(
                     .take(spss)
                     .map(|&i| {
                         let s = &trace.spans[i];
-                        SpanHit { span_id: s.span_id.clone(), name: s.name.clone(), start_ns: s.start_ns, duration_ns: s.duration_ns }
+                        SpanHit {
+                            span_id: s.span_id.clone(),
+                            name: s.name.clone(),
+                            start_ns: s.start_ns,
+                            duration_ns: s.duration_ns,
+                        }
                     })
                     .collect(),
             })
@@ -104,7 +132,11 @@ pub fn search(
             sets,
         });
     }
-    hits.sort_by(|a, b| b.start_ns.cmp(&a.start_ns).then_with(|| a.trace_id.cmp(&b.trace_id)));
+    hits.sort_by(|a, b| {
+        b.start_ns
+            .cmp(&a.start_ns)
+            .then_with(|| a.trace_id.cmp(&b.trace_id))
+    });
     hits.truncate(limit);
     Ok(hits)
 }

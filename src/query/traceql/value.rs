@@ -22,7 +22,10 @@ pub fn from_json(value: &Value) -> Option<Val> {
     match value {
         Value::String(s) => Some(Val::Str(s.clone())),
         Value::Bool(b) => Some(Val::Bool(*b)),
-        Value::Number(n) => n.as_i64().map(Val::Int).or_else(|| n.as_f64().map(Val::Float)),
+        Value::Number(n) => n
+            .as_i64()
+            .map(Val::Int)
+            .or_else(|| n.as_f64().map(Val::Float)),
         _ => None,
     }
 }
@@ -101,7 +104,9 @@ pub fn compare(op: Op, a: &Val, b: &Val, regexes: &Regexes) -> bool {
     use std::cmp::Ordering::*;
     match op {
         Op::Re | Op::NotRe => match (a, b) {
-            (Val::Str(value), Val::Str(pattern)) => regexes.is_match(pattern, value) == (op == Op::Re),
+            (Val::Str(value), Val::Str(pattern)) => {
+                regexes.is_match(pattern, value) == (op == Op::Re)
+            }
             _ => false,
         },
         Op::Eq | Op::Ne => {
@@ -129,9 +134,15 @@ pub fn compare(op: Op, a: &Val, b: &Val, regexes: &Regexes) -> bool {
 /// zero.
 pub fn arith(op: Op, a: &Val, b: &Val) -> Option<Val> {
     match (a, b) {
-        (Val::Int(x), Val::Int(y)) => int_op(op, *x, *y).map(Val::Int).or_else(|| float_op(op, *x as f64, *y as f64)),
-        (Val::Dur(x), Val::Dur(y)) if matches!(op, Op::Add | Op::Sub | Op::Mod) => int_op(op, *x, *y).map(Val::Dur),
-        (Val::Dur(x), Val::Int(y)) | (Val::Int(y), Val::Dur(x)) if matches!(op, Op::Mul) => Some(Val::Dur(x.checked_mul(*y)?)),
+        (Val::Int(x), Val::Int(y)) => int_op(op, *x, *y)
+            .map(Val::Int)
+            .or_else(|| float_op(op, *x as f64, *y as f64)),
+        (Val::Dur(x), Val::Dur(y)) if matches!(op, Op::Add | Op::Sub | Op::Mod) => {
+            int_op(op, *x, *y).map(Val::Dur)
+        }
+        (Val::Dur(x), Val::Int(y)) | (Val::Int(y), Val::Dur(x)) if matches!(op, Op::Mul) => {
+            Some(Val::Dur(x.checked_mul(*y)?))
+        }
         _ => float_op(op, a.number()?, b.number()?),
     }
 }

@@ -43,12 +43,18 @@ pub struct Lazy<T> {
 
 impl<T> Lazy<T> {
     pub fn raw(raw: Option<String>) -> Self {
-        Lazy { raw, cell: OnceCell::new() }
+        Lazy {
+            raw,
+            cell: OnceCell::new(),
+        }
     }
 
     #[cfg(test)]
     pub fn ready(value: T) -> Self {
-        Lazy { raw: None, cell: OnceCell::from(value) }
+        Lazy {
+            raw: None,
+            cell: OnceCell::from(value),
+        }
     }
 
     fn get(&self, parse: impl FnOnce(Option<&str>) -> T) -> &T {
@@ -87,7 +93,10 @@ impl Span {
     pub fn resource(&self) -> &Attrs {
         self.resource.get(|raw| {
             let mut map = attrs(raw);
-            for (key, value) in ["service.name", "service.namespace", "service.instance.id"].into_iter().zip(&self.service) {
+            for (key, value) in ["service.name", "service.namespace", "service.instance.id"]
+                .into_iter()
+                .zip(&self.service)
+            {
                 if let Some(v) = value.as_ref().filter(|v| !v.is_empty()) {
                     map.entry(key.to_string()).or_insert(Val::Str(v.clone()));
                 }
@@ -108,7 +117,11 @@ impl Span {
         self.events.get(|raw| {
             array(raw)
                 .iter()
-                .map(|e| Event { name: text(e, "name"), time_ns: e.get("time_unix_nano").and_then(Value::as_i64).unwrap_or(0), attrs: json_attrs(e) })
+                .map(|e| Event {
+                    name: text(e, "name"),
+                    time_ns: e.get("time_unix_nano").and_then(Value::as_i64).unwrap_or(0),
+                    attrs: json_attrs(e),
+                })
                 .collect()
         })
     }
@@ -117,7 +130,11 @@ impl Span {
         self.links.get(|raw| {
             array(raw)
                 .iter()
-                .map(|l| Link { trace_id: text(l, "trace_id"), span_id: text(l, "span_id"), attrs: json_attrs(l) })
+                .map(|l| Link {
+                    trace_id: text(l, "trace_id"),
+                    span_id: text(l, "span_id"),
+                    attrs: json_attrs(l),
+                })
                 .collect()
         })
     }
@@ -136,7 +153,9 @@ fn attrs(json: Option<&str>) -> Attrs {
     let Some(Value::Object(map)) = json.and_then(|j| serde_json::from_str(j).ok()) else {
         return Attrs::new();
     };
-    map.iter().filter_map(|(k, v)| Some((k.clone(), from_json(v)?))).collect()
+    map.iter()
+        .filter_map(|(k, v)| Some((k.clone(), from_json(v)?)))
+        .collect()
 }
 
 fn array(json: Option<&str>) -> Vec<Value> {
@@ -147,24 +166,44 @@ fn array(json: Option<&str>) -> Vec<Value> {
 }
 
 fn text(value: &Value, key: &str) -> String {
-    value.get(key).and_then(Value::as_str).unwrap_or_default().to_string()
+    value
+        .get(key)
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string()
 }
 
 fn json_attrs(value: &Value) -> Attrs {
     match value.get("attributes") {
-        Some(Value::Object(map)) => map.iter().filter_map(|(k, v)| Some((k.clone(), from_json(v)?))).collect(),
+        Some(Value::Object(map)) => map
+            .iter()
+            .filter_map(|(k, v)| Some((k.clone(), from_json(v)?)))
+            .collect(),
         _ => Attrs::new(),
     }
 }
 
 impl Trace {
     pub(super) fn build(id: String, mut spans: Vec<Span>) -> Trace {
-        spans.sort_by(|a, b| a.start_ns.cmp(&b.start_ns).then_with(|| a.span_id.cmp(&b.span_id)));
-        let by_id: BTreeMap<&str, usize> = spans.iter().enumerate().map(|(i, s)| (s.span_id.as_str(), i)).collect();
+        spans.sort_by(|a, b| {
+            a.start_ns
+                .cmp(&b.start_ns)
+                .then_with(|| a.span_id.cmp(&b.span_id))
+        });
+        let by_id: BTreeMap<&str, usize> = spans
+            .iter()
+            .enumerate()
+            .map(|(i, s)| (s.span_id.as_str(), i))
+            .collect();
         let parents: Vec<Option<usize>> = spans
             .iter()
             .enumerate()
-            .map(|(i, s)| by_id.get(s.parent_id.as_str()).copied().filter(|&p| p != i && !s.parent_id.is_empty()))
+            .map(|(i, s)| {
+                by_id
+                    .get(s.parent_id.as_str())
+                    .copied()
+                    .filter(|&p| p != i && !s.parent_id.is_empty())
+            })
             .collect();
         let mut kids: Vec<Vec<usize>> = vec![Vec::new(); spans.len()];
         for (i, parent) in parents.iter().enumerate() {
@@ -198,7 +237,11 @@ impl Trace {
             }
         }
         let start_ns = spans.iter().map(|s| s.start_ns).min().unwrap_or(0);
-        let end_ns = spans.iter().map(|s| s.start_ns + s.duration_ns).max().unwrap_or(0);
+        let end_ns = spans
+            .iter()
+            .map(|s| s.start_ns + s.duration_ns)
+            .max()
+            .unwrap_or(0);
         let root = spans.iter().find(|s| s.parent_id.is_empty());
         let root_name = root.map(|s| s.name.clone()).unwrap_or_default();
         let root_service = root
@@ -207,7 +250,14 @@ impl Trace {
                 _ => None,
             })
             .unwrap_or_default();
-        Trace { id, spans, root_name, root_service, start_ns, end_ns }
+        Trace {
+            id,
+            spans,
+            root_name,
+            root_service,
+            start_ns,
+            end_ns,
+        }
     }
 }
 
@@ -224,15 +274,27 @@ pub fn load(
     let table = StorageSignal::Spans.as_str();
     // One scan over the margin: window functions tell, per trace, whether any span starts in the
     // window and whether any span meets each requirement, and only such traces are returned.
-    let margin = time_predicate("start_time_unix_nano", from - TRACE_MARGIN, to + TRACE_MARGIN);
+    let margin = time_predicate(
+        "start_time_unix_nano",
+        from - TRACE_MARGIN,
+        to + TRACE_MARGIN,
+    );
     let flags: String = std::iter::once(time_predicate("start_time_unix_nano", from, to))
         .chain(requirements.iter().cloned())
         .enumerate()
         .map(|(i, cond)| format!(", max(CASE WHEN {cond} THEN 1 ELSE 0 END) OVER w AS f{i}"))
         .collect();
-    let wanted: String = (0..=requirements.len()).map(|i| format!(" AND f{i} = 1")).collect();
+    let wanted: String = (0..=requirements.len())
+        .map(|i| format!(" AND f{i} = 1"))
+        .collect();
     // Columns the query cannot read are selected as NULL.
-    let wide = |wanted: bool, column: &str| if wanted { column.to_string() } else { "NULL".to_string() };
+    let wide = |wanted: bool, column: &str| {
+        if wanted {
+            column.to_string()
+        } else {
+            "NULL".to_string()
+        }
+    };
     let columns = format!(
         "epoch_ns(start_time_unix_nano) AS c0, duration_time_unix_nano AS c1, lower(trace_id) AS c2, lower(span_id) AS c3, lower(coalesce(parent_span_id, '')) AS c4, name AS c5, kind AS c6, status_code AS c7, {} AS c8, service_name AS c9, service_namespace AS c10, service_instance_id AS c11, {} AS c12, {} AS c13, {} AS c14, {} AS c15, {} AS c16, {} AS c17, {} AS c18",
         wide(needs.status_message, "status_status_message"),

@@ -574,7 +574,10 @@ fn loki_line_filters_chain_negate_and_format() {
     assert!(loki_lines(&state, r#"{service_name="a"} |= "WARN""#).is_empty());
     assert!(loki_lines(&state, r#"{service_name="a"} |= "event 1 AND event 2""#).is_empty());
     assert!(loki_lines(&state, r#"{service_name="a"} |= "(x)""#).is_empty());
-    assert_eq!(loki_lines(&state, r#"{service_name="a"} != "EVENT""#).len(), 4);
+    assert_eq!(
+        loki_lines(&state, r#"{service_name="a"} != "EVENT""#).len(),
+        4
+    );
 }
 
 /// `mem` samples with arbitrary metric attributes, as a scraped Prometheus metric would have.
@@ -605,11 +608,21 @@ fn app_with_attribute_labels() -> (tempfile::TempDir, AppState) {
 fn prometheus_metric_attributes_are_labels() {
     let (_dir, state) = app_with_attribute_labels();
     let query = |q: &str| {
-        prom_get(&state, "/api/v1/query", &[("query", q), ("time", "1767225600")])["data"]["result"].clone()
+        prom_get(
+            &state,
+            "/api/v1/query",
+            &[("query", q), ("time", "1767225600")],
+        )["data"]["result"]
+            .clone()
     };
     let free = query(r#"mem{type="free"}"#);
     assert_eq!(free.as_array().unwrap().len(), 2, "{free}");
-    let first = free.as_array().unwrap().iter().find(|s| s["metric"]["instance"] == "h1:80").unwrap();
+    let first = free
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["metric"]["instance"] == "h1:80")
+        .unwrap();
     assert_eq!(first["metric"]["__name__"], "mem");
     assert_eq!(first["metric"]["job"], "demo");
     assert_eq!(first["metric"]["type"], "free");
@@ -619,15 +632,35 @@ fn prometheus_metric_attributes_are_labels() {
         .as_array()
         .unwrap()
         .iter()
-        .map(|s| (s["metric"]["type"].as_str().unwrap().to_string(), s["value"][1].as_str().unwrap().to_string()))
+        .map(|s| {
+            (
+                s["metric"]["type"].as_str().unwrap().to_string(),
+                s["value"][1].as_str().unwrap().to_string(),
+            )
+        })
         .collect();
-    assert_eq!(sums, HashMap::from([("free".into(), "60".into()), ("used".into(), "30".into())]));
-    assert_eq!(query(r#"mem{instance="h2:80"}"#).as_array().unwrap().len(), 1);
-    assert_eq!(query(r#"mem{type=~"fr.*", http_route!=""}"#).as_array().unwrap().len(), 1);
+    assert_eq!(
+        sums,
+        HashMap::from([("free".into(), "60".into()), ("used".into(), "30".into())])
+    );
+    assert_eq!(
+        query(r#"mem{instance="h2:80"}"#).as_array().unwrap().len(),
+        1
+    );
+    assert_eq!(
+        query(r#"mem{type=~"fr.*", http_route!=""}"#)
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
 
     let window = [("start", "1767225500"), ("end", "1767225700")];
     let names = prom_get(&state, "/api/v1/labels", &window);
-    assert_eq!(names["data"], serde_json::json!(["__name__", "http_route", "instance", "job", "type"]));
+    assert_eq!(
+        names["data"],
+        serde_json::json!(["__name__", "http_route", "instance", "job", "type"])
+    );
     let types = prom_get(&state, "/api/v1/label/type/values", &window);
     assert_eq!(types["data"], serde_json::json!(["free", "used"]));
     let routes = prom_get(&state, "/api/v1/label/http_route/values", &window);
@@ -663,54 +696,106 @@ fn app_with_histogram() -> (tempfile::TempDir, AppState) {
 #[test]
 fn promql_reads_explicit_histograms_as_classic_bucket_sum_and_count_series() {
     let (_dir, state) = app_with_histogram();
-    let at = |q: &str, t: &str| prom_get(&state, "/api/v1/query", &[("query", q), ("time", t)])["data"]["result"].clone();
+    let at = |q: &str, t: &str| {
+        prom_get(&state, "/api/v1/query", &[("query", q), ("time", t)])["data"]["result"].clone()
+    };
     // 2026-01-01T00:00:00Z is 1767225600; the first scrape.
     let buckets = at("http_server_duration_seconds_bucket", "1767225600");
     let mut by_le: Vec<(String, String)> = buckets
         .as_array()
         .unwrap()
         .iter()
-        .map(|s| (s["metric"]["le"].as_str().unwrap().to_string(), s["value"][1].as_str().unwrap().to_string()))
+        .map(|s| {
+            (
+                s["metric"]["le"].as_str().unwrap().to_string(),
+                s["value"][1].as_str().unwrap().to_string(),
+            )
+        })
         .collect();
     by_le.sort_by(|a, b| a.0.cmp(&b.0));
     // Bucket counts are cumulative and the last bucket is `+Inf`.
     assert_eq!(
         by_le,
-        [("+Inf", "10"), ("0.1", "1"), ("0.5", "3"), ("1", "6")].map(|(a, b)| (a.to_string(), b.to_string()))
+        [("+Inf", "10"), ("0.1", "1"), ("0.5", "3"), ("1", "6")]
+            .map(|(a, b)| (a.to_string(), b.to_string()))
     );
     let first = &buckets[0]["metric"];
     assert_eq!(first["__name__"], "http_server_duration_seconds_bucket");
     assert_eq!(first["job"], "web");
     assert_eq!(first["instance"], "h1");
     assert_eq!(first["route"], "/a");
-    assert_eq!(at("http_server_duration_seconds_count", "1767225600")[0]["value"][1], "10");
-    assert_eq!(at("http_server_duration_seconds_sum", "1767225600")[0]["value"][1], "12.5");
-    assert_eq!(at(r#"http_server_duration_seconds_bucket{le="0.5"}"#, "1767225610")[0]["value"][1], "6");
+    assert_eq!(
+        at("http_server_duration_seconds_count", "1767225600")[0]["value"][1],
+        "10"
+    );
+    assert_eq!(
+        at("http_server_duration_seconds_sum", "1767225600")[0]["value"][1],
+        "12.5"
+    );
+    assert_eq!(
+        at(
+            r#"http_server_duration_seconds_bucket{le="0.5"}"#,
+            "1767225610"
+        )[0]["value"][1],
+        "6"
+    );
     // The quantile interpolates inside the bucket: rank 5 of 10 lies between 0.5 (3) and 1 (6).
-    let q = at("histogram_quantile(0.5, http_server_duration_seconds_bucket)", "1767225600");
+    let q = at(
+        "histogram_quantile(0.5, http_server_duration_seconds_bucket)",
+        "1767225600",
+    );
     let value: f64 = q[0]["value"][1].as_str().unwrap().parse().unwrap();
     assert!((value - (0.5 + 0.5 * 2.0 / 3.0)).abs() < 1e-9, "{q}");
     // Over the two scrapes, 10 more observations arrived, spread like the first ten.
-    let rate = at("histogram_quantile(0.5, sum by (le) (rate(http_server_duration_seconds_bucket[1m])))", "1767225610");
+    let rate = at(
+        "histogram_quantile(0.5, sum by (le) (rate(http_server_duration_seconds_bucket[1m])))",
+        "1767225610",
+    );
     let value: f64 = rate[0]["value"][1].as_str().unwrap().parse().unwrap();
     assert!((value - (0.5 + 0.5 * 2.0 / 3.0)).abs() < 1e-9, "{rate}");
     // A selector that cannot be a histogram series does not see them.
-    assert_eq!(at("http_server_duration_seconds", "1767225600").as_array().unwrap().len(), 0);
+    assert_eq!(
+        at("http_server_duration_seconds", "1767225600")
+            .as_array()
+            .unwrap()
+            .len(),
+        0
+    );
 
     // Discovery lists the three kinds of series, the `le` bounds and the histogram's type.
     let window = [("start", "1767225500"), ("end", "1767225700")];
     let names = prom_get(&state, "/api/v1/label/__name__/values", &window)["data"].clone();
     assert_eq!(
         names,
-        serde_json::json!(["http_server_duration_seconds_bucket", "http_server_duration_seconds_count", "http_server_duration_seconds_sum"])
+        serde_json::json!([
+            "http_server_duration_seconds_bucket",
+            "http_server_duration_seconds_count",
+            "http_server_duration_seconds_sum"
+        ])
     );
     let les = prom_get(&state, "/api/v1/label/le/values", &window)["data"].clone();
     assert_eq!(les, serde_json::json!(["+Inf", "0.1", "0.5", "1"]));
-    assert!(prom_get(&state, "/api/v1/labels", &window)["data"].as_array().unwrap().iter().any(|l| l == "le"));
-    let series = prom_get(&state, "/api/v1/series", &[("start", "1767225500"), ("end", "1767225700"), ("match[]", "http_server_duration_seconds_sum")])["data"].clone();
+    assert!(prom_get(&state, "/api/v1/labels", &window)["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|l| l == "le"));
+    let series = prom_get(
+        &state,
+        "/api/v1/series",
+        &[
+            ("start", "1767225500"),
+            ("end", "1767225700"),
+            ("match[]", "http_server_duration_seconds_sum"),
+        ],
+    )["data"]
+        .clone();
     assert_eq!(series.as_array().unwrap().len(), 1, "{series}");
     let metadata = prom_get(&state, "/api/v1/metadata", &[])["data"].clone();
-    assert_eq!(metadata["http_server_duration_seconds"][0]["type"], "histogram");
+    assert_eq!(
+        metadata["http_server_duration_seconds"][0]["type"],
+        "histogram"
+    );
 }
 
 /// One native (exponential) histogram series `lat` in seconds, scale 0, scraped twice ten seconds
@@ -743,44 +828,101 @@ fn app_with_native_histogram() -> (tempfile::TempDir, AppState) {
 #[test]
 fn promql_evaluates_native_histograms() {
     let (_dir, state) = app_with_native_histogram();
-    let at = |q: &str, t: &str| prom_get(&state, "/api/v1/query", &[("query", q), ("time", t)])["data"]["result"].clone();
-    let float = |q: &str, t: &str| -> f64 { at(q, t)[0]["value"][1].as_str().unwrap_or_else(|| panic!("no float for {q}: {}", at(q, t))).parse().unwrap() };
+    let at = |q: &str, t: &str| {
+        prom_get(&state, "/api/v1/query", &[("query", q), ("time", t)])["data"]["result"].clone()
+    };
+    let float = |q: &str, t: &str| -> f64 {
+        at(q, t)[0]["value"][1]
+            .as_str()
+            .unwrap_or_else(|| panic!("no float for {q}: {}", at(q, t)))
+            .parse()
+            .unwrap()
+    };
     // 2026-01-01T00:00:00Z = 1767225600. The sample is a histogram with its non-empty buckets.
     let sample = at("lat_seconds", "1767225600");
     assert_eq!(sample[0]["metric"]["__name__"], "lat_seconds");
     assert_eq!(sample[0]["metric"]["job"], "web");
     assert_eq!(sample[0]["metric"]["route"], "/a");
     let h = &sample[0]["histogram"][1];
-    assert_eq!((h["count"].as_str(), h["sum"].as_str()), (Some("6"), Some("10")));
+    assert_eq!(
+        (h["count"].as_str(), h["sum"].as_str()),
+        (Some("6"), Some("10"))
+    );
     // `1e-128` is how Prometheus prints the default zero threshold.
     assert_eq!(
         h["buckets"],
-        serde_json::json!([[3, "-1e-128", "1e-128", "1"], [0, "1", "2", "2"], [0, "2", "4", "3"]])
+        serde_json::json!([
+            [3, "-1e-128", "1e-128", "1"],
+            [0, "1", "2", "2"],
+            [0, "2", "4", "3"]
+        ])
     );
     assert_eq!(float("histogram_count(lat_seconds)", "1767225600"), 6.0);
     assert_eq!(float("histogram_sum(lat_seconds)", "1767225610"), 20.0);
-    assert_eq!(float("histogram_avg(lat_seconds)", "1767225610"), 20.0 / 12.0);
+    assert_eq!(
+        float("histogram_avg(lat_seconds)", "1767225610"),
+        20.0 / 12.0
+    );
     // 6 more observations in 10 s, extrapolated to the start of the 1 m window like a float rate:
     // (6 * (10 + 5) / 10) / 60.
     let rate = float("histogram_count(rate(lat_seconds[1m]))", "1767225610");
     assert!((rate - 6.0 * 1.5 / 60.0).abs() < 1e-12, "{rate}");
-    assert_eq!(float("histogram_quantile(0.5, lat_seconds)", "1767225600"), 2.0);
-    assert!(at("histogram_quantile(0.5, lat_seconds)", "1767225600")[0]["metric"].get("__name__").is_none());
+    assert_eq!(
+        float("histogram_quantile(0.5, lat_seconds)", "1767225600"),
+        2.0
+    );
+    assert!(
+        at("histogram_quantile(0.5, lat_seconds)", "1767225600")[0]["metric"]
+            .get("__name__")
+            .is_none()
+    );
     // Aggregation sums histograms; count counts series; arithmetic scales them and rejects floats.
-    assert_eq!(at("sum(lat_seconds)", "1767225610")[0]["histogram"][1]["count"], "12");
+    assert_eq!(
+        at("sum(lat_seconds)", "1767225610")[0]["histogram"][1]["count"],
+        "12"
+    );
     assert_eq!(float("count(lat_seconds)", "1767225610"), 1.0);
-    assert_eq!(at("lat_seconds * 2", "1767225610")[0]["histogram"][1]["count"], "24");
-    assert_eq!(at("lat_seconds / 4", "1767225610")[0]["histogram"][1]["sum"], "5");
+    assert_eq!(
+        at("lat_seconds * 2", "1767225610")[0]["histogram"][1]["count"],
+        "24"
+    );
+    assert_eq!(
+        at("lat_seconds / 4", "1767225610")[0]["histogram"][1]["sum"],
+        "5"
+    );
     assert_eq!(at("lat_seconds + 1", "1767225610"), serde_json::json!([]));
-    assert_eq!(at("lat_seconds == lat_seconds", "1767225610").as_array().unwrap().len(), 1);
-    assert_eq!(at("lat_seconds != lat_seconds", "1767225610"), serde_json::json!([]));
-    assert_eq!(at("absent_over_time(lat_seconds[1m])", "1767225610"), serde_json::json!([]));
-    assert_eq!(at("absent_over_time(lat_seconds[1m])", "1767226610").as_array().unwrap().len(), 1);
+    assert_eq!(
+        at("lat_seconds == lat_seconds", "1767225610")
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(
+        at("lat_seconds != lat_seconds", "1767225610"),
+        serde_json::json!([])
+    );
+    assert_eq!(
+        at("absent_over_time(lat_seconds[1m])", "1767225610"),
+        serde_json::json!([])
+    );
+    assert_eq!(
+        at("absent_over_time(lat_seconds[1m])", "1767226610")
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
     // A range query returns the histograms under `histograms`.
     let range = prom_get(
         &state,
         "/api/v1/query_range",
-        &[("query", "lat_seconds"), ("start", "1767225600"), ("end", "1767225610"), ("step", "10")],
+        &[
+            ("query", "lat_seconds"),
+            ("start", "1767225600"),
+            ("end", "1767225610"),
+            ("step", "10"),
+        ],
     )["data"]["result"]
         .clone();
     assert!(range[0].get("values").is_none());
@@ -806,22 +948,60 @@ fn promql_evaluates_native_histograms() {
 fn prometheus_discovery_endpoints_honour_match_selectors() {
     let (_dir, state) = app_with_attribute_labels();
     fn window(m: &str) -> Vec<(&str, &str)> {
-        vec![("start", "1767225500"), ("end", "1767225700"), ("match[]", m)]
+        vec![
+            ("start", "1767225500"),
+            ("end", "1767225700"),
+            ("match[]", m),
+        ]
     }
     let get = |path: &str, m: &str| prom_get(&state, path, &window(m))["data"].clone();
     // One selector narrows the label values and the series.
-    assert_eq!(get("/api/v1/label/type/values", r#"mem{instance="h2:80"}"#), serde_json::json!(["free"]));
-    assert_eq!(get("/api/v1/label/instance/values", r#"{type="used"}"#), serde_json::json!(["h1:80"]));
-    assert_eq!(get("/api/v1/series", r#"mem{type=~"fr.*"}"#).as_array().unwrap().len(), 2);
+    assert_eq!(
+        get("/api/v1/label/type/values", r#"mem{instance="h2:80"}"#),
+        serde_json::json!(["free"])
+    );
+    assert_eq!(
+        get("/api/v1/label/instance/values", r#"{type="used"}"#),
+        serde_json::json!(["h1:80"])
+    );
+    assert_eq!(
+        get("/api/v1/series", r#"mem{type=~"fr.*"}"#)
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
     // Label names only list the labels of the selected series.
-    assert_eq!(get("/api/v1/labels", r#"mem{type="used"}"#), serde_json::json!(["__name__", "instance", "job", "type"]));
+    assert_eq!(
+        get("/api/v1/labels", r#"mem{type="used"}"#),
+        serde_json::json!(["__name__", "instance", "job", "type"])
+    );
     // Several selectors select the union (a repeated `match[]` arrives joined).
-    let both = format!("{}\u{1f}{}", r#"mem{type="used"}"#, r#"mem{instance="h2:80"}"#);
-    assert_eq!(get("/api/v1/label/type/values", &both), serde_json::json!(["free", "used"]));
-    assert_eq!(get("/api/v1/label/type/values", r#"nothing"#), serde_json::json!([]));
+    let both = format!(
+        "{}\u{1f}{}",
+        r#"mem{type="used"}"#, r#"mem{instance="h2:80"}"#
+    );
+    assert_eq!(
+        get("/api/v1/label/type/values", &both),
+        serde_json::json!(["free", "used"])
+    );
+    assert_eq!(
+        get("/api/v1/label/type/values", r#"nothing"#),
+        serde_json::json!([])
+    );
     // A selector that is not a series selector is rejected.
-    let params: HashMap<String, String> = window("rate(mem[1m])").into_iter().map(|(k, v)| (k.into(), v.into())).collect();
-    let response = http::route("GET", "/api/v1/series", &params, &api_headers(), &[], &state);
+    let params: HashMap<String, String> = window("rate(mem[1m])")
+        .into_iter()
+        .map(|(k, v)| (k.into(), v.into()))
+        .collect();
+    let response = http::route(
+        "GET",
+        "/api/v1/series",
+        &params,
+        &api_headers(),
+        &[],
+        &state,
+    );
     assert_eq!(response.status(), 400, "{}", response.json_body());
 }
 
@@ -830,36 +1010,80 @@ fn promql_calendar_regression_and_bucket_functions() {
     let (_dir, state) = app_with_gauge_series();
     // sem_gauge{job="a"} is 1, 9, 2 at 2026-01-01T00:00:00..02Z; evaluate at :02.
     let value = |q: &str| -> Option<String> {
-        let body = prom_get(&state, "/api/v1/query", &[("query", q), ("time", "1767225602")]);
-        body["data"]["result"][0]["value"][1].as_str().map(str::to_string)
+        let body = prom_get(
+            &state,
+            "/api/v1/query",
+            &[("query", q), ("time", "1767225602")],
+        );
+        body["data"]["result"][0]["value"][1]
+            .as_str()
+            .map(str::to_string)
     };
-    assert_eq!(value(r#"timestamp(sem_gauge{job="a"})"#).as_deref(), Some("1767225602"));
+    assert_eq!(
+        value(r#"timestamp(sem_gauge{job="a"})"#).as_deref(),
+        Some("1767225602")
+    );
     assert_eq!(value("year(vector(1767225602))").as_deref(), Some("2026"));
     assert_eq!(value("month(vector(1767225602))").as_deref(), Some("1"));
-    assert_eq!(value("day_of_week(vector(1767225602))").as_deref(), Some("4")); // a Thursday
-    assert_eq!(value("days_in_month(vector(1767225602))").as_deref(), Some("31"));
-    assert_eq!(value("hour(vector(1767225602 + 3600))").as_deref(), Some("1"));
+    assert_eq!(
+        value("day_of_week(vector(1767225602))").as_deref(),
+        Some("4")
+    ); // a Thursday
+    assert_eq!(
+        value("days_in_month(vector(1767225602))").as_deref(),
+        Some("31")
+    );
+    assert_eq!(
+        value("hour(vector(1767225602 + 3600))").as_deref(),
+        Some("1")
+    );
     assert_eq!(value(r#"absent_over_time(sem_gauge{job="a"}[1m])"#), None);
-    assert_eq!(value(r#"absent_over_time(sem_gauge{job="nobody"}[1m])"#).as_deref(), Some("1"));
+    assert_eq!(
+        value(r#"absent_over_time(sem_gauge{job="nobody"}[1m])"#).as_deref(),
+        Some("1")
+    );
     // Points (0,1), (1,9), (2,2): slope (2-1)/2 = 0.5 per second.
     // The fitted line is 4.5 at :02 with slope 0.5, so two seconds later it is 5.5.
-    assert_eq!(value(r#"deriv(sem_gauge{job="a"}[10s])"#).as_deref(), Some("0.5"));
-    assert_eq!(value(r#"predict_linear(sem_gauge{job="a"}[10s], 2)"#).as_deref(), Some("5.5"));
+    assert_eq!(
+        value(r#"deriv(sem_gauge{job="a"}[10s])"#).as_deref(),
+        Some("0.5")
+    );
+    assert_eq!(
+        value(r#"predict_linear(sem_gauge{job="a"}[10s], 2)"#).as_deref(),
+        Some("5.5")
+    );
     // The subquery evaluates at :01 and :02 (multiples of 1s inside (:00, :02]): values 9 and 2.
-    assert_eq!(value(r#"max_over_time(sem_gauge{job="a"}[2s:1s])"#).as_deref(), Some("9"));
-    assert_eq!(value(r#"min_over_time(sem_gauge{job="a"}[2s:1s] offset 1s)"#).as_deref(), Some("1"));
+    assert_eq!(
+        value(r#"max_over_time(sem_gauge{job="a"}[2s:1s])"#).as_deref(),
+        Some("9")
+    );
+    assert_eq!(
+        value(r#"min_over_time(sem_gauge{job="a"}[2s:1s] offset 1s)"#).as_deref(),
+        Some("1")
+    );
     let counted = prom_get(
         &state,
         "/api/v1/query",
-        &[("query", r#"count_values("v", sem_gauge)"#), ("time", "1767225602")],
+        &[
+            ("query", r#"count_values("v", sem_gauge)"#),
+            ("time", "1767225602"),
+        ],
     );
     let by_value: HashMap<String, String> = counted["data"]["result"]
         .as_array()
         .unwrap()
         .iter()
-        .map(|s| (s["metric"]["v"].as_str().unwrap().into(), s["value"][1].as_str().unwrap().into()))
+        .map(|s| {
+            (
+                s["metric"]["v"].as_str().unwrap().into(),
+                s["value"][1].as_str().unwrap().into(),
+            )
+        })
         .collect();
-    assert_eq!(by_value, HashMap::from([("2".into(), "1".into()), ("4".into(), "1".into())]));
+    assert_eq!(
+        by_value,
+        HashMap::from([("2".into(), "1".into()), ("4".into(), "1".into())])
+    );
     // Inverted clamp bounds give an empty result, as in Prometheus.
     assert_eq!(value(r#"clamp(sem_gauge{job="a"}, 5, 1)"#), None);
 }
@@ -886,7 +1110,11 @@ fn prometheus_metric_names_follow_the_otel_translation() {
     })
     .unwrap();
     let count = |q: &str| {
-        prom_get(&state, "/api/v1/query", &[("query", q), ("time", "1767225600")])["data"]["result"]
+        prom_get(
+            &state,
+            "/api/v1/query",
+            &[("query", q), ("time", "1767225600")],
+        )["data"]["result"]
             .as_array()
             .unwrap()
             .len()
@@ -902,10 +1130,19 @@ fn prometheus_metric_names_follow_the_otel_translation() {
 
     let window = [("start", "1767225500"), ("end", "1767225700")];
     let names = prom_get(&state, "/api/v1/label/__name__/values", &window);
-    assert_eq!(names["data"], serde_json::json!(["http_requests_total", "http_server_duration_seconds"]));
+    assert_eq!(
+        names["data"],
+        serde_json::json!(["http_requests_total", "http_server_duration_seconds"])
+    );
     let metadata = prom_get(&state, "/api/v1/metadata", &[]);
-    assert_eq!(metadata["data"]["http_requests_total"][0]["type"], "counter");
-    assert_eq!(metadata["data"]["http_server_duration_seconds"][0]["unit"], "s");
+    assert_eq!(
+        metadata["data"]["http_requests_total"][0]["type"],
+        "counter"
+    );
+    assert_eq!(
+        metadata["data"]["http_server_duration_seconds"][0]["unit"],
+        "s"
+    );
 }
 
 #[test]
@@ -931,14 +1168,24 @@ fn loki_pipelines_select_on_resource_attributes_and_parse_json() {
         let body = prom_get(
             &state,
             "/loki/api/v1/query_range",
-            &[("query", query), ("start", "1767225599"), ("end", "1767225610"), ("direction", "forward")],
+            &[
+                ("query", query),
+                ("start", "1767225599"),
+                ("end", "1767225610"),
+                ("direction", "forward"),
+            ],
         );
         body["data"]["result"]
             .as_array()
             .unwrap()
             .iter()
             .map(|s| {
-                let lines = s["values"].as_array().unwrap().iter().map(|v| v[1].as_str().unwrap().to_string()).collect();
+                let lines = s["values"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|v| v[1].as_str().unwrap().to_string())
+                    .collect();
                 (s["stream"].clone(), lines)
             })
             .collect()
@@ -946,10 +1193,12 @@ fn loki_pipelines_select_on_resource_attributes_and_parse_json() {
     // Any resource attribute is a stream label; log attributes join them.
     let all = streams(r#"{job="varlogs"}"#);
     assert_eq!(all.len(), 2, "{all:?}"); // /a.log's two lines share one stream
-    assert!(all.iter().any(|(l, _)| l["filename"] == "/b.log" && l["user"] == "bob"));
+    assert!(all
+        .iter()
+        .any(|(l, _)| l["filename"] == "/b.log" && l["user"] == "bob"));
     assert_eq!(streams(r#"{job=~"var.*", filename!="/b.log"}"#).len(), 1);
     assert_eq!(streams(r#"{filename="/a.log"} | json"#).len(), 2); // parsed labels split the stream
-    // json adds parsed labels, so each distinct status becomes its own stream.
+                                                                   // json adds parsed labels, so each distinct status becomes its own stream.
     let parsed = streams(r#"{filename="/a.log"} | json | status >= 500 and took > 1s"#);
     assert_eq!(parsed.len(), 1);
     assert_eq!(parsed[0].0["method"], "POST");
@@ -963,7 +1212,10 @@ fn loki_pipelines_select_on_resource_attributes_and_parse_json() {
     // Discovery reads the same labels.
     let window = [("start", "1767225500"), ("end", "1767225700")];
     let names = prom_get(&state, "/loki/api/v1/labels", &window);
-    assert_eq!(names["data"], serde_json::json!(["filename", "job", "user"]));
+    assert_eq!(
+        names["data"],
+        serde_json::json!(["filename", "job", "user"])
+    );
     let files = prom_get(&state, "/loki/api/v1/label/filename/values", &window);
     assert_eq!(files["data"], serde_json::json!(["/a.log", "/b.log"]));
     let series = prom_get(&state, "/loki/api/v1/series", &window);
@@ -995,15 +1247,28 @@ fn loki_metric_queries_count_rate_and_aggregate() {
             .as_str()
             .map(str::to_string)
     };
-    assert_eq!(value(r#"sum(count_over_time({service_name="a"}[10m]))"#).as_deref(), Some("4"));
     assert_eq!(
-        value(r#"sum by (service_name) (count_over_time({service_name="a"} != "error" [10m]))"#).as_deref(),
+        value(r#"sum(count_over_time({service_name="a"}[10m]))"#).as_deref(),
+        Some("4")
+    );
+    assert_eq!(
+        value(r#"sum by (service_name) (count_over_time({service_name="a"} != "error" [10m]))"#)
+            .as_deref(),
         Some("3")
     );
-    assert_eq!(value(r#"sum(rate({service_name="a"}[10m]))"#).as_deref(), Some(&*(4.0f64 / 600.0).to_string()));
+    assert_eq!(
+        value(r#"sum(rate({service_name="a"}[10m]))"#).as_deref(),
+        Some(&*(4.0f64 / 600.0).to_string())
+    );
     // "event 0 error" + "event 1" + "event 2 warn" + "event 3"
-    assert_eq!(value(r#"sum(bytes_over_time({service_name="a"}[10m]))"#).as_deref(), Some("39"));
-    assert_eq!(value(r#"count_over_time({service_name="nobody"}[10m])"#), None);
+    assert_eq!(
+        value(r#"sum(bytes_over_time({service_name="a"}[10m]))"#).as_deref(),
+        Some("39")
+    );
+    assert_eq!(
+        value(r#"count_over_time({service_name="nobody"}[10m])"#),
+        None
+    );
 
     let body = prom_get(
         &state,
@@ -1088,7 +1353,17 @@ fn app_with_traces() -> (tempfile::TempDir, AppState) {
 fn traceql_search_evaluates_structure_and_trace_intrinsics() {
     let (_dir, state) = app_with_traces();
     let search = |q: &str| {
-        prom_get(&state, "/api/search", &[("q", q), ("start", "1767225500"), ("end", "1767225700"), ("spss", "10")])["traces"].clone()
+        prom_get(
+            &state,
+            "/api/search",
+            &[
+                ("q", q),
+                ("start", "1767225500"),
+                ("end", "1767225700"),
+                ("spss", "10"),
+            ],
+        )["traces"]
+            .clone()
     };
     let spans = |q: &str| -> Vec<String> {
         let traces = search(q);
@@ -1096,7 +1371,15 @@ fn traceql_search_evaluates_structure_and_trace_intrinsics() {
             .as_array()
             .unwrap()
             .iter()
-            .flat_map(|t| t["spanSets"].as_array().unwrap().iter().flat_map(|s| s["spans"].as_array().unwrap().iter().map(|x| x["spanID"].as_str().unwrap().to_string())))
+            .flat_map(|t| {
+                t["spanSets"].as_array().unwrap().iter().flat_map(|s| {
+                    s["spans"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .map(|x| x["spanID"].as_str().unwrap().to_string())
+                })
+            })
             .collect();
         ids.sort();
         ids
@@ -1120,15 +1403,40 @@ fn traceql_search_evaluates_structure_and_trace_intrinsics() {
 fn traceql_metrics_bucket_spans_into_steps_and_compare_selections() {
     let (_dir, state) = app_with_traces();
     let query = |q: &str| {
-        prom_get(&state, "/api/metrics/query_range", &[("q", q), ("start", "1767225600"), ("end", "1767225630"), ("step", "10s")])["series"].clone()
+        prom_get(
+            &state,
+            "/api/metrics/query_range",
+            &[
+                ("q", q),
+                ("start", "1767225600"),
+                ("end", "1767225630"),
+                ("step", "10s"),
+            ],
+        )["series"]
+            .clone()
     };
     // Steps are labelled with their end; the first is the aligned start itself.
     let counts = |q: &str| -> Vec<(String, f64)> {
-        query(q)[0]["samples"].as_array().unwrap().iter().map(|s| (s["timestampMs"].as_str().unwrap().to_string(), s["value"].as_f64().unwrap())).collect()
+        query(q)[0]["samples"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|s| {
+                (
+                    s["timestampMs"].as_str().unwrap().to_string(),
+                    s["value"].as_f64().unwrap(),
+                )
+            })
+            .collect()
     };
     assert_eq!(
         counts("{ } | count_over_time()"),
-        [("1767225600000".to_string(), 0.0), ("1767225610000".to_string(), 3.0), ("1767225620000".to_string(), 1.0), ("1767225630000".to_string(), 0.0)]
+        [
+            ("1767225600000".to_string(), 0.0),
+            ("1767225610000".to_string(), 3.0),
+            ("1767225620000".to_string(), 1.0),
+            ("1767225630000".to_string(), 0.0)
+        ]
     );
     let by_service = query("{ } | count_over_time() by (resource.service.name)");
     assert_eq!(by_service.as_array().unwrap().len(), 2, "{by_service}");
@@ -1139,8 +1447,19 @@ fn traceql_metrics_bucket_spans_into_steps_and_compare_selections() {
     let value_of = |meta: &str, attr: &str, value: &str| -> Option<f64> {
         compare.as_array().unwrap().iter().find_map(|s| {
             let labels = s["labels"].as_array().unwrap();
-            let has = |k: &str, v: &str| labels.iter().any(|l| l["key"] == k && l["value"].to_string().contains(v));
-            (has("__meta_type", meta) && has(attr, value)).then(|| s["samples"].as_array().unwrap().iter().map(|x| x["value"].as_f64().unwrap()).sum())
+            let has = |k: &str, v: &str| {
+                labels
+                    .iter()
+                    .any(|l| l["key"] == k && l["value"].to_string().contains(v))
+            };
+            (has("__meta_type", meta) && has(attr, value)).then(|| {
+                s["samples"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|x| x["value"].as_f64().unwrap())
+                    .sum()
+            })
         })
     };
     assert_eq!(value_of("selection", "name", "leaf"), Some(1.0));
@@ -1184,10 +1503,7 @@ fn prometheus_instant_query_uses_latest_sample_per_series() {
     assert_eq!(instant_value(&state, "count(sem_gauge)"), "2");
     // A bare selector returns the newest sample, not an average over the window.
     assert_eq!(instant_value(&state, r#"sem_gauge{job="a"}"#), "2");
-    assert_eq!(
-        instant_value(&state, r#"max(sem_gauge{job="a"})"#),
-        "2"
-    );
+    assert_eq!(instant_value(&state, r#"max(sem_gauge{job="a"})"#), "2");
 }
 
 #[test]
@@ -1423,7 +1739,9 @@ fn loki_counted_range_aggregations_match_reading_the_lines() {
         r#"count_over_time({service_name="s1"}[1m] offset 30s)"#,
         r#"sum by (severity_text) (bytes_over_time({service_name=~".+"}[1m]))"#,
     ] {
-        let read = query.replace("}[", r#"} |~ ".*" ["#).replace("}[", "} |~ \".*\" [");
+        let read = query
+            .replace("}[", r#"} |~ ".*" ["#)
+            .replace("}[", "} |~ \".*\" [");
         assert_eq!(
             loki_series(&state, query, "20s"),
             loki_series(&state, &read, "20s"),
@@ -1431,7 +1749,11 @@ fn loki_counted_range_aggregations_match_reading_the_lines() {
         );
     }
     // The totals are what was inserted: 300 lines, 100 per service.
-    let series = loki_series(&state, r#"sum(count_over_time({service_name=~".+"}[5m]))"#, "210s");
+    let series = loki_series(
+        &state,
+        r#"sum(count_over_time({service_name=~".+"}[5m]))"#,
+        "210s",
+    );
     let last: f64 = series[0]["values"].as_array().unwrap().last().unwrap()[1]
         .as_str()
         .unwrap()
@@ -1447,7 +1769,11 @@ fn loki_counted_range_aggregations_match_reading_the_lines() {
 fn loki_line_cap_bounds_reading_but_not_counting_or_limits() {
     let (_dir, state) = app_with_many_log_lines(50);
     // 300 lines in the window, a cap of 50.
-    let counted = loki_series(&state, r#"sum(count_over_time({service_name=~".+"}[5m]))"#, "210s");
+    let counted = loki_series(
+        &state,
+        r#"sum(count_over_time({service_name=~".+"}[5m]))"#,
+        "210s",
+    );
     let total: f64 = counted[0]["values"].as_array().unwrap().last().unwrap()[1]
         .as_str()
         .unwrap()
@@ -1471,11 +1797,19 @@ fn loki_line_cap_bounds_reading_but_not_counting_or_limits() {
         .unwrap()
         .iter()
         .flat_map(|s| s["values"].as_array().unwrap().iter())
-        .map(|v| (v[0].as_str().unwrap().to_string(), v[1].as_str().unwrap().to_string()))
+        .map(|v| {
+            (
+                v[0].as_str().unwrap().to_string(),
+                v[1].as_str().unwrap().to_string(),
+            )
+        })
         .collect();
     newest.sort_by_key(|(ts, _)| ts.parse::<i128>().unwrap());
     let lines: Vec<&str> = newest.iter().map(|(_, l)| l.as_str()).collect();
-    assert_eq!(lines, ["line 295", "line 296", "line 297", "line 298", "line 299"]);
+    assert_eq!(
+        lines,
+        ["line 295", "line 296", "line 297", "line 298", "line 299"]
+    );
 
     // Forward starts from the oldest line.
     let (status, body) = loki_response(
@@ -1496,7 +1830,12 @@ fn loki_line_cap_bounds_reading_but_not_counting_or_limits() {
         .unwrap()
         .iter()
         .flat_map(|s| s["values"].as_array().unwrap().iter())
-        .map(|v| (v[0].as_str().unwrap().parse().unwrap(), v[1].as_str().unwrap().to_string()))
+        .map(|v| {
+            (
+                v[0].as_str().unwrap().parse().unwrap(),
+                v[1].as_str().unwrap().to_string(),
+            )
+        })
         .collect();
     oldest.sort();
     let lines: Vec<&str> = oldest.iter().map(|(_, l)| l.as_str()).collect();
@@ -1507,7 +1846,10 @@ fn loki_line_cap_bounds_reading_but_not_counting_or_limits() {
         &state,
         "/loki/api/v1/query_range",
         &[
-            ("query", r#"sum(count_over_time({service_name=~".+"} |~ ".*" [5m]))"#),
+            (
+                "query",
+                r#"sum(count_over_time({service_name=~".+"} |~ ".*" [5m]))"#,
+            ),
             ("start", "1767225600"),
             ("end", "1767225810"),
             ("step", "210s"),
@@ -1515,7 +1857,10 @@ fn loki_line_cap_bounds_reading_but_not_counting_or_limits() {
     );
     assert_eq!(status, 422, "{body}");
     assert!(
-        body["error"].as_str().unwrap().contains("CANARDSTACK_QUERY_MAX_LOG_LINES"),
+        body["error"]
+            .as_str()
+            .unwrap()
+            .contains("CANARDSTACK_QUERY_MAX_LOG_LINES"),
         "{body}"
     );
 

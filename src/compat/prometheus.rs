@@ -86,8 +86,12 @@ pub fn prometheus_query_range(
                     let (mut values, mut histograms) = (Vec::new(), Vec::new());
                     for (i, v) in s.vals.iter().enumerate() {
                         match v {
-                            Some(Sample::F(x)) => values.push(json!([ts_json(grid.ts(i)), prom_value(*x)])),
-                            Some(Sample::H(h)) => histograms.push(json!([ts_json(grid.ts(i)), hist_json(h)])),
+                            Some(Sample::F(x)) => {
+                                values.push(json!([ts_json(grid.ts(i)), prom_value(*x)]))
+                            }
+                            Some(Sample::H(h)) => {
+                                histograms.push(json!([ts_json(grid.ts(i)), hist_json(h)]))
+                            }
                             None => {}
                         }
                     }
@@ -101,9 +105,17 @@ pub fn prometheus_query_range(
                     (!values.is_empty() || !histograms.is_empty()).then_some(series)
                 })
                 .collect::<Vec<_>>();
-            return Ok(prom_success(json!({"resultType": "matrix", "result": result})));
+            return Ok(prom_success(
+                json!({"resultType": "matrix", "result": result}),
+            ));
         }
-        PromValue::Str(_) => return Err(ApiError::new(400, "bad_data", "string result in a range query")),
+        PromValue::Str(_) => {
+            return Err(ApiError::new(
+                400,
+                "bad_data",
+                "string result in a range query",
+            ))
+        }
     };
     let result = series
         .into_iter()
@@ -134,15 +146,23 @@ pub(super) fn ts_json(ms: i64) -> Value {
 fn matches(params: &HashMap<String, String>) -> Vec<String> {
     params
         .get("match[]")
-        .map(|raw| raw.split(MULTI_VALUE_SEPARATOR).map(str::to_string).collect())
+        .map(|raw| {
+            raw.split(MULTI_VALUE_SEPARATOR)
+                .map(str::to_string)
+                .collect()
+        })
         .unwrap_or_default()
 }
 
 pub fn prometheus_labels(state: &AppState, params: &HashMap<String, String>) -> ApiResult<Value> {
     let (from, to) = optional_range(params, METRIC_RANGE_SECS)?;
-    let names = state
-        .metadata
-        .prometheus_label_names(&state.queries, &state.storage, &matches(params), from, to)?;
+    let names = state.metadata.prometheus_label_names(
+        &state.queries,
+        &state.storage,
+        &matches(params),
+        from,
+        to,
+    )?;
     Ok(prom_success(json!(names)))
 }
 
@@ -152,18 +172,26 @@ pub fn prometheus_label_values(
     params: &HashMap<String, String>,
 ) -> ApiResult<Value> {
     let (from, to) = optional_range(params, METRIC_RANGE_SECS)?;
-    let values =
-        state
-            .metadata
-            .prometheus_label_values(&state.queries, &state.storage, name, &matches(params), from, to)?;
+    let values = state.metadata.prometheus_label_values(
+        &state.queries,
+        &state.storage,
+        name,
+        &matches(params),
+        from,
+        to,
+    )?;
     Ok(prom_success(json!(values)))
 }
 
 pub fn prometheus_series(state: &AppState, params: &HashMap<String, String>) -> ApiResult<Value> {
     let (from, to) = optional_range(params, METRIC_RANGE_SECS)?;
-    let out = state
-        .metadata
-        .prometheus_series(&state.queries, &state.storage, &matches(params), from, to)?;
+    let out = state.metadata.prometheus_series(
+        &state.queries,
+        &state.storage,
+        &matches(params),
+        from,
+        to,
+    )?;
     Ok(prom_success(out))
 }
 
@@ -189,7 +217,11 @@ pub(super) fn prom_value(value: f64) -> String {
         let text = format!("{value:e}");
         let (mantissa, exponent) = text.split_once('e').unwrap_or((&text, "0"));
         let exponent: i32 = exponent.parse().unwrap_or(0);
-        return format!("{mantissa}e{}{:02}", if exponent < 0 { '-' } else { '+' }, exponent.abs());
+        return format!(
+            "{mantissa}e{}{:02}",
+            if exponent < 0 { '-' } else { '+' },
+            exponent.abs()
+        );
     }
     value.to_string()
 }
@@ -210,7 +242,12 @@ fn hist_json(h: &Hist) -> Value {
                 (false, true) => 0,
                 (false, false) => 2,
             };
-            json!([boundaries, prom_value(b.lower), prom_value(b.upper), prom_value(b.count)])
+            json!([
+                boundaries,
+                prom_value(b.lower),
+                prom_value(b.upper),
+                prom_value(b.count)
+            ])
         })
         .collect();
     if !buckets.is_empty() {

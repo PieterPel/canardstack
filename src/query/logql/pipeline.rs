@@ -18,7 +18,8 @@ fn bad(msg: impl Into<String>) -> ApiError {
 
 /// A regex that must match the whole value, as for stream selectors and label filters.
 pub fn anchored(pattern: &str) -> ApiResult<Regex> {
-    Regex::new(&format!("^(?:{pattern})$")).map_err(|e| bad(format!("invalid regex {pattern:?}: {e}")))
+    Regex::new(&format!("^(?:{pattern})$"))
+        .map_err(|e| bad(format!("invalid regex {pattern:?}: {e}")))
 }
 
 /// A selector or `drop`/`keep` test on one label value.
@@ -31,8 +32,14 @@ pub struct ValueTest {
 
 impl ValueTest {
     pub fn new(op: MatchOp, text: &str) -> ApiResult<Self> {
-        let re = matches!(op, MatchOp::Re | MatchOp::NotRe).then(|| anchored(text)).transpose()?;
-        Ok(Self { op, text: text.to_string(), re })
+        let re = matches!(op, MatchOp::Re | MatchOp::NotRe)
+            .then(|| anchored(text))
+            .transpose()?;
+        Ok(Self {
+            op,
+            text: text.to_string(),
+            re,
+        })
     }
 
     pub fn ok(&self, value: &str) -> bool {
@@ -115,20 +122,27 @@ fn compare(op: CmpOp, left: f64, right: f64) -> bool {
 
 fn compile_filter(f: &LabelFilter) -> ApiResult<Filter> {
     Ok(match f {
-        LabelFilter::And(a, b) => Filter::And(Box::new(compile_filter(a)?), Box::new(compile_filter(b)?)),
-        LabelFilter::Or(a, b) => Filter::Or(Box::new(compile_filter(a)?), Box::new(compile_filter(b)?)),
+        LabelFilter::And(a, b) => {
+            Filter::And(Box::new(compile_filter(a)?), Box::new(compile_filter(b)?))
+        }
+        LabelFilter::Or(a, b) => {
+            Filter::Or(Box::new(compile_filter(a)?), Box::new(compile_filter(b)?))
+        }
         LabelFilter::Cmp { name, op, value } => {
             let test = match (value, op) {
                 (LabelValue::Str(s), CmpOp::Eq) => Test::Str(ValueTest::new(MatchOp::Eq, s)?),
                 (LabelValue::Str(s), CmpOp::Ne) => Test::Str(ValueTest::new(MatchOp::Ne, s)?),
                 (LabelValue::Str(s), CmpOp::Re) => Test::Str(ValueTest::new(MatchOp::Re, s)?),
                 (LabelValue::Str(s), CmpOp::NotRe) => Test::Str(ValueTest::new(MatchOp::NotRe, s)?),
-                (LabelValue::Str(_), _) => return Err(bad("a string label filter takes =, !=, =~ or !~")),
+                (LabelValue::Str(_), _) => {
+                    return Err(bad("a string label filter takes =, !=, =~ or !~"))
+                }
                 (LabelValue::Number(n), op) => Test::Num(*op, *n),
                 (LabelValue::Duration(d), op) => Test::Duration(*op, *d),
                 (LabelValue::Bytes(b), op) => Test::Bytes(*op, *b),
                 (LabelValue::Ip(spec), op) => {
-                    let m = IpMatcher::parse(spec).ok_or_else(|| bad(format!("invalid ip({spec:?})")))?;
+                    let m = IpMatcher::parse(spec)
+                        .ok_or_else(|| bad(format!("invalid ip({spec:?})")))?;
                     match op {
                         CmpOp::Eq => Test::Ip(true, m),
                         CmpOp::Ne => Test::Ip(false, m),
@@ -136,7 +150,10 @@ fn compile_filter(f: &LabelFilter) -> ApiResult<Filter> {
                     }
                 }
             };
-            Filter::Cmp { name: name.clone(), test }
+            Filter::Cmp {
+                name: name.clone(),
+                test,
+            }
         }
     })
 }
@@ -146,16 +163,19 @@ fn compile_needles(op: LineOp, values: &[FilterValue]) -> ApiResult<Vec<Needle>>
         .iter()
         .map(|v| {
             Ok(match (op, v) {
-                (_, FilterValue::Ip(spec)) => {
-                    Needle::Ip(IpMatcher::parse(spec).ok_or_else(|| bad(format!("invalid ip({spec:?})")))?)
+                (_, FilterValue::Ip(spec)) => Needle::Ip(
+                    IpMatcher::parse(spec).ok_or_else(|| bad(format!("invalid ip({spec:?})")))?,
+                ),
+                (LineOp::Contains | LineOp::NotContains, FilterValue::Str(s)) => {
+                    Needle::Text(s.clone())
                 }
-                (LineOp::Contains | LineOp::NotContains, FilterValue::Str(s)) => Needle::Text(s.clone()),
                 (LineOp::Re | LineOp::NotRe, FilterValue::Str(s)) => {
                     Needle::Re(Regex::new(s).map_err(|e| bad(format!("invalid regex {s:?}: {e}")))?)
                 }
-                (LineOp::Pattern | LineOp::NotPattern, FilterValue::Str(s)) => {
-                    Needle::Pattern(PatternMatcher::compile(s).map_err(|e| bad(format!("invalid pattern {s:?}: {e}")))?)
-                }
+                (LineOp::Pattern | LineOp::NotPattern, FilterValue::Str(s)) => Needle::Pattern(
+                    PatternMatcher::compile(s)
+                        .map_err(|e| bad(format!("invalid pattern {s:?}: {e}")))?,
+                ),
             })
         })
         .collect()
@@ -175,28 +195,33 @@ impl Pipeline {
                 Stage::Regexp(p) => {
                     let re = Regex::new(p).map_err(|e| bad(format!("invalid regex {p:?}: {e}")))?;
                     if !re.capture_names().flatten().any(|_| true) {
-                        return Err(bad("a regexp stage needs at least one named group (?P<name>...)"));
+                        return Err(bad(
+                            "a regexp stage needs at least one named group (?P<name>...)",
+                        ));
                     }
                     Compiled::Regexp(re)
                 }
                 Stage::Pattern(p) => Compiled::Pattern(
-                    PatternMatcher::compile(p).map_err(|e| bad(format!("invalid pattern {p:?}: {e}")))?,
+                    PatternMatcher::compile(p)
+                        .map_err(|e| bad(format!("invalid pattern {p:?}: {e}")))?,
                 ),
                 Stage::Unpack => Compiled::Unpack,
                 Stage::LineFormat(t) => Compiled::LineFormat(
-                    Template::parse(t).map_err(|e| bad(format!("invalid line_format template: {e}")))?,
+                    Template::parse(t)
+                        .map_err(|e| bad(format!("invalid line_format template: {e}")))?,
                 ),
                 Stage::LabelFormat(items) => Compiled::LabelFormat(
                     items
                         .iter()
                         .map(|item| match item {
-                            LabelFormatItem::Rename { dst, src } => Ok((dst.clone(), LabelFmt::Rename(src.clone()))),
+                            LabelFormatItem::Rename { dst, src } => {
+                                Ok((dst.clone(), LabelFmt::Rename(src.clone())))
+                            }
                             LabelFormatItem::Template { dst, template } => Ok((
                                 dst.clone(),
-                                LabelFmt::Template(
-                                    Template::parse(template)
-                                        .map_err(|e| bad(format!("invalid label_format template: {e}")))?,
-                                ),
+                                LabelFmt::Template(Template::parse(template).map_err(|e| {
+                                    bad(format!("invalid label_format template: {e}"))
+                                })?),
                             )),
                         })
                         .collect::<ApiResult<Vec<_>>>()?,
@@ -206,7 +231,11 @@ impl Pipeline {
                     let items = items
                         .iter()
                         .map(|i| {
-                            let test = i.matcher.as_ref().map(|(op, v)| ValueTest::new(*op, v)).transpose()?;
+                            let test = i
+                                .matcher
+                                .as_ref()
+                                .map(|(op, v)| ValueTest::new(*op, v))
+                                .transpose()?;
                             Ok((i.label.clone(), test))
                         })
                         .collect::<ApiResult<Vec<_>>>()?;
@@ -233,20 +262,26 @@ impl Pipeline {
                         return None;
                     }
                 }
-                Compiled::Json(wanted) if !labels.contains_key(ERROR) => match json_extract(&line, wanted) {
-                    Ok(pairs) => add_all(&mut labels, pairs),
-                    Err(detail) => set_error(&mut labels, "JSONParserErr", &detail),
-                },
-                Compiled::Logfmt(wanted) if !labels.contains_key(ERROR) => match logfmt_extract(&line, wanted) {
-                    Ok(pairs) => add_all(&mut labels, pairs),
-                    Err(detail) => set_error(&mut labels, "LogfmtParserErr", &detail),
-                },
+                Compiled::Json(wanted) if !labels.contains_key(ERROR) => {
+                    match json_extract(&line, wanted) {
+                        Ok(pairs) => add_all(&mut labels, pairs),
+                        Err(detail) => set_error(&mut labels, "JSONParserErr", &detail),
+                    }
+                }
+                Compiled::Logfmt(wanted) if !labels.contains_key(ERROR) => {
+                    match logfmt_extract(&line, wanted) {
+                        Ok(pairs) => add_all(&mut labels, pairs),
+                        Err(detail) => set_error(&mut labels, "LogfmtParserErr", &detail),
+                    }
+                }
                 Compiled::Regexp(re) if !labels.contains_key(ERROR) => {
                     if let Some(caps) = re.captures(&line) {
                         let pairs = re
                             .capture_names()
                             .flatten()
-                            .filter_map(|n| Some((n.to_string(), caps.name(n)?.as_str().to_string())))
+                            .filter_map(|n| {
+                                Some((n.to_string(), caps.name(n)?.as_str().to_string()))
+                            })
                             .collect();
                         add_all(&mut labels, pairs);
                     }
@@ -265,16 +300,26 @@ impl Pipeline {
                     }
                     Err(detail) => set_error(&mut labels, "JSONParserErr", &detail),
                 },
-                Compiled::Json(_) | Compiled::Logfmt(_) | Compiled::Regexp(_) | Compiled::Pattern(_) | Compiled::Unpack => {}
+                Compiled::Json(_)
+                | Compiled::Logfmt(_)
+                | Compiled::Regexp(_)
+                | Compiled::Pattern(_)
+                | Compiled::Unpack => {}
                 Compiled::LineFormat(template) => {
-                    match template.render(&Ctx { labels: &labels, line: &line, ts_ns }) {
+                    match template.render(&Ctx {
+                        labels: &labels,
+                        line: &line,
+                        ts_ns,
+                    }) {
                         Ok(rendered) => line = rendered,
                         Err(detail) => set_error(&mut labels, "TemplateFormatErr", &detail),
                     }
                 }
                 Compiled::Decolorize => {
                     static ANSI: OnceLock<Regex> = OnceLock::new();
-                    let re = ANSI.get_or_init(|| Regex::new("\x1b\\[[0-9;]*[A-Za-z]").expect("static regex"));
+                    let re = ANSI.get_or_init(|| {
+                        Regex::new("\x1b\\[[0-9;]*[A-Za-z]").expect("static regex")
+                    });
                     line = re.replace_all(&line, "").into_owned();
                 }
                 Compiled::LabelFormat(items) => {
@@ -286,11 +331,17 @@ impl Pipeline {
                                 }
                             }
                             LabelFmt::Template(template) => {
-                                match template.render(&Ctx { labels: &labels, line: &line, ts_ns }) {
+                                match template.render(&Ctx {
+                                    labels: &labels,
+                                    line: &line,
+                                    ts_ns,
+                                }) {
                                     Ok(rendered) => {
                                         labels.insert(dst.clone(), rendered);
                                     }
-                                    Err(detail) => set_error(&mut labels, "TemplateFormatErr", &detail),
+                                    Err(detail) => {
+                                        set_error(&mut labels, "TemplateFormatErr", &detail)
+                                    }
                                 }
                             }
                         }
@@ -298,7 +349,10 @@ impl Pipeline {
                 }
                 Compiled::Drop(items) => {
                     for (name, test) in items {
-                        if labels.get(name).is_some_and(|v| test.as_ref().is_none_or(|t| t.ok(v))) {
+                        if labels
+                            .get(name)
+                            .is_some_and(|v| test.as_ref().is_none_or(|t| t.ok(v)))
+                        {
                             labels.remove(name);
                         }
                     }
@@ -306,7 +360,9 @@ impl Pipeline {
                 Compiled::Keep(items) => labels.retain(|k, v| {
                     k == ERROR
                         || k == ERROR_DETAILS
-                        || items.iter().any(|(name, test)| name == k && test.as_ref().is_none_or(|t| t.ok(v)))
+                        || items
+                            .iter()
+                            .any(|(name, test)| name == k && test.as_ref().is_none_or(|t| t.ok(v)))
                 }),
                 Compiled::Filter(f) => {
                     if !eval(f, &mut labels) {
@@ -320,14 +376,22 @@ impl Pipeline {
 }
 
 fn set_error(labels: &mut Labels, kind: &str, detail: &str) {
-    labels.entry(ERROR.to_string()).or_insert_with(|| kind.to_string());
-    labels.entry(ERROR_DETAILS.to_string()).or_insert_with(|| detail.to_string());
+    labels
+        .entry(ERROR.to_string())
+        .or_insert_with(|| kind.to_string());
+    labels
+        .entry(ERROR_DETAILS.to_string())
+        .or_insert_with(|| detail.to_string());
 }
 
 /// A parsed label that clashes with an existing one is kept as `<name>_extracted`.
 fn add_all(labels: &mut Labels, pairs: Vec<(String, String)>) {
     for (name, value) in pairs {
-        let name = if labels.contains_key(&name) { format!("{name}_extracted") } else { name };
+        let name = if labels.contains_key(&name) {
+            format!("{name}_extracted")
+        } else {
+            name
+        };
         labels.insert(name, value);
     }
 }
@@ -346,7 +410,9 @@ fn eval(filter: &Filter, labels: &mut Labels) -> bool {
             match test {
                 Test::Str(t) => t.ok(value.as_deref().unwrap_or("")),
                 Test::Ip(want, m) => value.as_deref().is_some_and(|v| m.matches_text(v)) == *want,
-                Test::Num(op, n) => numeric(labels, name, value, |v| v.parse::<f64>().ok(), *op, *n),
+                Test::Num(op, n) => {
+                    numeric(labels, name, value, |v| v.parse::<f64>().ok(), *op, *n)
+                }
                 Test::Duration(op, d) => numeric(labels, name, value, parse_duration_secs, *op, *d),
                 Test::Bytes(op, b) => numeric(labels, name, value, parse_bytes, *op, *b),
             }
@@ -366,7 +432,13 @@ fn numeric(
     match parse(&value) {
         Some(left) => compare(op, left, right),
         None => {
-            set_error(labels, "LabelFilterErr", &format!("label {name} has the value {value:?}, which is not a number of the right kind"));
+            set_error(
+                labels,
+                "LabelFilterErr",
+                &format!(
+                    "label {name} has the value {value:?}, which is not a number of the right kind"
+                ),
+            );
             true
         }
     }
@@ -378,12 +450,20 @@ mod tests {
     use logql_syntax::ast::Expr;
 
     fn run(query: &str, line: &str, labels: &[(&str, &str)]) -> Option<(String, Labels)> {
-        let Expr::Log(log) = logql_syntax::parse(query).unwrap() else { panic!("not a log query") };
-        let base: Labels = labels.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
-        Pipeline::compile(&log.stages).unwrap().process(1_700_000_000_000_000_000, line, &base)
+        let Expr::Log(log) = logql_syntax::parse(query).unwrap() else {
+            panic!("not a log query")
+        };
+        let base: Labels = labels
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
+        Pipeline::compile(&log.stages)
+            .unwrap()
+            .process(1_700_000_000_000_000_000, line, &base)
     }
 
-    const JSON: &str = r#"{"method":"GET","status":503,"took":"1.5s","size":"2KB","ip":"10.1.2.3"}"#;
+    const JSON: &str =
+        r#"{"method":"GET","status":503,"took":"1.5s","size":"2KB","ip":"10.1.2.3"}"#;
 
     #[test]
     fn line_filters_combine_with_or_and_negation() {
@@ -400,7 +480,8 @@ mod tests {
 
     #[test]
     fn json_stage_extracts_and_typed_filters_compare() {
-        let ok = |stages: &str| run(&format!("{{a=\"b\"}} {stages}"), JSON, &[("job", "j")]).is_some();
+        let ok =
+            |stages: &str| run(&format!("{{a=\"b\"}} {stages}"), JSON, &[("job", "j")]).is_some();
         assert!(ok("| json | status >= 500"));
         assert!(!ok("| json | status < 500"));
         assert!(ok(r#"| json | method = "GET" and status > 400"#));
@@ -408,13 +489,22 @@ mod tests {
         assert!(!ok("| json | took > 1m"));
         assert!(ok(r#"| json | ip = ip("10.0.0.0/8")"#));
         assert!(!ok(r#"| json | ip != ip("10.0.0.0/8")"#));
-        assert!(ok(r#"| json | (status > 1000 and status < 0) or method != "HEAD""#));
-        assert!(!ok(r#"| json | status > 1000 and (status < 0 or method != "HEAD")"#));
+        assert!(ok(
+            r#"| json | (status > 1000 and status < 0) or method != "HEAD""#
+        ));
+        assert!(!ok(
+            r#"| json | status > 1000 and (status < 0 or method != "HEAD")"#
+        ));
     }
 
     #[test]
     fn parsed_labels_follow_the_stream_labels_and_collisions_are_extracted() {
-        let (_, labels) = run(r#"{a="b"} | json method, code="status""#, JSON, &[("method", "stream")]).unwrap();
+        let (_, labels) = run(
+            r#"{a="b"} | json method, code="status""#,
+            JSON,
+            &[("method", "stream")],
+        )
+        .unwrap();
         assert_eq!(labels["method"], "stream");
         assert_eq!(labels["method_extracted"], "GET");
         assert_eq!(labels["code"], "503");
@@ -434,7 +524,10 @@ mod tests {
     fn label_stages_rename_drop_and_keep() {
         let q = r#"{a="b"} | json | label_format code=status | drop method, ip | keep code, took"#;
         let (_, labels) = run(q, JSON, &[("job", "j")]).unwrap();
-        assert_eq!(labels.keys().map(String::as_str).collect::<Vec<_>>(), ["code", "took"]);
+        assert_eq!(
+            labels.keys().map(String::as_str).collect::<Vec<_>>(),
+            ["code", "took"]
+        );
         let (line, _) = run(r#"{a="b"} | line_format "fixed""#, "x", &[]).unwrap();
         assert_eq!(line, "fixed");
         let (line, _) = run("{a=\"b\"} | decolorize", "\x1b[31mred\x1b[0m", &[]).unwrap();
@@ -443,7 +536,12 @@ mod tests {
 
     #[test]
     fn regexp_pattern_and_unpack_extract() {
-        let (_, l) = run(r#"{a="b"} | regexp `"method":"(?P<m>\w+)"` | m = "GET""#, JSON, &[]).unwrap();
+        let (_, l) = run(
+            r#"{a="b"} | regexp `"method":"(?P<m>\w+)"` | m = "GET""#,
+            JSON,
+            &[],
+        )
+        .unwrap();
         assert_eq!(l["m"], "GET");
         let (_, l) = run(r#"{a="b"} | pattern `<_>"method":"<m>"<_>`"#, JSON, &[]).unwrap();
         assert_eq!(l["m"], "GET");
@@ -453,7 +551,12 @@ mod tests {
 
     #[test]
     fn templates_format_lines_and_labels() {
-        let (line, _) = run(r#"{a="b"} | json | line_format "{{ .method | lower }} {{ .status }}""#, JSON, &[]).unwrap();
+        let (line, _) = run(
+            r#"{a="b"} | json | line_format "{{ .method | lower }} {{ .status }}""#,
+            JSON,
+            &[],
+        )
+        .unwrap();
         assert_eq!(line, "get 503");
         let (_, labels) = run(r#"{a="b"} | json | label_format kind="{{ if ge .status \"500\" }}server{{ else }}ok{{ end }}", code=status"#, JSON, &[]).unwrap();
         assert_eq!(labels["kind"], "server");
@@ -462,7 +565,14 @@ mod tests {
         assert_eq!(line, "2023-11-14 22:13:20 +0000 UTC");
         let (_, labels) = run(r#"{a="b"} | line_format "{{ nosuchfn }}""#, "x", &[]).unwrap();
         assert_eq!(labels["__error__"], "TemplateFormatErr");
-        let Expr::Log(log) = logql_syntax::parse(r#"{a="b"} | line_format "{{ range .x }}""#).unwrap() else { panic!() };
-        assert_eq!(Pipeline::compile(&log.stages).err().unwrap().reason, "bad_data");
+        let Expr::Log(log) =
+            logql_syntax::parse(r#"{a="b"} | line_format "{{ range .x }}""#).unwrap()
+        else {
+            panic!()
+        };
+        assert_eq!(
+            Pipeline::compile(&log.stages).err().unwrap().reason,
+            "bad_data"
+        );
     }
 }

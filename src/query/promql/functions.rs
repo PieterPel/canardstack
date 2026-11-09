@@ -65,9 +65,7 @@ impl Ev<'_> {
             "sum_over_time" => self.windowed(arg(0)?, false, &|s, _, _| {
                 Some(s.iter().map(|x| x.1).sum::<f64>())
             }),
-            "count_over_time" => {
-                self.windowed(arg(0)?, false, &|s, _, _| Some(s.len() as f64))
-            }
+            "count_over_time" => self.windowed(arg(0)?, false, &|s, _, _| Some(s.len() as f64)),
             "present_over_time" => self.windowed(arg(0)?, false, &|_, _, _| Some(1.0)),
             "min_over_time" => self.windowed(arg(0)?, false, &|s, _, _| {
                 Some(s.iter().map(|x| x.1).fold(f64::INFINITY, f64::min))
@@ -75,9 +73,7 @@ impl Ev<'_> {
             "max_over_time" => self.windowed(arg(0)?, false, &|s, _, _| {
                 Some(s.iter().map(|x| x.1).fold(f64::NEG_INFINITY, f64::max))
             }),
-            "last_over_time" => {
-                self.windowed(arg(0)?, true, &|s, _, _| s.last().map(|x| x.1))
-            }
+            "last_over_time" => self.windowed(arg(0)?, true, &|s, _, _| s.last().map(|x| x.1)),
             "stddev_over_time" | "stdvar_over_time" => {
                 let sqrt = name == "stddev_over_time";
                 self.windowed(arg(0)?, false, &|s, _, _| {
@@ -86,7 +82,11 @@ impl Ev<'_> {
                 })
             }
             "quantile_over_time" => {
-                let q = self.scalar_arg(arg(0)?)?.first().copied().unwrap_or(f64::NAN);
+                let q = self
+                    .scalar_arg(arg(0)?)?
+                    .first()
+                    .copied()
+                    .unwrap_or(f64::NAN);
                 self.windowed(arg(1)?, false, &|s, _, _| {
                     Some(quantile(q, s.iter().map(|x| x.1).collect()))
                 })
@@ -116,16 +116,28 @@ impl Ev<'_> {
             "clamp" | "clamp_min" | "clamp_max" => {
                 let (lo, hi) = match name {
                     "clamp" => (
-                        self.scalar_arg(arg(1)?)?.first().copied().unwrap_or(f64::NAN),
-                        self.scalar_arg(arg(2)?)?.first().copied().unwrap_or(f64::NAN),
+                        self.scalar_arg(arg(1)?)?
+                            .first()
+                            .copied()
+                            .unwrap_or(f64::NAN),
+                        self.scalar_arg(arg(2)?)?
+                            .first()
+                            .copied()
+                            .unwrap_or(f64::NAN),
                     ),
                     "clamp_min" => (
-                        self.scalar_arg(arg(1)?)?.first().copied().unwrap_or(f64::NAN),
+                        self.scalar_arg(arg(1)?)?
+                            .first()
+                            .copied()
+                            .unwrap_or(f64::NAN),
                         f64::INFINITY,
                     ),
                     _ => (
                         f64::NEG_INFINITY,
-                        self.scalar_arg(arg(1)?)?.first().copied().unwrap_or(f64::NAN),
+                        self.scalar_arg(arg(1)?)?
+                            .first()
+                            .copied()
+                            .unwrap_or(f64::NAN),
                     ),
                 };
                 if lo > hi {
@@ -238,4 +250,3 @@ impl Ev<'_> {
         }
     }
 }
-

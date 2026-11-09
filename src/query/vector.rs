@@ -142,7 +142,11 @@ pub fn vector_scalar(
         }
         for (i, slot) in s.vals.iter_mut().enumerate() {
             let Some(v) = *slot else { continue };
-            let (a, c) = if scalar_left { (scalar[i], v) } else { (v, scalar[i]) };
+            let (a, c) = if scalar_left {
+                (scalar[i], v)
+            } else {
+                (v, scalar[i])
+            };
             *slot = match arith(op, a, c) {
                 Applied::Value(x) => Some(x),
                 Applied::Cmp(t) if as_bool => Some(f64::from(t)),
@@ -197,7 +201,9 @@ pub fn vector_vector(
         }
         let mut seen: HashMap<Labels, ()> = HashMap::new();
         for many_series in many {
-            let Some(mv) = many_series.vals[step] else { continue };
+            let Some(mv) = many_series.vals[step] else {
+                continue;
+            };
             let sig = signature(&many_series.labels, &m.on);
             let Some(&oi) = table.get(&sig) else { continue };
             let ov = one[oi].vals[step].unwrap_or(f64::NAN);
@@ -231,7 +237,10 @@ pub fn vector_vector(
                 }
             }
             if m.card == Card::OneToOne && seen.insert(labels.clone(), ()).is_some() {
-                return Err("multiple matches for labels: grouping labels must ensure unique matches".to_string());
+                return Err(
+                    "multiple matches for labels: grouping labels must ensure unique matches"
+                        .to_string(),
+                );
             }
             acc.set(labels, step, value);
         }
@@ -279,11 +288,17 @@ pub fn set_op(
 pub fn group_key(labels: &Labels, grouping: &Option<Grouping>) -> Labels {
     match grouping {
         None => Labels::new(),
-        Some(Grouping { by: true, labels: keep }) => keep
+        Some(Grouping {
+            by: true,
+            labels: keep,
+        }) => keep
             .iter()
             .filter_map(|name| labels.get(name).map(|v| (name.clone(), v.clone())))
             .collect(),
-        Some(Grouping { by: false, labels: drop }) => labels
+        Some(Grouping {
+            by: false,
+            labels: drop,
+        }) => labels
             .iter()
             .filter(|(k, _)| k.as_str() != METRIC_NAME && !drop.contains(k))
             .map(|(k, v)| (k.clone(), v.clone()))
@@ -304,7 +319,10 @@ pub fn group_key_or_all(labels: &Labels, grouping: &Option<Grouping>) -> Labels 
 pub fn group(input: &[Series], grouping: &Option<Grouping>) -> BTreeMap<Labels, Vec<usize>> {
     let mut groups: BTreeMap<Labels, Vec<usize>> = BTreeMap::new();
     for (i, s) in input.iter().enumerate() {
-        groups.entry(group_key(&s.labels, grouping)).or_default().push(i);
+        groups
+            .entry(group_key(&s.labels, grouping))
+            .or_default()
+            .push(i);
     }
     groups
 }
@@ -358,7 +376,10 @@ pub fn aggregate(
     for (labels, members) in groups {
         let vals = (0..steps)
             .map(|step| {
-                let vs: Vec<f64> = members.iter().filter_map(|&i| input[i].vals[step]).collect();
+                let vs: Vec<f64> = members
+                    .iter()
+                    .filter_map(|&i| input[i].vals[step])
+                    .collect();
                 if vs.is_empty() {
                     return None;
                 }
@@ -417,7 +438,13 @@ pub fn quantile(q: f64, mut values: Vec<f64>) -> f64 {
 
 /// Prometheus' `extrapolatedRate`: slope of the first and last sample in the window, extended to
 /// the window edges unless the samples stop short of them.
-pub fn extrapolated(s: &[(i64, f64)], start: i64, end: i64, counter: bool, rate: bool) -> Option<f64> {
+pub fn extrapolated(
+    s: &[(i64, f64)],
+    start: i64,
+    end: i64,
+    counter: bool,
+    rate: bool,
+) -> Option<f64> {
     if s.len() < 2 {
         return None;
     }
@@ -467,14 +494,26 @@ mod tests {
 
     fn series(labels: &[(&str, &str)], vals: &[Option<f64>]) -> Series {
         Series {
-            labels: labels.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect(),
+            labels: labels
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect(),
             vals: vals.to_vec(),
         }
     }
 
     fn values(s: &[Series]) -> Vec<(String, Vec<Option<f64>>)> {
         s.iter()
-            .map(|s| (s.labels.iter().map(|(k, v)| format!("{k}={v}")).collect::<Vec<_>>().join(","), s.vals.clone()))
+            .map(|s| {
+                (
+                    s.labels
+                        .iter()
+                        .map(|(k, v)| format!("{k}={v}"))
+                        .collect::<Vec<_>>()
+                        .join(","),
+                    s.vals.clone(),
+                )
+            })
             .collect()
     }
 
@@ -487,10 +526,22 @@ mod tests {
                 series(&[("a", "2"), ("b", "x")], &[Some(5.0), Some(7.0)]),
             ]
         };
-        let by_a = Some(Grouping { by: true, labels: vec!["a".into()] });
+        let by_a = Some(Grouping {
+            by: true,
+            labels: vec!["a".into()],
+        });
         let got = aggregate("sum", 2, input(), &by_a, None).unwrap();
-        assert_eq!(values(&got), [("a=1".into(), vec![Some(4.0), Some(2.0)]), ("a=2".into(), vec![Some(5.0), Some(7.0)])]);
-        let without_b = Some(Grouping { by: false, labels: vec!["b".into()] });
+        assert_eq!(
+            values(&got),
+            [
+                ("a=1".into(), vec![Some(4.0), Some(2.0)]),
+                ("a=2".into(), vec![Some(5.0), Some(7.0)])
+            ]
+        );
+        let without_b = Some(Grouping {
+            by: false,
+            labels: vec!["b".into()],
+        });
         let got = aggregate("count", 2, input(), &without_b, None).unwrap();
         assert_eq!(values(&got)[0].1, vec![Some(2.0), Some(1.0)]);
         let got = aggregate("topk", 2, input(), &None, Some(&[1.0, 2.0])).unwrap();
@@ -500,17 +551,33 @@ mod tests {
 
     #[test]
     fn matching_pairs_series_and_set_ops_filter_them() {
-        let lhs = || vec![series(&[("a", "1"), ("x", "l")], &[Some(10.0)]), series(&[("a", "2"), ("x", "l")], &[Some(20.0)])];
+        let lhs = || {
+            vec![
+                series(&[("a", "1"), ("x", "l")], &[Some(10.0)]),
+                series(&[("a", "2"), ("x", "l")], &[Some(20.0)]),
+            ]
+        };
         let rhs = || vec![series(&[("a", "1")], &[Some(2.0)])];
-        let on_a = Matching { on: Some((true, vec!["a".into()])), card: Card::ManyToOne, include: vec![] };
+        let on_a = Matching {
+            on: Some((true, vec!["a".into()])),
+            card: Card::ManyToOne,
+            include: vec![],
+        };
         let got = vector_vector(1, "/", false, false, lhs(), rhs(), &on_a).unwrap();
         assert_eq!(values(&got), [("a=1,x=l".into(), vec![Some(5.0)])]);
         // one-to-one on `a` trims the result to the matching label
-        let one = Matching { on: Some((true, vec!["a".into()])), card: Card::OneToOne, include: vec![] };
+        let one = Matching {
+            on: Some((true, vec!["a".into()])),
+            card: Card::OneToOne,
+            include: vec![],
+        };
         let got = vector_vector(1, "+", false, false, lhs(), rhs(), &one).unwrap();
         assert_eq!(values(&got), [("a=1".into(), vec![Some(12.0)])]);
         // two left series with the same signature on the "one" side is an error
-        let dup = vec![series(&[("a", "1"), ("y", "1")], &[Some(1.0)]), series(&[("a", "1"), ("y", "2")], &[Some(1.0)])];
+        let dup = vec![
+            series(&[("a", "1"), ("y", "1")], &[Some(1.0)]),
+            series(&[("a", "1"), ("y", "2")], &[Some(1.0)]),
+        ];
         assert!(vector_vector(1, "+", false, false, lhs(), dup, &one).is_err());
         let on = Some((true, vec!["a".to_string()]));
         assert_eq!(set_op(1, "and", lhs(), rhs(), &on).len(), 1);

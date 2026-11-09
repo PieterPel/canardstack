@@ -58,9 +58,16 @@ impl Metadata {
         to: DateTime<Utc>,
     ) -> ApiResult<Vec<String>> {
         let selectors = prom_discovery::Selectors::parse(matches)?;
-        let key = CacheKey::window(Api::Prometheus, Discovery::LabelName, &matches.join("\u{1f}"), from, to);
+        let key = CacheKey::window(
+            Api::Prometheus,
+            Discovery::LabelName,
+            &matches.join("\u{1f}"),
+            from,
+            to,
+        );
         let value = self.cached(storage, key, || {
-            prom_discovery::label_names(queries, storage, &selectors, from, to).map(|names| json!(names))
+            prom_discovery::label_names(queries, storage, &selectors, from, to)
+                .map(|names| json!(names))
         })?;
         Ok(string_array(value))
     }
@@ -76,9 +83,16 @@ impl Metadata {
     ) -> ApiResult<Vec<String>> {
         let selectors = prom_discovery::Selectors::parse(matches)?;
         let cache_name = format!("{name}\u{1f}{}", matches.join("\u{1f}"));
-        let key = CacheKey::window(Api::Prometheus, Discovery::LabelValue, &cache_name, from, to);
+        let key = CacheKey::window(
+            Api::Prometheus,
+            Discovery::LabelValue,
+            &cache_name,
+            from,
+            to,
+        );
         let value = self.cached(storage, key, || {
-            prom_discovery::label_values(queries, storage, name, &selectors, from, to).map(|v| json!(v))
+            prom_discovery::label_values(queries, storage, name, &selectors, from, to)
+                .map(|v| json!(v))
         })?;
         Ok(string_array(value))
     }
@@ -92,7 +106,13 @@ impl Metadata {
         to: DateTime<Utc>,
     ) -> ApiResult<Value> {
         let selectors = prom_discovery::Selectors::parse(matches)?;
-        let key = CacheKey::window(Api::Prometheus, Discovery::Series, &matches.join("\u{1f}"), from, to);
+        let key = CacheKey::window(
+            Api::Prometheus,
+            Discovery::Series,
+            &matches.join("\u{1f}"),
+            from,
+            to,
+        );
         self.cached(storage, key, || {
             prom_discovery::series(queries, storage, &selectors, from, to).map(|sets| json!(sets))
         })
@@ -281,12 +301,10 @@ struct DiscoveryCache {
 
 impl DiscoveryCache {
     fn get(&self, key: &CacheKey, generation: u64) -> Option<Value> {
-        self.entries
-            .get(key)
-            .and_then(|entry| {
-                (entry.generation == generation && entry.created.elapsed() < CACHE_TTL)
-                    .then(|| entry.value.clone())
-            })
+        self.entries.get(key).and_then(|entry| {
+            (entry.generation == generation && entry.created.elapsed() < CACHE_TTL)
+                .then(|| entry.value.clone())
+        })
     }
 
     fn insert(&mut self, key: CacheKey, generation: u64, value: Value) {

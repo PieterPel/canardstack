@@ -12,7 +12,10 @@ impl Ev<'_> {
         f: &dyn Fn(Samples, i64, i64, usize) -> Option<f64>,
     ) -> ApiResult<Value> {
         let range = sq.range.as_millis() as i64;
-        let step = sq.step.map_or(DEFAULT_SUBQUERY_STEP_MS, |d| d.as_millis() as i64).max(1);
+        let step = sq
+            .step
+            .map_or(DEFAULT_SUBQUERY_STEP_MS, |d| d.as_millis() as i64)
+            .max(1);
         let off = match &sq.offset {
             Some(Offset::Pos(d)) => d.as_millis() as i64,
             Some(Offset::Neg(d)) => -(d.as_millis() as i64),

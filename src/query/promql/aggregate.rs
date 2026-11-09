@@ -6,8 +6,14 @@ use crate::query::vector::Grouping;
 
 fn grouping(modifier: &Option<LabelModifier>) -> Option<Grouping> {
     modifier.as_ref().map(|m| match m {
-        LabelModifier::Include(l) => Grouping { by: true, labels: l.labels.iter().map(|n| unescape(n)).collect() },
-        LabelModifier::Exclude(l) => Grouping { by: false, labels: l.labels.iter().map(|n| unescape(n)).collect() },
+        LabelModifier::Include(l) => Grouping {
+            by: true,
+            labels: l.labels.iter().map(|n| unescape(n)).collect(),
+        },
+        LabelModifier::Exclude(l) => Grouping {
+            by: false,
+            labels: l.labels.iter().map(|n| unescape(n)).collect(),
+        },
     })
 }
 
@@ -34,7 +40,17 @@ impl Ev<'_> {
         };
         if !matches!(
             op.as_str(),
-            "sum" | "avg" | "min" | "max" | "count" | "group" | "stddev" | "stdvar" | "quantile" | "topk" | "bottomk"
+            "sum"
+                | "avg"
+                | "min"
+                | "max"
+                | "count"
+                | "group"
+                | "stddev"
+                | "stdvar"
+                | "quantile"
+                | "topk"
+                | "bottomk"
         ) {
             return Err(unsupported(format!("aggregation `{op}` is not supported")));
         }
@@ -67,6 +83,8 @@ impl Ev<'_> {
                 }
             }
         }
-        out.into_iter().map(|(labels, vals)| Series { labels, vals }).collect()
+        out.into_iter()
+            .map(|(labels, vals)| Series { labels, vals })
+            .collect()
     }
 }

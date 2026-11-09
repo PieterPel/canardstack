@@ -36,7 +36,9 @@ impl Selectors {
         let bad = |msg: String| ApiError::new(400, "bad_data", msg);
         let mut out = Vec::new();
         for text in raw {
-            let Expr::VectorSelector(vs) = parser::parse(text).map_err(|e| bad(format!("invalid match[] selector: {e}")))? else {
+            let Expr::VectorSelector(vs) =
+                parser::parse(text).map_err(|e| bad(format!("invalid match[] selector: {e}")))?
+            else {
                 return Err(bad(format!("match[] must be a series selector: {text}")));
             };
             if !vs.matchers.or_matchers.is_empty() {
@@ -47,7 +49,10 @@ impl Selectors {
                 tests.push((METRIC_NAME.to_string(), Test::Eq(name.clone())));
             }
             for m in &vs.matchers.matchers {
-                let anchored = |p: &str| Regex::new(&format!("^(?:{p})$")).map_err(|e| bad(format!("invalid regex: {e}")));
+                let anchored = |p: &str| {
+                    Regex::new(&format!("^(?:{p})$"))
+                        .map_err(|e| bad(format!("invalid regex: {e}")))
+                };
                 let test = match &m.op {
                     MatchOp::Equal => Test::Eq(m.value.clone()),
                     MatchOp::NotEqual => Test::Ne(m.value.clone()),
@@ -123,7 +128,10 @@ pub fn series(
             };
             let name: String = row.get(0)?;
             let unit: Option<String> = row.get(7)?;
-            labels.insert(METRIC_NAME.to_string(), prom_name(&name, unit.as_deref(), kind, suffixes));
+            labels.insert(
+                METRIC_NAME.to_string(),
+                prom_name(&name, unit.as_deref(), kind, suffixes),
+            );
             if selectors.matches(&labels) {
                 sets.insert(labels);
             }
@@ -154,7 +162,14 @@ fn histogram_series(
         let mut rows = stmt.query([])?;
         while let Some(row) = rows.next()? {
             let col = |i: usize| row.get::<_, Option<String>>(i);
-            let base = labels_from_row(col(1)?.as_deref(), col(2)?.as_deref(), col(3)?.as_deref(), col(4)?.as_deref(), col(5)?.as_deref(), col(6)?.as_deref());
+            let base = labels_from_row(
+                col(1)?.as_deref(),
+                col(2)?.as_deref(),
+                col(3)?.as_deref(),
+                col(4)?.as_deref(),
+                col(5)?.as_deref(),
+                col(6)?.as_deref(),
+            );
             let name: String = row.get(0)?;
             let unit: Option<String> = row.get(7)?;
             let family = prom_name(&name, unit.as_deref(), Kind::Histogram, suffixes);
@@ -233,7 +248,11 @@ pub fn metric_metadata(
             let name: String = row.get(0)?;
             let monotonic: bool = row.get(1)?;
             let unit: String = row.get(2)?;
-            let kind = if monotonic { Kind::Counter } else { Kind::Gauge };
+            let kind = if monotonic {
+                Kind::Counter
+            } else {
+                Kind::Gauge
+            };
             let shown = prom_name(&name, Some(&unit), kind, suffixes);
             let kind_name = if monotonic { "counter" } else { "gauge" };
             out.insert(shown, (kind_name.to_string(), unit, row.get(3)?));

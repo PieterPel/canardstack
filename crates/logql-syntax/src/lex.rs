@@ -148,10 +148,15 @@ pub(crate) fn lex(input: &str) -> Result<Vec<(usize, Tok)>> {
                 if at(i).is_none() {
                     return Err(err(pos, "unterminated raw string"));
                 }
-                out.push((pos, Tok::Str(chars[start..i].iter().map(|(_, c)| c).collect())));
+                out.push((
+                    pos,
+                    Tok::Str(chars[start..i].iter().map(|(_, c)| c).collect()),
+                ));
                 i += 1;
             }
-            c if c.is_ascii_digit() || (c == '.' && at(i + 1).is_some_and(|d| d.is_ascii_digit())) => {
+            c if c.is_ascii_digit()
+                || (c == '.' && at(i + 1).is_some_and(|d| d.is_ascii_digit())) =>
+            {
                 let (tok, next) = lex_number(&chars, i, pos)?;
                 out.push((pos, tok));
                 i = next;
@@ -161,10 +166,16 @@ pub(crate) fn lex(input: &str) -> Result<Vec<(usize, Tok)>> {
                 while at(i).is_some_and(|c| c.is_alphanumeric() || c == '_') {
                     i += 1;
                 }
-                out.push((pos, Tok::Ident(chars[start..i].iter().map(|(_, c)| c).collect())));
+                out.push((
+                    pos,
+                    Tok::Ident(chars[start..i].iter().map(|(_, c)| c).collect()),
+                ));
             }
             _ => {
-                let two: String = chars[i..chars.len().min(i + 2)].iter().map(|(_, c)| c).collect();
+                let two: String = chars[i..chars.len().min(i + 2)]
+                    .iter()
+                    .map(|(_, c)| c)
+                    .collect();
                 let (tok, len) = match two.as_str() {
                     "==" => (Tok::EqEq, 2),
                     "!=" => (Tok::Ne, 2),
@@ -227,7 +238,9 @@ fn lex_number(chars: &[(usize, char)], start: usize, pos: usize) -> Result<(Tok,
             }
         }
         let text: String = chars[begin..i].iter().map(|(_, c)| c).collect();
-        let value: f64 = text.parse().map_err(|_| err(pos, format!("bad number {text:?}")))?;
+        let value: f64 = text
+            .parse()
+            .map_err(|_| err(pos, format!("bad number {text:?}")))?;
         let unit_start = i;
         while at(i).is_some_and(|c| c.is_alphabetic() || c == 'µ') {
             i += 1;

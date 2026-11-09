@@ -97,11 +97,18 @@ const OPERATORS: &[(&str, P)] = &[
 ];
 
 fn err(position: usize, message: impl Into<String>) -> ParseError {
-    ParseError { position, message: message.into() }
+    ParseError {
+        position,
+        message: message.into(),
+    }
 }
 
 fn is_attribute_rune(c: char) -> bool {
-    !c.is_whitespace() && !matches!(c, '{' | '}' | '(' | ')' | '=' | '~' | '!' | '<' | '>' | '&' | '|' | '^' | ',')
+    !c.is_whitespace()
+        && !matches!(
+            c,
+            '{' | '}' | '(' | ')' | '=' | '~' | '!' | '<' | '>' | '&' | '|' | '^' | ','
+        )
 }
 
 fn scoped_intrinsic(scope: &str, name: &str) -> Option<Intrinsic> {
@@ -246,7 +253,8 @@ impl Lexer<'_> {
         // A duration is the number plus the unit characters that follow with no space.
         let mut j = self.i;
         while let Some((_, c)) = self.chars.get(j) {
-            if c.is_whitespace() || !(c.is_ascii_digit() || *c == '.' || "nusmhµdwy".contains(*c)) {
+            if c.is_whitespace() || !(c.is_ascii_digit() || *c == '.' || "nusmhµdwy".contains(*c))
+            {
                 break;
             }
             j += 1;
@@ -258,11 +266,18 @@ impl Lexer<'_> {
                 return Ok(Tok::Duration(ns));
             }
         }
-        let text: String = self.chars[start..number_end].iter().map(|(_, c)| c).collect();
+        let text: String = self.chars[start..number_end]
+            .iter()
+            .map(|(_, c)| c)
+            .collect();
         if float {
-            text.parse().map(Tok::Float).map_err(|_| err(start_pos, format!("bad number {text}")))
+            text.parse()
+                .map(Tok::Float)
+                .map_err(|_| err(start_pos, format!("bad number {text}")))
         } else {
-            text.parse().map(Tok::Int).map_err(|_| err(start_pos, format!("integer {text} is out of range")))
+            text.parse()
+                .map(Tok::Int)
+                .map_err(|_| err(start_pos, format!("integer {text} is out of range")))
         }
     }
 
@@ -271,7 +286,9 @@ impl Lexer<'_> {
         self.i += 1;
         let mut out = String::new();
         loop {
-            let c = self.peek().ok_or_else(|| err(start, "unterminated string"))?;
+            let c = self
+                .peek()
+                .ok_or_else(|| err(start, "unterminated string"))?;
             self.i += 1;
             if c == quote {
                 return Ok(out);
@@ -280,7 +297,9 @@ impl Lexer<'_> {
                 out.push(c);
                 continue;
             }
-            let e = self.peek().ok_or_else(|| err(start, "unterminated string"))?;
+            let e = self
+                .peek()
+                .ok_or_else(|| err(start, "unterminated string"))?;
             self.i += 1;
             out.push(match e {
                 'n' => '\n',
@@ -298,8 +317,11 @@ impl Lexer<'_> {
                         'u' => 4,
                         _ => 8,
                     };
-                    let hex: String = (0..digits).filter_map(|_| self.peek().inspect(|_| self.i += 1)).collect();
-                    let code = u32::from_str_radix(&hex, 16).map_err(|_| err(start, "invalid escape sequence"))?;
+                    let hex: String = (0..digits)
+                        .filter_map(|_| self.peek().inspect(|_| self.i += 1))
+                        .collect();
+                    let code = u32::from_str_radix(&hex, 16)
+                        .map_err(|_| err(start, "invalid escape sequence"))?;
                     char::from_u32(code).ok_or_else(|| err(start, "invalid escape sequence"))?
                 }
                 _ => return Err(err(start, "invalid escape sequence")),
@@ -354,9 +376,17 @@ fn go_duration(text: &str) -> Option<i64> {
         let digits = rest.find(|c: char| !(c.is_ascii_digit() || c == '.'))?;
         let amount: f64 = rest[..digits].parse().ok()?;
         rest = &rest[digits..];
-        let (unit, ns) = [("ns", 1f64), ("us", 1e3), ("µs", 1e3), ("ms", 1e6), ("s", 1e9), ("m", 6e10), ("h", 3.6e12)]
-            .into_iter()
-            .find(|(u, _)| rest.starts_with(u))?;
+        let (unit, ns) = [
+            ("ns", 1f64),
+            ("us", 1e3),
+            ("µs", 1e3),
+            ("ms", 1e6),
+            ("s", 1e9),
+            ("m", 6e10),
+            ("h", 3.6e12),
+        ]
+        .into_iter()
+        .find(|(u, _)| rest.starts_with(u))?;
         total += amount * ns;
         rest = &rest[unit.len()..];
     }
@@ -364,7 +394,11 @@ fn go_duration(text: &str) -> Option<i64> {
 }
 
 pub(crate) fn lex(src: &str) -> Result<Vec<(usize, Tok)>, ParseError> {
-    let mut l = Lexer { chars: src.char_indices().collect(), i: 0, src };
+    let mut l = Lexer {
+        chars: src.char_indices().collect(),
+        i: 0,
+        src,
+    };
     let mut out = Vec::new();
     while let Some(c) = l.peek() {
         let pos = l.pos();
@@ -378,7 +412,15 @@ pub(crate) fn lex(src: &str) -> Result<Vec<(usize, Tok)>, ParseError> {
         } else if c == '.' {
             l.i += 1;
             let name = l.attribute_name()?;
-            out.push((pos, Tok::Attr(Attribute { scope: Scope::None, parent: false, intrinsic: None, name })));
+            out.push((
+                pos,
+                Tok::Attr(Attribute {
+                    scope: Scope::None,
+                    parent: false,
+                    intrinsic: None,
+                    name,
+                }),
+            ));
         } else if c.is_alphabetic() || c == '_' {
             let word = l.word();
             if l.peek() == Some('.') {
@@ -386,7 +428,9 @@ pub(crate) fn lex(src: &str) -> Result<Vec<(usize, Tok)>, ParseError> {
                     l.i += 1;
                     // `parent.span.x` and `parent.resource.x`
                     if parent {
-                        for (prefix, nested) in [("span.", Scope::Span), ("resource.", Scope::Resource)] {
+                        for (prefix, nested) in
+                            [("span.", Scope::Span), ("resource.", Scope::Resource)]
+                        {
                             if l.rest_starts_with(prefix) {
                                 l.i += prefix.len();
                                 scope = nested;
@@ -395,16 +439,37 @@ pub(crate) fn lex(src: &str) -> Result<Vec<(usize, Tok)>, ParseError> {
                         }
                     }
                     let name = l.attribute_name()?;
-                    out.push((pos, Tok::Attr(Attribute { scope, parent, intrinsic: None, name })));
+                    out.push((
+                        pos,
+                        Tok::Attr(Attribute {
+                            scope,
+                            parent,
+                            intrinsic: None,
+                            name,
+                        }),
+                    ));
                     continue;
                 }
             }
-            if l.peek() == Some(':') && matches!(word.as_str(), "trace" | "span" | "event" | "link" | "instrumentation") {
+            if l.peek() == Some(':')
+                && matches!(
+                    word.as_str(),
+                    "trace" | "span" | "event" | "link" | "instrumentation"
+                )
+            {
                 l.i += 1;
                 let name = l.word();
                 let intrinsic = scoped_intrinsic(&word, &name)
                     .ok_or_else(|| err(pos, format!("{word}:{name} is not an intrinsic")))?;
-                out.push((pos, Tok::Attr(Attribute { scope: Scope::None, parent: false, intrinsic: Some(intrinsic), name: format!("{word}:{name}") })));
+                out.push((
+                    pos,
+                    Tok::Attr(Attribute {
+                        scope: Scope::None,
+                        parent: false,
+                        intrinsic: Some(intrinsic),
+                        name: format!("{word}:{name}"),
+                    }),
+                ));
                 continue;
             }
             out.push((pos, Tok::Word(word)));

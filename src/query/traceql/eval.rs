@@ -47,10 +47,26 @@ impl Eval<'_> {
             Intrinsic::NestedSetLeft => one(Val::Int(s.left)),
             Intrinsic::NestedSetRight => one(Val::Int(s.right)),
             Intrinsic::NestedSetParent => one(Val::Int(s.parent.map_or(-1, |p| self.span(p).left))),
-            Intrinsic::EventName => s.events().iter().map(|e| Val::Str(e.name.clone())).collect(),
-            Intrinsic::EventTimeSinceStart => s.events().iter().map(|e| Val::Dur(e.time_ns - s.start_ns)).collect(),
-            Intrinsic::LinkTraceId => s.links().iter().map(|l| Val::Str(l.trace_id.clone())).collect(),
-            Intrinsic::LinkSpanId => s.links().iter().map(|l| Val::Str(l.span_id.clone())).collect(),
+            Intrinsic::EventName => s
+                .events()
+                .iter()
+                .map(|e| Val::Str(e.name.clone()))
+                .collect(),
+            Intrinsic::EventTimeSinceStart => s
+                .events()
+                .iter()
+                .map(|e| Val::Dur(e.time_ns - s.start_ns))
+                .collect(),
+            Intrinsic::LinkTraceId => s
+                .links()
+                .iter()
+                .map(|l| Val::Str(l.trace_id.clone()))
+                .collect(),
+            Intrinsic::LinkSpanId => s
+                .links()
+                .iter()
+                .map(|l| Val::Str(l.span_id.clone()))
+                .collect(),
             Intrinsic::InstrumentationName => one(Val::Str(s.scope_name.clone())),
             Intrinsic::InstrumentationVersion => one(Val::Str(s.scope_version.clone())),
         }
@@ -74,9 +90,23 @@ impl Eval<'_> {
             Scope::Span => s.span_attrs().get(name).cloned().into_iter().collect(),
             Scope::Resource => s.resource().get(name).cloned().into_iter().collect(),
             Scope::Instrumentation => s.scope_attrs().get(name).cloned().into_iter().collect(),
-            Scope::Event => s.events().iter().filter_map(|e| e.attrs.get(name).cloned()).collect(),
-            Scope::Link => s.links().iter().filter_map(|l| l.attrs.get(name).cloned()).collect(),
-            Scope::None => s.span_attrs().get(name).into_iter().chain(s.resource().get(name)).cloned().collect(),
+            Scope::Event => s
+                .events()
+                .iter()
+                .filter_map(|e| e.attrs.get(name).cloned())
+                .collect(),
+            Scope::Link => s
+                .links()
+                .iter()
+                .filter_map(|l| l.attrs.get(name).cloned())
+                .collect(),
+            Scope::None => s
+                .span_attrs()
+                .get(name)
+                .into_iter()
+                .chain(s.resource().get(name))
+                .cloned()
+                .collect(),
         }
     }
 
@@ -110,10 +140,14 @@ impl Eval<'_> {
                     _ => {
                         let r = self.field(rhs, i);
                         if op.is_boolean() {
-                            let hit = l.iter().any(|a| r.iter().any(|b| compare(*op, a, b, self.regexes)));
+                            let hit = l
+                                .iter()
+                                .any(|a| r.iter().any(|b| compare(*op, a, b, self.regexes)));
                             vec![Val::Bool(hit)]
                         } else {
-                            l.iter().flat_map(|a| r.iter().filter_map(|b| arith(*op, a, b))).collect()
+                            l.iter()
+                                .flat_map(|a| r.iter().filter_map(|b| arith(*op, a, b)))
+                                .collect()
                         }
                     }
                 }
@@ -135,7 +169,10 @@ impl Eval<'_> {
     }
 
     pub fn pipeline(&self, pipeline: &Pipeline, input: Vec<Group>) -> ApiResult<Vec<Group>> {
-        pipeline.elements.iter().try_fold(input, |groups, element| self.element(element, groups))
+        pipeline
+            .elements
+            .iter()
+            .try_fold(input, |groups, element| self.element(element, groups))
     }
 
     fn element(&self, element: &Element, input: Vec<Group>) -> ApiResult<Vec<Group>> {
@@ -147,13 +184,22 @@ impl Eval<'_> {
                 }
                 Ok(out)
             }
-            Element::ScalarFilter(filter) => Ok(input.into_iter().filter(|g| self.scalar_filter(filter, g)).collect()),
-            Element::Group(field) => Ok(input.iter().flat_map(|g| self.group_by(field, g)).collect()),
+            Element::ScalarFilter(filter) => Ok(input
+                .into_iter()
+                .filter(|g| self.scalar_filter(filter, g))
+                .collect()),
+            Element::Group(field) => {
+                Ok(input.iter().flat_map(|g| self.group_by(field, g)).collect())
+            }
             Element::Coalesce => {
                 let mut merged: Group = input.into_iter().flatten().collect();
                 merged.sort_unstable();
                 merged.dedup();
-                Ok(if merged.is_empty() { Vec::new() } else { vec![merged] })
+                Ok(if merged.is_empty() {
+                    Vec::new()
+                } else {
+                    vec![merged]
+                })
             }
             Element::Select(_) => Ok(input),
             Element::Aggregate(_) => Err(unsupported("an aggregate must be compared to a value")),
@@ -164,7 +210,11 @@ impl Eval<'_> {
         // Spans without a value for the expression stay together in one group.
         let mut groups: BTreeMap<String, Group> = BTreeMap::new();
         for &i in group {
-            let key = self.field(field, i).first().map(|v| format!("{v:?}")).unwrap_or_default();
+            let key = self
+                .field(field, i)
+                .first()
+                .map(|v| format!("{v:?}"))
+                .unwrap_or_default();
             groups.entry(key).or_default().push(i);
         }
         groups.into_values().collect()
@@ -173,8 +223,16 @@ impl Eval<'_> {
     fn spansets(&self, spansets: &Spansets, input: &Group) -> ApiResult<Vec<Group>> {
         match spansets {
             Spansets::Filter(field) => {
-                let kept: Group = input.iter().copied().filter(|&i| self.holds(field, i)).collect();
-                Ok(if kept.is_empty() { Vec::new() } else { vec![kept] })
+                let kept: Group = input
+                    .iter()
+                    .copied()
+                    .filter(|&i| self.holds(field, i))
+                    .collect();
+                Ok(if kept.is_empty() {
+                    Vec::new()
+                } else {
+                    vec![kept]
+                })
             }
             Spansets::Pipeline(p) => self.pipeline(p, vec![input.clone()]),
             Spansets::Op { op, lhs, rhs } => {
@@ -188,7 +246,11 @@ impl Eval<'_> {
     fn spanset_op(&self, op: SpansetOp, lhs: Vec<Group>, rhs: Vec<Group>) -> ApiResult<Vec<Group>> {
         match op {
             SpansetOp::And | SpansetOp::Union => {
-                let both = if op == SpansetOp::And { !lhs.is_empty() && !rhs.is_empty() } else { !lhs.is_empty() || !rhs.is_empty() };
+                let both = if op == SpansetOp::And {
+                    !lhs.is_empty() && !rhs.is_empty()
+                } else {
+                    !lhs.is_empty() || !rhs.is_empty()
+                };
                 if !both {
                     return Ok(Vec::new());
                 }
@@ -199,12 +261,18 @@ impl Eval<'_> {
             }
             _ => {
                 if lhs.len() > 1 || rhs.len() > 1 {
-                    return Err(unsupported("structural operators are not supported on multiple spansets"));
+                    return Err(unsupported(
+                        "structural operators are not supported on multiple spansets",
+                    ));
                 }
                 let l = lhs.into_iter().next().unwrap_or_default();
                 let r = rhs.into_iter().next().unwrap_or_default();
                 let out = self.structural(op, &l, &r);
-                Ok(if out.is_empty() { Vec::new() } else { vec![out] })
+                Ok(if out.is_empty() {
+                    Vec::new()
+                } else {
+                    vec![out]
+                })
             }
         }
     }
@@ -226,8 +294,14 @@ impl Eval<'_> {
 
     fn structural(&self, op: SpansetOp, lhs: &Group, rhs: &Group) -> Group {
         use SpansetOp::*;
-        let negated = matches!(op, NotChild | NotParent | NotDescendant | NotAncestor | NotSibling);
-        let union = matches!(op, UnionChild | UnionParent | UnionDescendant | UnionAncestor | UnionSibling);
+        let negated = matches!(
+            op,
+            NotChild | NotParent | NotDescendant | NotAncestor | NotSibling
+        );
+        let union = matches!(
+            op,
+            UnionChild | UnionParent | UnionDescendant | UnionAncestor | UnionSibling
+        );
         let mut out: Group = Vec::new();
         for &r in rhs {
             let mut matched = false;
@@ -251,7 +325,10 @@ impl Eval<'_> {
     }
 
     fn scalar_filter(&self, filter: &ScalarFilter, group: &Group) -> bool {
-        match (self.scalar(&filter.lhs, group), self.scalar(&filter.rhs, group)) {
+        match (
+            self.scalar(&filter.lhs, group),
+            self.scalar(&filter.rhs, group),
+        ) {
             (Some(l), Some(r)) => compare(filter.op, &l, &r, self.regexes),
             _ => false,
         }
@@ -261,11 +338,22 @@ impl Eval<'_> {
         match scalar {
             Scalar::Static(s) => from_static(s),
             Scalar::Aggregate(agg) => self.aggregate(agg, group),
-            Scalar::Binary { op, lhs, rhs } => arith(*op, &self.scalar(lhs, group)?, &self.scalar(rhs, group)?),
+            Scalar::Binary { op, lhs, rhs } => {
+                arith(*op, &self.scalar(lhs, group)?, &self.scalar(rhs, group)?)
+            }
             Scalar::Pipeline(p) => {
                 let (last, body) = p.elements.split_last()?;
-                let Element::Aggregate(agg) = last else { return None };
-                let groups = self.pipeline(&Pipeline { elements: body.to_vec() }, vec![group.clone()]).ok()?;
+                let Element::Aggregate(agg) = last else {
+                    return None;
+                };
+                let groups = self
+                    .pipeline(
+                        &Pipeline {
+                            elements: body.to_vec(),
+                        },
+                        vec![group.clone()],
+                    )
+                    .ok()?;
                 match groups.as_slice() {
                     [only] => self.aggregate(agg, only),
                     _ => None,
@@ -280,7 +368,11 @@ impl Eval<'_> {
         };
         let values: Vec<Val> = group
             .iter()
-            .filter_map(|&i| self.field(field, i).into_iter().find(|v| matches!(v, Val::Int(_) | Val::Float(_) | Val::Dur(_))))
+            .filter_map(|&i| {
+                self.field(field, i)
+                    .into_iter()
+                    .find(|v| matches!(v, Val::Int(_) | Val::Float(_) | Val::Dur(_)))
+            })
             .collect();
         let first = values.first()?.clone();
         let float = |v: &Val| match v {
@@ -316,13 +408,17 @@ impl Eval<'_> {
         if !self.scalar_filter(filter, &all) {
             return Ok(Vec::new());
         }
-        let operand = [&filter.lhs, &filter.rhs].into_iter().find_map(|s| match s {
-            Scalar::Pipeline(p) => Some(p),
-            _ => None,
-        });
+        let operand = [&filter.lhs, &filter.rhs]
+            .into_iter()
+            .find_map(|s| match s {
+                Scalar::Pipeline(p) => Some(p),
+                _ => None,
+            });
         match operand {
             Some(p) => {
-                let body = Pipeline { elements: p.elements[..p.elements.len().saturating_sub(1)].to_vec() };
+                let body = Pipeline {
+                    elements: p.elements[..p.elements.len().saturating_sub(1)].to_vec(),
+                };
                 self.pipeline(&body, self.input())
             }
             None => Ok(vec![all]),
@@ -335,7 +431,14 @@ mod tests {
     use super::*;
     use crate::query::traceql::model::{Attrs, Lazy, Span};
 
-    fn span(id: &str, parent: &str, name: &str, start: i64, duration: i64, attrs: &[(&str, Val)]) -> Span {
+    fn span(
+        id: &str,
+        parent: &str,
+        name: &str,
+        start: i64,
+        duration: i64,
+        attrs: &[(&str, Val)],
+    ) -> Span {
         Span {
             span_id: id.into(),
             parent_id: parent.into(),
@@ -346,8 +449,16 @@ mod tests {
             start_ns: start,
             duration_ns: duration,
             service: [None, None, None],
-            resource: Lazy::ready(Attrs::from([("service.name".to_string(), Val::Str("svc".into()))])),
-            attributes: Lazy::ready(attrs.iter().map(|(k, v)| (k.to_string(), v.clone())).collect()),
+            resource: Lazy::ready(Attrs::from([(
+                "service.name".to_string(),
+                Val::Str("svc".into()),
+            )])),
+            attributes: Lazy::ready(
+                attrs
+                    .iter()
+                    .map(|(k, v)| (k.to_string(), v.clone()))
+                    .collect(),
+            ),
             scope_name: String::new(),
             scope_version: String::new(),
             scope: Lazy::ready(Attrs::new()),
@@ -376,9 +487,14 @@ mod tests {
     fn run(query: &str) -> Vec<Vec<String>> {
         let t = trace();
         let regexes = Regexes::default();
-        let eval = Eval { trace: &t, regexes: &regexes };
+        let eval = Eval {
+            trace: &t,
+            regexes: &regexes,
+        };
         let ast = crate::query::traceql::parse(query).unwrap();
-        let traceql_syntax::ast::QueryKind::Pipeline(p) = ast.kind else { panic!("not a pipeline") };
+        let traceql_syntax::ast::QueryKind::Pipeline(p) = ast.kind else {
+            panic!("not a pipeline")
+        };
         eval.pipeline(&p, eval.input())
             .unwrap()
             .into_iter()
@@ -391,7 +507,10 @@ mod tests {
         assert_eq!(run("{ .n > 1 }"), vec![vec!["a", "c"]]);
         assert_eq!(run(r#"{ name =~ "a|b" }"#), vec![vec!["a", "b"]]);
         assert_eq!(run("{ duration >= 50ns && .n = 2 }"), vec![vec!["a"]]);
-        assert_eq!(run("{ resource.service.name = \"other\" }"), Vec::<Vec<String>>::new());
+        assert_eq!(
+            run("{ resource.service.name = \"other\" }"),
+            Vec::<Vec<String>>::new()
+        );
     }
 
     #[test]
@@ -404,13 +523,22 @@ mod tests {
 
     #[test]
     fn structural_operators() {
-        assert_eq!(run(r#"{ name = "nothing" } > { }"#), Vec::<Vec<String>>::new());
+        assert_eq!(
+            run(r#"{ name = "nothing" } > { }"#),
+            Vec::<Vec<String>>::new()
+        );
         assert_eq!(run(r#"{ name = "root" } > { }"#), vec![vec!["a", "b"]]);
-        assert_eq!(run(r#"{ name = "root" } >> { }"#), vec![vec!["a", "b", "c"]]);
+        assert_eq!(
+            run(r#"{ name = "root" } >> { }"#),
+            vec![vec!["a", "b", "c"]]
+        );
         assert_eq!(run(r#"{ name = "c" } << { }"#), vec![vec!["r", "a"]]);
         assert_eq!(run(r#"{ name = "a" } ~ { }"#), vec![vec!["b"]]);
         assert_eq!(run(r#"{ name = "root" } !> { }"#), vec![vec!["r", "c"]]);
-        assert_eq!(run(r#"{ name = "root" } &>> { name = "c" }"#), vec![vec!["r", "c"]]);
+        assert_eq!(
+            run(r#"{ name = "root" } &>> { name = "c" }"#),
+            vec![vec!["r", "c"]]
+        );
     }
 
     #[test]
@@ -419,7 +547,10 @@ mod tests {
         assert_eq!(run("{ } | count() > 4"), Vec::<Vec<String>>::new());
         assert_eq!(run("{ } | max(.n) = 3 | { .n < 3 }"), vec![vec!["r", "a"]]);
         assert_eq!(run("{ } | by(.n)").len(), 4);
-        assert_eq!(run("{ } | by(.n) | coalesce()"), vec![vec!["r", "a", "b", "c"]]);
+        assert_eq!(
+            run("{ } | by(.n) | coalesce()"),
+            vec![vec!["r", "a", "b", "c"]]
+        );
         assert_eq!(run("{ } | avg(.n) > 1.5"), vec![vec!["r", "a", "b", "c"]]);
     }
 }

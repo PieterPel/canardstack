@@ -18,7 +18,10 @@ pub enum QueryKind {
     /// `{ ... } | rate() by (...) | topk(5)`
     Metrics(MetricsPipeline),
     /// Arithmetic over metrics queries: `({} | rate()) / ({} | count_over_time())`.
-    MetricsMath { expr: MetricsExpr, second: Vec<SecondStage> },
+    MetricsMath {
+        expr: MetricsExpr,
+        second: Vec<SecondStage>,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -50,7 +53,11 @@ pub enum Element {
 pub enum Spansets {
     /// `{ expr }`; `{}` is `{ true }`.
     Filter(Field),
-    Op { op: SpansetOp, lhs: Box<Spansets>, rhs: Box<Spansets> },
+    Op {
+        op: SpansetOp,
+        lhs: Box<Spansets>,
+        rhs: Box<Spansets>,
+    },
     /// A parenthesised pipeline used as an operand.
     Pipeline(Box<Pipeline>),
 }
@@ -105,7 +112,16 @@ impl Op {
     pub fn is_boolean(self) -> bool {
         matches!(
             self,
-            Op::And | Op::Or | Op::Eq | Op::Ne | Op::Gt | Op::Ge | Op::Lt | Op::Le | Op::Re | Op::NotRe
+            Op::And
+                | Op::Or
+                | Op::Eq
+                | Op::Ne
+                | Op::Gt
+                | Op::Ge
+                | Op::Lt
+                | Op::Le
+                | Op::Re
+                | Op::NotRe
         )
     }
 }
@@ -114,8 +130,15 @@ impl Op {
 pub enum Field {
     Static(Static),
     Attribute(Attribute),
-    Binary { op: Op, lhs: Box<Field>, rhs: Box<Field> },
-    Unary { op: Op, operand: Box<Field> },
+    Binary {
+        op: Op,
+        lhs: Box<Field>,
+        rhs: Box<Field>,
+    },
+    Unary {
+        op: Op,
+        operand: Box<Field>,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -214,7 +237,11 @@ pub struct Aggregate {
 pub enum Scalar {
     Aggregate(Aggregate),
     Static(Static),
-    Binary { op: Op, lhs: Box<Scalar>, rhs: Box<Scalar> },
+    Binary {
+        op: Op,
+        lhs: Box<Scalar>,
+        rhs: Box<Scalar>,
+    },
     /// `({ ... } | count())`
     Pipeline(Box<Pipeline>),
 }
@@ -236,7 +263,12 @@ pub enum MetricsFn {
     SumOverTime(Attribute),
     QuantileOverTime(Attribute, Vec<f64>),
     HistogramOverTime(Attribute),
-    Compare { filter: Field, top_n: i64, start: i64, end: i64 },
+    Compare {
+        filter: Field,
+        top_n: i64,
+        start: i64,
+        end: i64,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -250,7 +282,10 @@ pub enum SecondStage {
     TopK(i64),
     BottomK(i64),
     /// `> 10`
-    Filter { op: Op, value: Static },
+    Filter {
+        op: Op,
+        value: Static,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -263,7 +298,16 @@ pub struct MetricsPipeline {
 #[derive(Clone, Debug, PartialEq)]
 pub enum MetricsExpr {
     Pipeline(Box<MetricsPipeline>),
-    Binary { op: Op, lhs: Box<MetricsExpr>, rhs: Box<MetricsExpr> },
+    Binary {
+        op: Op,
+        lhs: Box<MetricsExpr>,
+        rhs: Box<MetricsExpr>,
+    },
     /// `100 * (...)` (scalar on the left) or `(...) * 100`.
-    Scalar { op: Op, value: f64, expr: Box<MetricsExpr>, scalar_on_left: bool },
+    Scalar {
+        op: Op,
+        value: f64,
+        expr: Box<MetricsExpr>,
+        scalar_on_left: bool,
+    },
 }

@@ -81,7 +81,15 @@ fn reduce_buckets(buckets: &Buckets, schema: i32, target: i32) -> Buckets {
 
 impl Hist {
     pub fn empty(schema: i32) -> Hist {
-        Hist { schema, zero_threshold: DEFAULT_ZERO_THRESHOLD, zero_count: 0.0, count: 0.0, sum: 0.0, pos: Buckets::new(), neg: Buckets::new() }
+        Hist {
+            schema,
+            zero_threshold: DEFAULT_ZERO_THRESHOLD,
+            zero_count: 0.0,
+            count: 0.0,
+            sum: 0.0,
+            pos: Buckets::new(),
+            neg: Buckets::new(),
+        }
     }
 
     /// Converts an OpenTelemetry exponential histogram point the way Prometheus' OTLP translator
@@ -114,8 +122,20 @@ impl Hist {
             }
             out
         };
-        let zero_threshold = if zero_threshold > 0.0 { zero_threshold } else { DEFAULT_ZERO_THRESHOLD };
-        Some(Hist { schema, zero_threshold, zero_count, count, sum, pos: layout(pos_offset, pos), neg: layout(neg_offset, neg) })
+        let zero_threshold = if zero_threshold > 0.0 {
+            zero_threshold
+        } else {
+            DEFAULT_ZERO_THRESHOLD
+        };
+        Some(Hist {
+            schema,
+            zero_threshold,
+            zero_count,
+            count,
+            sum,
+            pos: layout(pos_offset, pos),
+            neg: layout(neg_offset, neg),
+        })
     }
 
     /// Merges buckets down to the coarser `target` schema.
@@ -135,7 +155,13 @@ impl Hist {
     }
 
     pub fn zero_bucket(&self) -> Bucket {
-        Bucket { lower: -self.zero_threshold, upper: self.zero_threshold, lower_inclusive: true, upper_inclusive: true, count: self.zero_count }
+        Bucket {
+            lower: -self.zero_threshold,
+            upper: self.zero_threshold,
+            lower_inclusive: true,
+            upper_inclusive: true,
+            count: self.zero_count,
+        }
     }
 
     /// All buckets in ascending order: negative ones from the most negative, the zero bucket (only
@@ -145,7 +171,13 @@ impl Hist {
         let threshold = self.zero_threshold;
         let mut out = Vec::with_capacity(self.neg.len() + self.pos.len() + 1);
         for (&idx, &count) in self.neg.iter().rev() {
-            let mut b = Bucket { lower: -bound(idx, self.schema), upper: -bound(idx - 1, self.schema), lower_inclusive: true, upper_inclusive: false, count };
+            let mut b = Bucket {
+                lower: -bound(idx, self.schema),
+                upper: -bound(idx - 1, self.schema),
+                lower_inclusive: true,
+                upper_inclusive: false,
+                count,
+            };
             if b.upper < 0.0 && b.upper > -threshold {
                 b.upper = -threshold;
             }
@@ -155,7 +187,13 @@ impl Hist {
             out.push(self.zero_bucket());
         }
         for (&idx, &count) in &self.pos {
-            let mut b = Bucket { lower: bound(idx - 1, self.schema), upper: bound(idx, self.schema), lower_inclusive: false, upper_inclusive: true, count };
+            let mut b = Bucket {
+                lower: bound(idx - 1, self.schema),
+                upper: bound(idx, self.schema),
+                lower_inclusive: false,
+                upper_inclusive: true,
+                count,
+            };
             if b.lower > 0.0 && b.lower < threshold {
                 b.lower = threshold;
             }
@@ -228,8 +266,10 @@ impl Hist {
 
     fn trim_buckets_in_zero_bucket(&mut self) {
         let (schema, threshold) = (self.schema, self.zero_threshold);
-        self.pos.retain(|&idx, _| bound(idx - 1, schema) >= threshold);
-        self.neg.retain(|&idx, _| -bound(idx - 1, schema) <= -threshold);
+        self.pos
+            .retain(|&idx, _| bound(idx - 1, schema) >= threshold);
+        self.neg
+            .retain(|&idx, _| -bound(idx - 1, schema) <= -threshold);
     }
 
     /// Makes both zero thresholds equal by widening the smaller one; returns the other
@@ -239,10 +279,12 @@ impl Hist {
         let mut other_threshold = other.zero_threshold;
         while other_threshold != self.zero_threshold {
             if self.zero_threshold > other_threshold {
-                (other_zero, other_threshold) = other.zero_count_for_larger_threshold(self.zero_threshold);
+                (other_zero, other_threshold) =
+                    other.zero_count_for_larger_threshold(self.zero_threshold);
             }
             if other_threshold > self.zero_threshold {
-                (self.zero_count, self.zero_threshold) = self.zero_count_for_larger_threshold(other_threshold);
+                (self.zero_count, self.zero_threshold) =
+                    self.zero_count_for_larger_threshold(other_threshold);
                 self.trim_buckets_in_zero_bucket();
             }
         }
@@ -290,10 +332,14 @@ impl Hist {
     /// Whether `self`, a later sample of a counter, is lower than `previous` somewhere, which means
     /// the counter was reset in between.
     pub fn detect_reset(&self, previous: &Hist) -> bool {
-        if self.count < previous.count || self.schema > previous.schema || self.zero_threshold < previous.zero_threshold {
+        if self.count < previous.count
+            || self.schema > previous.schema
+            || self.zero_threshold < previous.zero_threshold
+        {
             return true;
         }
-        let (previous_zero, threshold) = previous.zero_count_for_larger_threshold(self.zero_threshold);
+        let (previous_zero, threshold) =
+            previous.zero_count_for_larger_threshold(self.zero_threshold);
         if threshold != self.zero_threshold || self.zero_count < previous_zero {
             return true;
         }
@@ -315,7 +361,10 @@ impl Hist {
         for (current, earlier) in [(&self.pos, &previous.pos), (&self.neg, &previous.neg)] {
             let current = dropped(current);
             let earlier = dropped(&reduce_buckets(earlier, previous.schema, self.schema));
-            if earlier.iter().any(|(idx, &count)| count != 0.0 && current.get(idx).is_none_or(|&c| c < count)) {
+            if earlier
+                .iter()
+                .any(|(idx, &count)| count != 0.0 && current.get(idx).is_none_or(|&c| c < count))
+            {
                 return true;
             }
         }
@@ -324,7 +373,12 @@ impl Hist {
 
     /// Same values (buckets with a zero count do not matter), as for `==` between histograms.
     pub fn equals(&self, other: &Hist) -> bool {
-        let strip = |b: &Buckets| -> Vec<(i32, u64)> { b.iter().filter(|(_, &c)| c != 0.0).map(|(&i, &c)| (i, c.to_bits())).collect() };
+        let strip = |b: &Buckets| -> Vec<(i32, u64)> {
+            b.iter()
+                .filter(|(_, &c)| c != 0.0)
+                .map(|(&i, &c)| (i, c.to_bits()))
+                .collect()
+        };
         self.schema == other.schema
             && self.zero_threshold == other.zero_threshold
             && self.zero_count == other.zero_count
@@ -348,11 +402,21 @@ impl Hist {
         }
         let mut buckets = self.all_buckets();
         let forward = self.sum.is_nan() || q < 0.5;
-        let mut rank = if forward { q * self.count } else { (1.0 - q) * self.count };
+        let mut rank = if forward {
+            q * self.count
+        } else {
+            (1.0 - q) * self.count
+        };
         if !forward {
             buckets.reverse();
         }
-        let mut bucket = Bucket { lower: 0.0, upper: 0.0, lower_inclusive: false, upper_inclusive: false, count: 0.0 };
+        let mut bucket = Bucket {
+            lower: 0.0,
+            upper: 0.0,
+            lower_inclusive: false,
+            upper_inclusive: false,
+            count: 0.0,
+        };
         let mut count = 0.0;
         for b in &buckets {
             bucket = *b;
@@ -375,7 +439,11 @@ impl Hist {
             count = self.count;
         }
         if count < rank {
-            return if self.sum.is_nan() { f64::NAN } else { bucket.upper };
+            return if self.sum.is_nan() {
+                f64::NAN
+            } else {
+                bucket.upper
+            };
         }
         if forward {
             rank -= count - bucket.count;
@@ -436,16 +504,29 @@ impl Hist {
                 }
             };
             let exponential = |v: f64, rank: f64| {
-                let (log_lower, log_upper, log_v) = (b.lower.abs().log2(), b.upper.abs().log2(), v.abs().log2());
-                let fraction = if v > 0.0 { (log_v - log_lower) / (log_upper - log_lower) } else { 1.0 - ((log_v - log_upper) / (log_lower - log_upper)) };
+                let (log_lower, log_upper, log_v) =
+                    (b.lower.abs().log2(), b.upper.abs().log2(), v.abs().log2());
+                let fraction = if v > 0.0 {
+                    (log_v - log_lower) / (log_upper - log_lower)
+                } else {
+                    1.0 - ((log_v - log_upper) / (log_lower - log_upper))
+                };
                 rank + b.count * fraction
             };
             if !lower_set && b.lower < lower && b.upper > lower {
-                lower_rank = if zero_bucket { linear(lower, rank) } else { exponential(lower, rank) };
+                lower_rank = if zero_bucket {
+                    linear(lower, rank)
+                } else {
+                    exponential(lower, rank)
+                };
                 lower_set = true;
             }
             if !upper_set && b.lower < upper && b.upper > upper {
-                upper_rank = if zero_bucket { linear(upper, rank) } else { exponential(upper, rank) };
+                upper_rank = if zero_bucket {
+                    linear(upper, rank)
+                } else {
+                    exponential(upper, rank)
+                };
                 upper_set = true;
             }
             if lower_set && upper_set {
@@ -502,7 +583,15 @@ mod tests {
 
     fn hist(schema: i32, zero: f64, pos: &[(i32, f64)], neg: &[(i32, f64)]) -> Hist {
         let count = zero + pos.iter().chain(neg).map(|b| b.1).sum::<f64>();
-        Hist { schema, zero_threshold: DEFAULT_ZERO_THRESHOLD, zero_count: zero, count, sum: 0.0, pos: pos.iter().copied().collect(), neg: neg.iter().copied().collect() }
+        Hist {
+            schema,
+            zero_threshold: DEFAULT_ZERO_THRESHOLD,
+            zero_count: zero,
+            count,
+            sum: 0.0,
+            pos: pos.iter().copied().collect(),
+            neg: neg.iter().copied().collect(),
+        }
     }
 
     #[test]
@@ -526,20 +615,42 @@ mod tests {
     fn otlp_buckets_shift_by_one_and_merge_when_the_scale_is_too_fine() {
         // OTLP bucket 0 covers (1, 2^(2^-s)]; Prometheus counts that as index 1.
         let h = Hist::from_otlp(0, 0.0, 1.0, 6.0, 1.0, 0, &[2.0, 3.0], 0, &[]).unwrap();
-        assert_eq!(h.pos.iter().map(|(&i, &c)| (i, c)).collect::<Vec<_>>(), [(1, 2.0), (2, 3.0)]);
+        assert_eq!(
+            h.pos.iter().map(|(&i, &c)| (i, c)).collect::<Vec<_>>(),
+            [(1, 2.0), (2, 3.0)]
+        );
         // Scale 9 is reduced to schema 8: buckets 0 and 1 of scale 9 become index 1 of schema 8.
         let h = Hist::from_otlp(9, 0.0, 0.0, 5.0, 0.0, 0, &[2.0, 3.0], 0, &[]).unwrap();
-        assert_eq!((h.schema, h.pos.iter().map(|(&i, &c)| (i, c)).collect::<Vec<_>>()), (8, vec![(1, 5.0)]));
+        assert_eq!(
+            (
+                h.schema,
+                h.pos.iter().map(|(&i, &c)| (i, c)).collect::<Vec<_>>()
+            ),
+            (8, vec![(1, 5.0)])
+        );
         assert!(Hist::from_otlp(-5, 0.0, 0.0, 0.0, 0.0, 0, &[], 0, &[]).is_none());
-        assert_eq!(Hist::from_otlp(0, 0.0, 0.0, 0.0, 0.0, 0, &[], 0, &[]).unwrap().zero_threshold, DEFAULT_ZERO_THRESHOLD);
-        assert_eq!(Hist::from_otlp(0, 0.001, 0.0, 0.0, 0.0, 0, &[], 0, &[]).unwrap().zero_threshold, 0.001);
+        assert_eq!(
+            Hist::from_otlp(0, 0.0, 0.0, 0.0, 0.0, 0, &[], 0, &[])
+                .unwrap()
+                .zero_threshold,
+            DEFAULT_ZERO_THRESHOLD
+        );
+        assert_eq!(
+            Hist::from_otlp(0, 0.001, 0.0, 0.0, 0.0, 0, &[], 0, &[])
+                .unwrap()
+                .zero_threshold,
+            0.001
+        );
     }
 
     #[test]
     fn resolution_reduction_merges_neighbouring_buckets() {
         let mut h = hist(1, 0.0, &[(1, 1.0), (2, 2.0), (3, 4.0), (4, 8.0)], &[]);
         h.reduce_resolution(0);
-        assert_eq!(h.pos.iter().map(|(&i, &c)| (i, c)).collect::<Vec<_>>(), [(1, 3.0), (2, 12.0)]);
+        assert_eq!(
+            h.pos.iter().map(|(&i, &c)| (i, c)).collect::<Vec<_>>(),
+            [(1, 3.0), (2, 12.0)]
+        );
         assert_eq!(h.schema, 0);
     }
 
@@ -550,12 +661,21 @@ mod tests {
         a.add(&b);
         assert_eq!(a.schema, 0);
         assert_eq!(a.zero_count, 3.0);
-        assert_eq!(a.pos.iter().map(|(&i, &c)| (i, c)).collect::<Vec<_>>(), [(1, 8.0)]);
-        assert_eq!(a.neg.iter().map(|(&i, &c)| (i, c)).collect::<Vec<_>>(), [(1, 1.0)]);
+        assert_eq!(
+            a.pos.iter().map(|(&i, &c)| (i, c)).collect::<Vec<_>>(),
+            [(1, 8.0)]
+        );
+        assert_eq!(
+            a.neg.iter().map(|(&i, &c)| (i, c)).collect::<Vec<_>>(),
+            [(1, 1.0)]
+        );
         assert_eq!(a.count, 4.0 + 8.0);
         a.sub(&b);
         assert_eq!(a.zero_count, 1.0);
-        assert_eq!(a.pos.iter().map(|(&i, &c)| (i, c)).collect::<Vec<_>>(), [(1, 3.0)]);
+        assert_eq!(
+            a.pos.iter().map(|(&i, &c)| (i, c)).collect::<Vec<_>>(),
+            [(1, 3.0)]
+        );
         // A wider zero threshold swallows the buckets it covers.
         let mut wide = hist(0, 0.0, &[(1, 4.0)], &[]);
         wide.zero_threshold = 2.0;
@@ -563,7 +683,10 @@ mod tests {
         c.add(&wide);
         assert_eq!(c.zero_threshold, 2.0);
         assert_eq!(c.zero_count, 1.0 + 2.0);
-        assert_eq!(c.pos.iter().map(|(&i, &c)| (i, c)).collect::<Vec<_>>(), [(2, 3.0)]);
+        assert_eq!(
+            c.pos.iter().map(|(&i, &c)| (i, c)).collect::<Vec<_>>(),
+            [(2, 3.0)]
+        );
     }
 
     #[test]
@@ -619,7 +742,8 @@ mod tests {
         assert_eq!(h.avg(), 20.0 / 8.0);
         // Observations at the geometric mean of their bucket: sqrt(2) and sqrt(8).
         let mean = 2.5;
-        let expected = (4.0 * (2f64.sqrt() - mean).powi(2) + 4.0 * (8f64.sqrt() - mean).powi(2)) / 8.0;
+        let expected =
+            (4.0 * (2f64.sqrt() - mean).powi(2) + 4.0 * (8f64.sqrt() - mean).powi(2)) / 8.0;
         assert!((h.variance() - expected).abs() < 1e-12);
     }
 }

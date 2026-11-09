@@ -29,7 +29,11 @@ impl Range {
     /// The aligned range for a request: the start rounds down and the end up to the step.
     pub fn new(start_ns: i64, end_ns: i64, step_ns: i64) -> ApiResult<Range> {
         if step_ns <= 0 || end_ns <= start_ns {
-            return Err(ApiError::new(400, "bad_data", "end must be after start and the step positive"));
+            return Err(ApiError::new(
+                400,
+                "bad_data",
+                "end must be after start and the step positive",
+            ));
         }
         // Like Tempo: the start rounds down and then moves back one more step, so the first
         // sample is labelled with the aligned start.
@@ -43,7 +47,11 @@ impl Range {
                 format!("exceeded maximum resolution of {MAX_STEPS} points per series; try increasing the step"),
             ));
         }
-        Ok(Range { start_ns: start, step_ns, steps: steps as usize })
+        Ok(Range {
+            start_ns: start,
+            step_ns,
+            steps: steps as usize,
+        })
     }
 
     pub fn end_ns(&self) -> i64 {
@@ -128,14 +136,27 @@ struct Cell {
 
 impl Cell {
     fn new() -> Cell {
-        Cell { count: 0.0, sum: 0.0, min: f64::NAN, max: f64::NAN }
+        Cell {
+            count: 0.0,
+            sum: 0.0,
+            min: f64::NAN,
+            max: f64::NAN,
+        }
     }
 
     fn observe(&mut self, v: f64) {
         self.count += 1.0;
         self.sum += v;
-        self.min = if self.min.is_nan() { v } else { self.min.min(v) };
-        self.max = if self.max.is_nan() { v } else { self.max.max(v) };
+        self.min = if self.min.is_nan() {
+            v
+        } else {
+            self.min.min(v)
+        };
+        self.max = if self.max.is_nan() {
+            v
+        } else {
+            self.max.max(v)
+        };
     }
 }
 
@@ -186,7 +207,11 @@ fn log2_quantile(p: f64, buckets: &[(f64, f64)]) -> Option<f64> {
     }
     let interp = (max_samples - seen) / buckets[at].1;
     let max_v = buckets[at].0.log2();
-    let min_v = if at > 0 { buckets[at - 1].0.log2() } else { max_v - 1.0 };
+    let min_v = if at > 0 {
+        buckets[at - 1].0.log2()
+    } else {
+        max_v - 1.0
+    };
     Some(2f64.powf(min_v + (max_v - min_v) * interp))
 }
 
@@ -213,8 +238,20 @@ fn evaluate_first_stage(
         MetricsFn::AvgOverTime(a) => (Kind::Avg, Some(a), Vec::new()),
         MetricsFn::HistogramOverTime(a) => (Kind::Histogram, Some(a), Vec::new()),
         MetricsFn::QuantileOverTime(a, qs) => (Kind::Quantile, Some(a), qs.clone()),
-        MetricsFn::Compare { filter, top_n, start, end } => {
-            return compare(engine, storage, query, filter, (*top_n, *start, *end), range);
+        MetricsFn::Compare {
+            filter,
+            top_n,
+            start,
+            end,
+        } => {
+            return compare(
+                engine,
+                storage,
+                query,
+                filter,
+                (*top_n, *start, *end),
+                range,
+            );
         }
     };
     let name = match &query.agg.func {
@@ -230,25 +267,52 @@ fn evaluate_first_stage(
     let bucketed = matches!(kind, Kind::Histogram | Kind::Quantile);
     let from = Utc.timestamp_nanos(range.start_ns);
     let to = Utc.timestamp_nanos(range.end_ns() + 1_000_000);
-    let traces = model::load(engine, storage, from, to, &super::pushdown::pipeline_requirements(&query.pipeline), super::pushdown::metrics_needs(query))?;
+    let traces = model::load(
+        engine,
+        storage,
+        from,
+        to,
+        &super::pushdown::pipeline_requirements(&query.pipeline),
+        super::pushdown::metrics_needs(query),
+    )?;
     let regexes = Regexes::default();
     let value_field = attr.map(|a| Field::Attribute(a.clone()));
     let is_duration = attr.is_some_and(|a| a.intrinsic == Some(Intrinsic::Duration));
     let mut series: BTreeMap<String, Bucketed> = BTreeMap::new();
     for trace in &traces {
-        let eval = Eval { trace, regexes: &regexes };
+        let eval = Eval {
+            trace,
+            regexes: &regexes,
+        };
         let groups = eval.pipeline(&query.pipeline, eval.input())?;
         let mut spans: Vec<usize> = groups.into_iter().flatten().collect();
         spans.sort_unstable();
         spans.dedup();
         for i in spans {
-            observe(&eval, trace, i, &range, &query.agg.by, value_field.as_ref(), is_duration, bucketed, kind, &mut series);
+            observe(
+                &eval,
+                trace,
+                i,
+                &range,
+                &query.agg.by,
+                value_field.as_ref(),
+                is_duration,
+                bucketed,
+                kind,
+                &mut series,
+            );
         }
     }
 
     let mut out = Vec::new();
     if series.is_empty() && query.agg.by.is_empty() && !bucketed {
-        series.insert(String::new(), Bucketed { labels: Vec::new(), cells: BTreeMap::new() });
+        series.insert(
+            String::new(),
+            Bucketed {
+                labels: Vec::new(),
+                cells: BTreeMap::new(),
+            },
+        );
     }
     let by_names: Vec<String> = query.agg.by.iter().map(attribute_name).collect();
     for (_, s) in series {
@@ -272,7 +336,10 @@ fn evaluate_first_stage(
                 for (bits, cells) in &s.cells {
                     let mut l = labels.clone();
                     l.push(("__bucket".into(), Val::Float(f64::from_bits(*bits))));
-                    out.push(Series { labels: l, samples: (0..steps).map(|i| Some(cell_of(cells, i).count)).collect() });
+                    out.push(Series {
+                        labels: l,
+                        samples: (0..steps).map(|i| Some(cell_of(cells, i).count)).collect(),
+                    });
                 }
             }
             Kind::Quantile => {
@@ -334,7 +401,9 @@ fn observe(
     series: &mut BTreeMap<String, Bucketed>,
 ) {
     let span = &trace.spans[i];
-    let Some(step) = range.interval(span.start_ns) else { return };
+    let Some(step) = range.interval(span.start_ns) else {
+        return;
+    };
     // The value of the aggregated attribute (durations in seconds); `None` skips the span.
     let value = match value_field {
         None => Some(0.0),
@@ -349,7 +418,9 @@ fn observe(
         if raw.is_nan() || raw < 2.0 {
             return;
         }
-        let Some(upper) = log2_bucket(raw as u64) else { return };
+        let Some(upper) = log2_bucket(raw as u64) else {
+            return;
+        };
         // A duration's bucket is reported in seconds.
         Some(if is_duration { upper / 1e9 } else { upper })
     } else {
@@ -358,10 +429,27 @@ fn observe(
     if matches!(kind, Kind::Min | Kind::Max | Kind::Sum | Kind::Avg) && value.is_none() {
         return;
     }
-    let labels: Vec<Option<Val>> = by.iter().map(|a| eval.field(&Field::Attribute(a.clone()), i).into_iter().next()).collect();
-    let key = labels.iter().map(value_key).collect::<Vec<_>>().join("\u{1f}");
-    let entry = series.entry(key).or_insert_with(|| Bucketed { labels, cells: BTreeMap::new() });
-    let cells = entry.cells.entry(bucket.map_or(0, f64::to_bits)).or_insert_with(|| vec![Cell::new(); range.steps]);
+    let labels: Vec<Option<Val>> = by
+        .iter()
+        .map(|a| {
+            eval.field(&Field::Attribute(a.clone()), i)
+                .into_iter()
+                .next()
+        })
+        .collect();
+    let key = labels
+        .iter()
+        .map(value_key)
+        .collect::<Vec<_>>()
+        .join("\u{1f}");
+    let entry = series.entry(key).or_insert_with(|| Bucketed {
+        labels,
+        cells: BTreeMap::new(),
+    });
+    let cells = entry
+        .cells
+        .entry(bucket.map_or(0, f64::to_bits))
+        .or_insert_with(|| vec![Cell::new(); range.steps]);
     cells[step].observe(value.unwrap_or(0.0));
 }
 
@@ -370,19 +458,46 @@ fn observe(
 fn compared_attributes(trace: &Trace, i: usize) -> Vec<(String, Val)> {
     let s = &trace.spans[i];
     let mut out = vec![
-        ("instrumentation:name".to_string(), Val::Str(s.scope_name.clone())),
-        ("instrumentation:version".to_string(), Val::Str(s.scope_version.clone())),
+        (
+            "instrumentation:name".to_string(),
+            Val::Str(s.scope_name.clone()),
+        ),
+        (
+            "instrumentation:version".to_string(),
+            Val::Str(s.scope_version.clone()),
+        ),
         ("kind".to_string(), Val::Kind(super::value::kind_of(s.kind))),
         ("name".to_string(), Val::Str(s.name.clone())),
         ("rootName".to_string(), Val::Str(trace.root_name.clone())),
-        ("rootServiceName".to_string(), Val::Str(trace.root_service.clone())),
-        ("status".to_string(), Val::Status(super::value::status_of(s.status))),
-        ("statusMessage".to_string(), Val::Str(s.status_message.clone())),
+        (
+            "rootServiceName".to_string(),
+            Val::Str(trace.root_service.clone()),
+        ),
+        (
+            "status".to_string(),
+            Val::Status(super::value::status_of(s.status)),
+        ),
+        (
+            "statusMessage".to_string(),
+            Val::Str(s.status_message.clone()),
+        ),
         ("span:childCount".to_string(), Val::Int(s.children as i64)),
     ];
-    out.extend(s.resource().iter().map(|(k, v)| (format!("resource.{k}"), v.clone())));
-    out.extend(s.span_attrs().iter().map(|(k, v)| (format!("span.{k}"), v.clone())));
-    out.extend(s.scope_attrs().iter().map(|(k, v)| (format!("instrumentation.{k}"), v.clone())));
+    out.extend(
+        s.resource()
+            .iter()
+            .map(|(k, v)| (format!("resource.{k}"), v.clone())),
+    );
+    out.extend(
+        s.span_attrs()
+            .iter()
+            .map(|(k, v)| (format!("span.{k}"), v.clone())),
+    );
+    out.extend(
+        s.scope_attrs()
+            .iter()
+            .map(|(k, v)| (format!("instrumentation.{k}"), v.clone())),
+    );
     // Durations are left out, like Tempo.
     out.retain(|(_, v)| !matches!(v, Val::Dur(_)));
     out
@@ -400,7 +515,11 @@ fn compare(
     range: Range,
 ) -> ApiResult<Vec<Series>> {
     if !(1..=1000).contains(&top_n) {
-        return Err(ApiError::new(400, "bad_data", "compare() top number of values must be an integer between 1 and 1000"));
+        return Err(ApiError::new(
+            400,
+            "bad_data",
+            "compare() top number of values must be an integer between 1 and 1000",
+        ));
     }
     type Counts = BTreeMap<String, BTreeMap<String, (Val, Vec<f64>)>>;
     let mut values: [Counts; 2] = [Counts::new(), Counts::new()];
@@ -415,51 +534,87 @@ fn compare(
     )?;
     let regexes = Regexes::default();
     for trace in &traces {
-        let eval = Eval { trace, regexes: &regexes };
-        let mut spans: Vec<usize> = eval.pipeline(&query.pipeline, eval.input())?.into_iter().flatten().collect();
+        let eval = Eval {
+            trace,
+            regexes: &regexes,
+        };
+        let mut spans: Vec<usize> = eval
+            .pipeline(&query.pipeline, eval.input())?
+            .into_iter()
+            .flatten()
+            .collect();
         spans.sort_unstable();
         spans.dedup();
         for i in spans {
             let span = &trace.spans[i];
-            let Some(step) = range.interval(span.start_ns) else { continue };
-            let in_window = (sel_start <= 0 || sel_end <= 0) || (span.start_ns > sel_start && span.start_ns <= sel_end);
+            let Some(step) = range.interval(span.start_ns) else {
+                continue;
+            };
+            let in_window = (sel_start <= 0 || sel_end <= 0)
+                || (span.start_ns > sel_start && span.start_ns <= sel_end);
             let side = usize::from(in_window && eval.field(filter, i).iter().any(Val::is_true));
             for (name, value) in compared_attributes(trace, i) {
-                let counts = values[side].entry(name.clone()).or_default().entry(value_key(&Some(value.clone()))).or_insert_with(|| (value, vec![0.0; range.steps]));
+                let counts = values[side]
+                    .entry(name.clone())
+                    .or_default()
+                    .entry(value_key(&Some(value.clone())))
+                    .or_insert_with(|| (value, vec![0.0; range.steps]));
                 counts.1[step] += 1.0;
-                totals[side].entry(name).or_insert_with(|| vec![0.0; range.steps])[step] += 1.0;
+                totals[side]
+                    .entry(name)
+                    .or_insert_with(|| vec![0.0; range.steps])[step] += 1.0;
             }
         }
     }
     let mut out = Vec::new();
     let mut too_many: BTreeMap<String, ()> = BTreeMap::new();
-    for (side, (meta, meta_total)) in [("baseline", "baseline_total"), ("selection", "selection_total")].into_iter().enumerate() {
+    for (side, (meta, meta_total)) in [
+        ("baseline", "baseline_total"),
+        ("selection", "selection_total"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
         for (attr, by_value) in &values[side] {
             let mut ranked: Vec<&(Val, Vec<f64>)> = by_value.values().collect();
             ranked.sort_by(|a, b| {
                 let (x, y): (f64, f64) = (a.1.iter().sum(), b.1.iter().sum());
-                y.partial_cmp(&x).unwrap_or(std::cmp::Ordering::Equal).then_with(|| format!("{:?}", a.0).cmp(&format!("{:?}", b.0)))
+                y.partial_cmp(&x)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+                    .then_with(|| format!("{:?}", a.0).cmp(&format!("{:?}", b.0)))
             });
             if ranked.len() > top_n as usize {
                 too_many.insert(attr.clone(), ());
             }
             for (value, counts) in ranked.into_iter().take(top_n as usize) {
                 out.push(Series {
-                    labels: vec![("__meta_type".into(), Val::Str(meta.into())), (attr.clone(), value.clone())],
+                    labels: vec![
+                        ("__meta_type".into(), Val::Str(meta.into())),
+                        (attr.clone(), value.clone()),
+                    ],
                     samples: counts.iter().map(|c| Some(*c)).collect(),
                 });
             }
         }
         for (attr, counts) in &totals[side] {
             out.push(Series {
-                labels: vec![("__meta_type".into(), Val::Str(meta_total.into())), (attr.clone(), Val::Str("nil".into()))],
+                labels: vec![
+                    ("__meta_type".into(), Val::Str(meta_total.into())),
+                    (attr.clone(), Val::Str("nil".into())),
+                ],
                 samples: counts.iter().map(|c| Some(*c)).collect(),
             });
         }
     }
     for (attr, ()) in too_many {
         out.push(Series {
-            labels: vec![("__meta_error".into(), Val::Str("__too_many_values__".into())), (attr, Val::Str("nil".into()))],
+            labels: vec![
+                (
+                    "__meta_error".into(),
+                    Val::Str("__too_many_values__".into()),
+                ),
+                (attr, Val::Str("nil".into())),
+            ],
             samples: Vec::new(),
         });
     }
@@ -467,7 +622,12 @@ fn compare(
 }
 
 /// Evaluates a metrics query: one function with its second stages, or arithmetic over several.
-pub fn evaluate(engine: &QueryEngine, storage: &Storage, query: &QueryKind, range: Range) -> ApiResult<Vec<Series>> {
+pub fn evaluate(
+    engine: &QueryEngine,
+    storage: &Storage,
+    query: &QueryKind,
+    range: Range,
+) -> ApiResult<Vec<Series>> {
     match query {
         QueryKind::Metrics(mp) => leaf(engine, storage, mp, range),
         QueryKind::MetricsMath { expr, second } => {
@@ -478,19 +638,42 @@ pub fn evaluate(engine: &QueryEngine, storage: &Storage, query: &QueryKind, rang
     }
 }
 
-fn leaf(engine: &QueryEngine, storage: &Storage, mp: &MetricsPipeline, range: Range) -> ApiResult<Vec<Series>> {
+fn leaf(
+    engine: &QueryEngine,
+    storage: &Storage,
+    mp: &MetricsPipeline,
+    range: Range,
+) -> ApiResult<Vec<Series>> {
     let series = evaluate_first_stage(engine, storage, mp, range)?;
     Ok(second_stages(series, &mp.second, range.steps))
 }
 
-fn expression(engine: &QueryEngine, storage: &Storage, expr: &MetricsExpr, range: Range) -> ApiResult<Vec<Series>> {
+fn expression(
+    engine: &QueryEngine,
+    storage: &Storage,
+    expr: &MetricsExpr,
+    range: Range,
+) -> ApiResult<Vec<Series>> {
     match expr {
         MetricsExpr::Pipeline(mp) => leaf(engine, storage, mp, range),
-        MetricsExpr::Scalar { op, value, expr, scalar_on_left } => {
+        MetricsExpr::Scalar {
+            op,
+            value,
+            expr,
+            scalar_on_left,
+        } => {
             let mut series = expression(engine, storage, expr, range)?;
             for s in &mut series {
                 for v in &mut s.samples {
-                    *v = v.map(|x| if *scalar_on_left { arithmetic(*op, *value, x) } else { arithmetic(*op, x, *value) }).filter(|x| !x.is_nan());
+                    *v = v
+                        .map(|x| {
+                            if *scalar_on_left {
+                                arithmetic(*op, *value, x)
+                            } else {
+                                arithmetic(*op, x, *value)
+                            }
+                        })
+                        .filter(|x| !x.is_nan());
                 }
             }
             Ok(series)
@@ -524,7 +707,11 @@ fn op_text(op: Op) -> &'static str {
 
 /// What tells two series apart when combining: their labels without the metric name.
 fn match_key(s: &Series) -> Vec<(String, String)> {
-    s.labels.iter().filter(|(k, _)| k != "__name__").map(|(k, v)| (k.clone(), format!("{v:?}"))).collect()
+    s.labels
+        .iter()
+        .filter(|(k, _)| k != "__name__")
+        .map(|(k, v)| (k.clone(), format!("{v:?}")))
+        .collect()
 }
 
 fn name_of(s: &Series) -> Option<&str> {
@@ -537,28 +724,55 @@ fn name_of(s: &Series) -> Option<&str> {
 /// Combines two sets like Tempo: series pair up by labels, and a series without labels pairs with
 /// every series of the other side.
 fn binary(op: Op, lhs: Vec<Series>, rhs: Vec<Series>) -> Vec<Series> {
-    let keyed = |set: &[Series]| -> BTreeMap<Vec<(String, String)>, usize> { set.iter().enumerate().map(|(i, s)| (match_key(s), i)).collect() };
+    let keyed = |set: &[Series]| -> BTreeMap<Vec<(String, String)>, usize> {
+        set.iter()
+            .enumerate()
+            .map(|(i, s)| (match_key(s), i))
+            .collect()
+    };
     let (lk, rk) = (keyed(&lhs), keyed(&rhs));
     let none = Vec::new();
-    let target: Vec<Vec<(String, String)>> = if rk.contains_key(&none) { lk.keys().cloned().collect() } else { rk.keys().cloned().collect() };
+    let target: Vec<Vec<(String, String)>> = if rk.contains_key(&none) {
+        lk.keys().cloned().collect()
+    } else {
+        rk.keys().cloned().collect()
+    };
     let mut out = Vec::new();
     for key in target {
-        let (Some(&li), Some(&ri)) = (lk.get(&key).or_else(|| lk.get(&none)), rk.get(&key).or_else(|| rk.get(&none))) else {
+        let (Some(&li), Some(&ri)) = (
+            lk.get(&key).or_else(|| lk.get(&none)),
+            rk.get(&key).or_else(|| rk.get(&none)),
+        ) else {
             continue;
         };
         let (l, r) = (&lhs[li], &rhs[ri]);
         let n = l.samples.len().min(r.samples.len());
         let samples = (0..n)
-            .map(|i| Some(arithmetic(op, l.samples[i].unwrap_or(f64::NAN), r.samples[i].unwrap_or(f64::NAN))).filter(|x| !x.is_nan()))
+            .map(|i| {
+                Some(arithmetic(
+                    op,
+                    l.samples[i].unwrap_or(f64::NAN),
+                    r.samples[i].unwrap_or(f64::NAN),
+                ))
+                .filter(|x| !x.is_nan())
+            })
             .collect();
-        let mut labels: Vec<(String, Val)> = l.labels.iter().filter(|(k, _)| k != "__name__").cloned().collect();
+        let mut labels: Vec<(String, Val)> = l
+            .labels
+            .iter()
+            .filter(|(k, _)| k != "__name__")
+            .cloned()
+            .collect();
         for (k, v) in &r.labels {
             if k != "__name__" && !labels.iter().any(|(name, _)| name == k) {
                 labels.push((k.clone(), v.clone()));
             }
         }
         if let (Some(ln), Some(rn)) = (name_of(l), name_of(r)) {
-            labels.push(("__name__".into(), Val::Str(format!("({ln} {} {rn})", op_text(op)))));
+            labels.push((
+                "__name__".into(),
+                Val::Str(format!("({ln} {} {rn})", op_text(op))),
+            ));
         }
         out.push(Series { labels, samples });
     }
@@ -620,13 +834,41 @@ fn top(series: Vec<Series>, n: i64, steps: usize, highest: bool) -> Vec<Series> 
     if series.len() <= n {
         return series;
     }
-    let keys: Vec<Vec<String>> = series.iter().map(|s| s.labels.iter().filter(|(k, _)| k != "__name__").map(|(_, v)| label_text(v)).collect()).collect();
+    let keys: Vec<Vec<String>> = series
+        .iter()
+        .map(|s| {
+            s.labels
+                .iter()
+                .filter(|(k, _)| k != "__name__")
+                .map(|(_, v)| label_text(v))
+                .collect()
+        })
+        .collect();
     let mut kept: Vec<Vec<Option<f64>>> = vec![vec![None; steps]; series.len()];
     for step in 0..steps {
-        let mut at: Vec<(usize, f64)> = series.iter().enumerate().filter_map(|(i, s)| Some((i, s.samples.get(step).copied().flatten().filter(|x| !x.is_nan())?))).collect();
+        let mut at: Vec<(usize, f64)> = series
+            .iter()
+            .enumerate()
+            .filter_map(|(i, s)| {
+                Some((
+                    i,
+                    s.samples
+                        .get(step)
+                        .copied()
+                        .flatten()
+                        .filter(|x| !x.is_nan())?,
+                ))
+            })
+            .collect();
         at.sort_by(|a, b| {
-            let by_value = if highest { b.1.partial_cmp(&a.1) } else { a.1.partial_cmp(&b.1) };
-            by_value.unwrap_or(std::cmp::Ordering::Equal).then_with(|| keys[a.0].cmp(&keys[b.0]))
+            let by_value = if highest {
+                b.1.partial_cmp(&a.1)
+            } else {
+                a.1.partial_cmp(&b.1)
+            };
+            by_value
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| keys[a.0].cmp(&keys[b.0]))
         });
         for (i, v) in at.into_iter().take(n) {
             kept[i][step] = Some(v);
@@ -636,7 +878,10 @@ fn top(series: Vec<Series>, n: i64, steps: usize, highest: bool) -> Vec<Series> 
         .into_iter()
         .zip(kept)
         .filter(|(_, samples)| samples.iter().any(Option::is_some))
-        .map(|(s, samples)| Series { labels: s.labels, samples })
+        .map(|(s, samples)| Series {
+            labels: s.labels,
+            samples,
+        })
         .collect()
 }
 
@@ -647,7 +892,10 @@ mod tests {
     const SEC: i64 = 1_000_000_000;
 
     fn series(name: &str, samples: &[Option<f64>]) -> Series {
-        Series { labels: vec![("svc".into(), Val::Str(name.into()))], samples: samples.to_vec() }
+        Series {
+            labels: vec![("svc".into(), Val::Str(name.into()))],
+            samples: samples.to_vec(),
+        }
     }
 
     #[test]
@@ -702,15 +950,29 @@ mod tests {
 
     #[test]
     fn filters_drop_samples_and_empty_series() {
-        let out = filter(vec![series("a", &[Some(1.0), Some(5.0)]), series("b", &[Some(1.0), None])], Op::Gt, &Static::Int(3));
+        let out = filter(
+            vec![
+                series("a", &[Some(1.0), Some(5.0)]),
+                series("b", &[Some(1.0), None]),
+            ],
+            Op::Gt,
+            &Static::Int(3),
+        );
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].samples, vec![None, Some(5.0)]);
     }
 
     #[test]
     fn binary_pairs_series_by_labels_and_fans_out_unlabelled_ones() {
-        let named = |n: &str, v: f64| Series { labels: vec![("__name__".into(), Val::Str(n.into()))], samples: vec![Some(v)] };
-        let out = binary(Op::Add, vec![named("rate", 2.0)], vec![named("count_over_time", 3.0)]);
+        let named = |n: &str, v: f64| Series {
+            labels: vec![("__name__".into(), Val::Str(n.into()))],
+            samples: vec![Some(v)],
+        };
+        let out = binary(
+            Op::Add,
+            vec![named("rate", 2.0)],
+            vec![named("count_over_time", 3.0)],
+        );
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].samples, vec![Some(5.0)]);
         assert_eq!(name_of(&out[0]), Some("(rate + count_over_time)"));
@@ -719,7 +981,12 @@ mod tests {
         assert_eq!(out.len(), 2);
         assert_eq!(out[0].samples, vec![Some(2.0)]);
         assert_eq!(out[1].samples, vec![Some(4.0)]);
-        assert!(binary(Op::Div, vec![series("a", &[Some(1.0)])], vec![series("b", &[Some(1.0)])]).is_empty());
+        assert!(binary(
+            Op::Div,
+            vec![series("a", &[Some(1.0)])],
+            vec![series("b", &[Some(1.0)])]
+        )
+        .is_empty());
         assert!(arithmetic(Op::Div, 1.0, 0.0).is_nan());
     }
 }

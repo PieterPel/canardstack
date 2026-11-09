@@ -2,10 +2,12 @@
 
 use super::*;
 use crate::db::sql::{quote, time_predicate};
-use crate::query::prom_labels::{labels_from_row, INSTANCE_SQL, JOB_SQL, SERIES_COLUMNS};
-use crate::query::prom_names::{le_text, prom_name, stored_name_candidates, Kind, ESCAPED_NAME_SQL, HISTOGRAM_COMPONENTS};
-use crate::signal::StorageSignal;
 use crate::query::native_histogram::Hist;
+use crate::query::prom_labels::{labels_from_row, INSTANCE_SQL, JOB_SQL, SERIES_COLUMNS};
+use crate::query::prom_names::{
+    le_text, prom_name, stored_name_candidates, Kind, ESCAPED_NAME_SQL, HISTOGRAM_COMPONENTS,
+};
+use crate::signal::StorageSignal;
 use chrono::{TimeZone, Utc};
 use std::sync::Arc;
 
@@ -44,7 +46,9 @@ pub(super) fn subquery_extra_ms(sq: &SubqueryExpr) -> i64 {
         Some(Offset::Pos(d)) => d.as_millis() as i64,
         _ => 0,
     };
-    let step = sq.step.map_or(DEFAULT_SUBQUERY_STEP_MS, |d| d.as_millis() as i64);
+    let step = sq
+        .step
+        .map_or(DEFAULT_SUBQUERY_STEP_MS, |d| d.as_millis() as i64);
     sq.range.as_millis() as i64 + off + step
 }
 
@@ -56,10 +60,16 @@ fn collect_with(expr: &Expr, out: &mut Vec<Req>, extra: i64) -> ApiResult<()> {
     match expr {
         Expr::VectorSelector(vs) => push_req(vs, LOOKBACK_MS + extra, out),
         Expr::MatrixSelector(ms) => push_req(&ms.vs, ms.range.as_millis() as i64 + extra, out),
-        Expr::Call(call) => call.args.args.iter().try_for_each(|a| collect_with(a, out, extra)),
+        Expr::Call(call) => call
+            .args
+            .args
+            .iter()
+            .try_for_each(|a| collect_with(a, out, extra)),
         Expr::Aggregate(agg) => {
             collect_with(&agg.expr, out, extra)?;
-            agg.param.as_ref().map_or(Ok(()), |p| collect_with(p, out, extra))
+            agg.param
+                .as_ref()
+                .map_or(Ok(()), |p| collect_with(p, out, extra))
         }
         Expr::Binary(b) => {
             collect_with(&b.lhs, out, extra)?;
@@ -245,10 +255,25 @@ pub(super) fn fetch(
                 filters.join(" AND ")
             )
         };
-        let mut parts = vec![select(StorageSignal::MetricGauge), select(StorageSignal::MetricSum)];
+        let mut parts = vec![
+            select(StorageSignal::MetricGauge),
+            select(StorageSignal::MetricSum),
+        ];
         if compiled.histogram {
-            parts.push(histogram("sum", "_sum", "NULL::DOUBLE", "", " AND sum IS NOT NULL"));
-            parts.push(histogram("count::DOUBLE", "_count", "NULL::DOUBLE", "", " AND count IS NOT NULL"));
+            parts.push(histogram(
+                "sum",
+                "_sum",
+                "NULL::DOUBLE",
+                "",
+                " AND sum IS NOT NULL",
+            ));
+            parts.push(histogram(
+                "count::DOUBLE",
+                "_count",
+                "NULL::DOUBLE",
+                "",
+                " AND count IS NOT NULL",
+            ));
             parts.push(histogram(
                 "list_sum(bucket_counts[1:i])::DOUBLE",
                 "_bucket",

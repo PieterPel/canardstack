@@ -27,10 +27,10 @@ mod native;
 mod regression;
 mod subquery;
 
-use eval::{Ev, Samples};
-use fetch::{collect, fetch, selector_key, offset_ms, Raw};
-use fetch::anchored;
 use crate::query::vector::{self, extrapolated, quantile, variance};
+use eval::{Ev, Samples};
+use fetch::anchored;
+use fetch::{collect, fetch, offset_ms, selector_key, Raw};
 
 pub const LOOKBACK_MS: i64 = 300_000;
 const MAX_SAMPLES: usize = 1_000_000;
@@ -113,13 +113,13 @@ fn unescape(name: &str) -> String {
     name.replace(DOT, ".")
 }
 
-
 /// Prometheus' strings can hold any byte, so `"\xff"` is invalid UTF-8 and it refuses it as a label
 /// name; the parser used here turns the escape into the character `ÿ`. A byte escape of 0x80 or more in
 /// a query that renames labels is therefore rejected the way Prometheus does.
 fn reject_invalid_utf8_labels(query: &str) -> ApiResult<()> {
     static ESCAPE: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
-    let escape = ESCAPE.get_or_init(|| Regex::new(r"\\x[89a-fA-F][0-9a-fA-F]").expect("static regex"));
+    let escape =
+        ESCAPE.get_or_init(|| Regex::new(r"\\x[89a-fA-F][0-9a-fA-F]").expect("static regex"));
     if (query.contains("label_replace") || query.contains("label_join")) && escape.is_match(query) {
         return Err(bad("invalid label name: it is not valid UTF-8"));
     }
@@ -155,11 +155,17 @@ mod tests {
 
     #[test]
     fn byte_escapes_that_are_not_utf8_are_rejected_in_label_functions() {
-        assert!(reject_invalid_utf8_labels(r#"label_replace(up, "\xff", "", "src", "(.*)")"#).is_err());
+        assert!(
+            reject_invalid_utf8_labels(r#"label_replace(up, "\xff", "", "src", "(.*)")"#).is_err()
+        );
         assert!(reject_invalid_utf8_labels(r#"label_join(up, "\xff", "-", "instance")"#).is_err());
-        assert!(reject_invalid_utf8_labels(r#"label_replace(up, "dst", "", "src", "(.*)")"#).is_ok());
+        assert!(
+            reject_invalid_utf8_labels(r#"label_replace(up, "dst", "", "src", "(.*)")"#).is_ok()
+        );
         assert!(reject_invalid_utf8_labels(r#"up{a="\xff"}"#).is_ok());
-        assert!(reject_invalid_utf8_labels(r#"label_replace(up, "a\x41", "", "src", "(.*)")"#).is_ok());
+        assert!(
+            reject_invalid_utf8_labels(r#"label_replace(up, "a\x41", "", "src", "(.*)")"#).is_ok()
+        );
     }
 
     #[test]

@@ -26,7 +26,9 @@ fn linear_regression(samples: Samples, intercept_ms: i64) -> Option<(f64, f64)> 
 
 impl Ev<'_> {
     pub(super) fn regression(&self, name: &str, args: &[Box<Expr>]) -> ApiResult<Value> {
-        let range = args.first().ok_or_else(|| bad(format!("{name}: missing argument")))?;
+        let range = args
+            .first()
+            .ok_or_else(|| bad(format!("{name}: missing argument")))?;
         if name == "deriv" {
             return self.windowed(range, false, &|s, _, _| {
                 linear_regression(s, s.first()?.0).map(|(slope, _)| slope)

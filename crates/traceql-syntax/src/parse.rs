@@ -9,9 +9,18 @@ use crate::lex::{intrinsic_keyword, lex, Tok, P};
 use crate::ParseError;
 
 pub fn parse(input: &str) -> crate::Result<Query> {
-    let mut p = Parser { toks: lex(input)?, i: 0, furthest: 0 };
+    let mut p = Parser {
+        toks: lex(input)?,
+        i: 0,
+        furthest: 0,
+    };
     type Alt = fn(&mut Parser) -> Option<QueryKind>;
-    let alternatives: [Alt; 4] = [Parser::root_pipeline, Parser::root_spansets, Parser::root_scalar_filter, Parser::root_metrics_math];
+    let alternatives: [Alt; 4] = [
+        Parser::root_pipeline,
+        Parser::root_spansets,
+        Parser::root_scalar_filter,
+        Parser::root_metrics_math,
+    ];
     for alt in alternatives {
         p.i = 0;
         let Some(kind) = alt(&mut p) else { continue };
@@ -27,7 +36,10 @@ pub fn parse(input: &str) -> crate::Result<Query> {
         }
     }
     let (position, tok) = &p.toks[p.furthest.min(p.toks.len() - 1)];
-    Err(ParseError { position: *position, message: format!("syntax error: unexpected {}", describe(tok)) })
+    Err(ParseError {
+        position: *position,
+        message: format!("syntax error: unexpected {}", describe(tok)),
+    })
 }
 
 fn describe(tok: &Tok) -> String {
@@ -174,7 +186,11 @@ impl Parser {
             self.bump();
             if let Some(agg) = self.metrics_agg() {
                 let second = self.second_stages();
-                return Some(QueryKind::Metrics(MetricsPipeline { pipeline, agg, second }));
+                return Some(QueryKind::Metrics(MetricsPipeline {
+                    pipeline,
+                    agg,
+                    second,
+                }));
             }
             self.i = save;
         }
@@ -195,7 +211,9 @@ impl Parser {
     }
 
     fn root_metrics_math(&mut self) -> Option<QueryKind> {
-        let Operand::Metrics(expr) = self.metrics_expr(1)? else { return None };
+        let Operand::Metrics(expr) = self.metrics_expr(1)? else {
+            return None;
+        };
         let second = self.second_stages();
         Some(QueryKind::MetricsMath { expr, second })
     }
@@ -208,9 +226,14 @@ impl Parser {
             p.expect(P::LParen)?;
             let mut hints = Vec::new();
             loop {
-                let Tok::Word(name) = p.bump() else { return None };
+                let Tok::Word(name) = p.bump() else {
+                    return None;
+                };
                 p.expect(P::Eq)?;
-                hints.push(Hint { name, value: p.static_value()? });
+                hints.push(Hint {
+                    name,
+                    value: p.static_value()?,
+                });
                 if !p.eat(P::Comma) {
                     break;
                 }
@@ -296,7 +319,12 @@ impl Parser {
             Tok::Word(w) => {
                 let intrinsic = intrinsic_keyword(&w)?;
                 self.bump();
-                Some(Attribute { scope: Scope::None, parent: false, intrinsic: Some(intrinsic), name: w })
+                Some(Attribute {
+                    scope: Scope::None,
+                    parent: false,
+                    intrinsic: Some(intrinsic),
+                    name: w,
+                })
             }
             _ => None,
         }
@@ -360,7 +388,11 @@ impl Parser {
             }
             self.bump();
             let rhs = self.spanset_expr(level + 1)?;
-            lhs = Spansets::Op { op, lhs: Box::new(lhs), rhs: Box::new(rhs) };
+            lhs = Spansets::Op {
+                op,
+                lhs: Box::new(lhs),
+                rhs: Box::new(rhs),
+            };
         }
         Some(lhs)
     }
@@ -386,7 +418,11 @@ impl Parser {
             }
             self.bump();
             let rhs = self.spanset_pipeline_expr(level + 1)?;
-            lhs = Spansets::Op { op, lhs: Box::new(lhs), rhs: Box::new(rhs) };
+            lhs = Spansets::Op {
+                op,
+                lhs: Box::new(lhs),
+                rhs: Box::new(rhs),
+            };
         }
         Some(lhs)
     }
@@ -432,11 +468,17 @@ impl Parser {
     fn field_unary(&mut self) -> Option<Field> {
         if self.eat(P::Sub) {
             let operand = self.field(4)?;
-            return Some(Field::Unary { op: Op::Sub, operand: Box::new(operand) });
+            return Some(Field::Unary {
+                op: Op::Sub,
+                operand: Box::new(operand),
+            });
         }
         if self.eat(P::Not) {
             let operand = self.field(4)?;
-            return Some(Field::Unary { op: Op::Not, operand: Box::new(operand) });
+            return Some(Field::Unary {
+                op: Op::Not,
+                operand: Box::new(operand),
+            });
         }
         self.field_primary()
     }
@@ -500,7 +542,9 @@ impl Parser {
     }
 
     fn aggregate(&mut self) -> Option<Aggregate> {
-        let Tok::Word(w) = self.peek().clone() else { return None };
+        let Tok::Word(w) = self.peek().clone() else {
+            return None;
+        };
         let op = match w.as_str() {
             "count" => AggregateOp::Count,
             "max" => AggregateOp::Max,
@@ -611,7 +655,11 @@ impl Parser {
             };
             lhs = match (&lhs, &rhs) {
                 (Scalar::Static(a), Scalar::Static(b)) => Scalar::Static(fold(op, a, b)?),
-                _ => Scalar::Binary { op, lhs: Box::new(lhs), rhs: Box::new(rhs) },
+                _ => Scalar::Binary {
+                    op,
+                    lhs: Box::new(lhs),
+                    rhs: Box::new(rhs),
+                },
             };
         }
         Some(lhs)
@@ -656,7 +704,11 @@ impl Parser {
                 self.i = save;
                 break;
             };
-            lhs = Scalar::Binary { op, lhs: Box::new(lhs), rhs: Box::new(rhs) };
+            lhs = Scalar::Binary {
+                op,
+                lhs: Box::new(lhs),
+                rhs: Box::new(rhs),
+            };
         }
         Some(lhs)
     }
@@ -677,7 +729,9 @@ impl Parser {
     }
 
     fn metrics_agg(&mut self) -> Option<MetricsAgg> {
-        let Tok::Word(w) = self.peek().clone() else { return None };
+        let Tok::Word(w) = self.peek().clone() else {
+            return None;
+        };
         self.attempt(|p| {
             p.bump();
             p.expect(P::LParen)?;
@@ -706,7 +760,9 @@ impl Parser {
                     MetricsFn::QuantileOverTime(attr, quantiles)
                 }
                 "compare" => {
-                    let Spansets::Filter(filter) = p.spanset_filter()? else { return None };
+                    let Spansets::Filter(filter) = p.spanset_filter()? else {
+                        return None;
+                    };
                     let (mut top_n, mut start, mut end) = (10, 0, 0);
                     if p.eat(P::Comma) {
                         let Tok::Int(n) = p.bump() else { return None };
@@ -718,12 +774,21 @@ impl Parser {
                             (start, end) = (s, e);
                         }
                     }
-                    MetricsFn::Compare { filter, top_n, start, end }
+                    MetricsFn::Compare {
+                        filter,
+                        top_n,
+                        start,
+                        end,
+                    }
                 }
                 _ => return None,
             };
             p.expect(P::RParen)?;
-            let by = if matches!(func, MetricsFn::Compare { .. }) { Vec::new() } else { p.by_clause()? };
+            let by = if matches!(func, MetricsFn::Compare { .. }) {
+                Vec::new()
+            } else {
+                p.by_clause()?
+            };
             Some(MetricsAgg { func, by })
         })
     }
@@ -742,10 +807,17 @@ impl Parser {
                     p.expect(P::LParen)?;
                     let Tok::Int(k) = p.bump() else { return None };
                     p.expect(P::RParen)?;
-                    return Some(if top { SecondStage::TopK(k) } else { SecondStage::BottomK(k) });
+                    return Some(if top {
+                        SecondStage::TopK(k)
+                    } else {
+                        SecondStage::BottomK(k)
+                    });
                 }
                 let op = p.cmp_op()?;
-                Some(SecondStage::Filter { op, value: p.lit_expr(1)? })
+                Some(SecondStage::Filter {
+                    op,
+                    value: p.lit_expr(1)?,
+                })
             });
             match stage {
                 Some(s) => stages.push(s),
@@ -762,7 +834,11 @@ impl Parser {
             let agg = p.metrics_agg()?;
             let second = p.second_stages();
             p.expect(P::RParen)?;
-            Some(MetricsPipeline { pipeline, agg, second })
+            Some(MetricsPipeline {
+                pipeline,
+                agg,
+                second,
+            })
         })
     }
 
@@ -809,9 +885,11 @@ fn combine(op: Op, lhs: Operand, rhs: Operand) -> Option<Operand> {
     };
     Some(match (lhs, rhs) {
         (Operand::Lit(a), Operand::Lit(b)) => Operand::Lit(fold(op, &a, &b)?),
-        (Operand::Metrics(a), Operand::Metrics(b)) => {
-            Operand::Metrics(MetricsExpr::Binary { op, lhs: Box::new(a), rhs: Box::new(b) })
-        }
+        (Operand::Metrics(a), Operand::Metrics(b)) => Operand::Metrics(MetricsExpr::Binary {
+            op,
+            lhs: Box::new(a),
+            rhs: Box::new(b),
+        }),
         (Operand::Metrics(m), Operand::Lit(s)) => Operand::Metrics(MetricsExpr::Scalar {
             op,
             value: scalar(&s)?,
@@ -831,7 +909,11 @@ fn make_binary(op: Op, lhs: Field, rhs: Field) -> Option<Field> {
     let nil_l = matches!(lhs, Field::Static(Static::Nil));
     let nil_r = matches!(rhs, Field::Static(Static::Nil));
     if !nil_l && !nil_r {
-        return Some(Field::Binary { op, lhs: Box::new(lhs), rhs: Box::new(rhs) });
+        return Some(Field::Binary {
+            op,
+            lhs: Box::new(lhs),
+            rhs: Box::new(rhs),
+        });
     }
     if nil_l && nil_r {
         return matches!(op, Op::Eq | Op::Ne).then_some(Field::Static(Static::Bool(false)));
@@ -842,7 +924,10 @@ fn make_binary(op: Op, lhs: Field, rhs: Field) -> Option<Field> {
         Op::Ne => Op::Exists,
         _ => return None,
     };
-    Some(Field::Unary { op, operand: Box::new(other) })
+    Some(Field::Unary {
+        op,
+        operand: Box::new(other),
+    })
 }
 
 fn word_static(w: &str) -> Option<Static> {
@@ -869,72 +954,152 @@ mod tests {
     use super::*;
 
     fn filter(q: &str) -> Field {
-        let QueryKind::Pipeline(p) = parse(q).unwrap().kind else { panic!("not a pipeline: {q}") };
-        let Element::Spanset(Spansets::Filter(f)) = p.elements.into_iter().next().unwrap() else { panic!("not a filter: {q}") };
+        let QueryKind::Pipeline(p) = parse(q).unwrap().kind else {
+            panic!("not a pipeline: {q}")
+        };
+        let Element::Spanset(Spansets::Filter(f)) = p.elements.into_iter().next().unwrap() else {
+            panic!("not a filter: {q}")
+        };
         f
     }
 
     fn attr(scope: Scope, parent: bool, name: &str) -> Field {
-        Field::Attribute(Attribute { scope, parent, intrinsic: None, name: name.to_string() })
+        Field::Attribute(Attribute {
+            scope,
+            parent,
+            intrinsic: None,
+            name: name.to_string(),
+        })
     }
 
     #[test]
     fn attributes_keep_their_scope_and_odd_names() {
-        assert_eq!(filter("{ .http.status }"), attr(Scope::None, false, "http.status"));
-        assert_eq!(filter("{ resource.service.name }"), attr(Scope::Resource, false, "service.name"));
+        assert_eq!(
+            filter("{ .http.status }"),
+            attr(Scope::None, false, "http.status")
+        );
+        assert_eq!(
+            filter("{ resource.service.name }"),
+            attr(Scope::Resource, false, "service.name")
+        );
         assert_eq!(filter("{ parent.span.a }"), attr(Scope::Span, true, "a"));
-        assert_eq!(filter(r#"{ span."foo bar" }"#), attr(Scope::Span, false, "foo bar"));
+        assert_eq!(
+            filter(r#"{ span."foo bar" }"#),
+            attr(Scope::Span, false, "foo bar")
+        );
         assert_eq!(filter(r#"{ ."a\"b" }"#), attr(Scope::None, false, "a\"b"));
         // `-` and `/` belong to the name when there is no space around them.
         assert_eq!(filter("{ .a-b }"), attr(Scope::None, false, "a-b"));
-        assert!(matches!(filter("{ span:duration }"), Field::Attribute(Attribute { intrinsic: Some(Intrinsic::Duration), .. })));
+        assert!(matches!(
+            filter("{ span:duration }"),
+            Field::Attribute(Attribute {
+                intrinsic: Some(Intrinsic::Duration),
+                ..
+            })
+        ));
     }
 
     #[test]
     fn field_operators_follow_tempos_precedence() {
         // && and || share one level and group to the left; comparison binds tighter than both.
-        let Field::Binary { op, lhs, .. } = filter("{ .a = 1 && .b = 2 || .c = 3 }") else { panic!() };
+        let Field::Binary { op, lhs, .. } = filter("{ .a = 1 && .b = 2 || .c = 3 }") else {
+            panic!()
+        };
         assert_eq!(op, Op::Or);
         assert!(matches!(*lhs, Field::Binary { op: Op::And, .. }));
-        let Field::Binary { op, lhs, .. } = filter("{ .a = 1 || .b = 2 && .c = 3 }") else { panic!() };
+        let Field::Binary { op, lhs, .. } = filter("{ .a = 1 || .b = 2 && .c = 3 }") else {
+            panic!()
+        };
         assert_eq!(op, Op::And);
         assert!(matches!(*lhs, Field::Binary { op: Op::Or, .. }));
         // arithmetic: * binds tighter than +, ^ groups to the right
-        let Field::Binary { op: Op::Eq, lhs, .. } = filter("{ 1 + 2 * 3 = 7 }") else { panic!() };
-        let Field::Binary { op: Op::Add, rhs, .. } = *lhs else { panic!() };
+        let Field::Binary {
+            op: Op::Eq, lhs, ..
+        } = filter("{ 1 + 2 * 3 = 7 }")
+        else {
+            panic!()
+        };
+        let Field::Binary {
+            op: Op::Add, rhs, ..
+        } = *lhs
+        else {
+            panic!()
+        };
         assert!(matches!(*rhs, Field::Binary { op: Op::Mul, .. }));
-        let Field::Binary { op: Op::Eq, lhs, .. } = filter("{ 2 ^ 3 ^ 2 = 1 }") else { panic!() };
-        let Field::Binary { op: Op::Pow, rhs, .. } = *lhs else { panic!() };
+        let Field::Binary {
+            op: Op::Eq, lhs, ..
+        } = filter("{ 2 ^ 3 ^ 2 = 1 }")
+        else {
+            panic!()
+        };
+        let Field::Binary {
+            op: Op::Pow, rhs, ..
+        } = *lhs
+        else {
+            panic!()
+        };
         assert!(matches!(*rhs, Field::Binary { op: Op::Pow, .. }));
     }
 
     #[test]
     fn nil_comparisons_become_existence_checks() {
-        assert!(matches!(filter("{ .a = nil }"), Field::Unary { op: Op::NotExists, .. }));
-        assert!(matches!(filter("{ nil != .a }"), Field::Unary { op: Op::Exists, .. }));
+        assert!(matches!(
+            filter("{ .a = nil }"),
+            Field::Unary {
+                op: Op::NotExists,
+                ..
+            }
+        ));
+        assert!(matches!(
+            filter("{ nil != .a }"),
+            Field::Unary { op: Op::Exists, .. }
+        ));
         assert_eq!(filter("{ nil = nil }"), Field::Static(Static::Bool(false)));
         assert!(parse("{ nil }").is_err() && parse("{ .a + nil = 1 }").is_err());
     }
 
     #[test]
     fn durations_and_numbers_lex_as_such() {
-        assert_eq!(filter("{ duration > 1h30m }"), Field::Binary {
-            op: Op::Gt,
-            lhs: Box::new(Field::Attribute(Attribute { scope: Scope::None, parent: false, intrinsic: Some(Intrinsic::Duration), name: "duration".into() })),
-            rhs: Box::new(Field::Static(Static::Duration(5_400_000_000_000))),
-        });
-        let Field::Binary { rhs, .. } = filter("{ .a = 1.5s }") else { panic!() };
+        assert_eq!(
+            filter("{ duration > 1h30m }"),
+            Field::Binary {
+                op: Op::Gt,
+                lhs: Box::new(Field::Attribute(Attribute {
+                    scope: Scope::None,
+                    parent: false,
+                    intrinsic: Some(Intrinsic::Duration),
+                    name: "duration".into()
+                })),
+                rhs: Box::new(Field::Static(Static::Duration(5_400_000_000_000))),
+            }
+        );
+        let Field::Binary { rhs, .. } = filter("{ .a = 1.5s }") else {
+            panic!()
+        };
         assert_eq!(*rhs, Field::Static(Static::Duration(1_500_000_000)));
-        let Field::Binary { rhs, .. } = filter("{ .a = 12 }") else { panic!() };
+        let Field::Binary { rhs, .. } = filter("{ .a = 12 }") else {
+            panic!()
+        };
         assert_eq!(*rhs, Field::Static(Static::Int(12)));
         assert!(parse("{ .a = 100000000000000000000000 }").is_err()); // integer overflow
     }
 
     #[test]
     fn spanset_operators_and_pipelines_have_the_expected_shape() {
-        let QueryKind::Pipeline(p) = parse("{ .a } >> { .b } | count() > 2 | by(.c) | select(.d)").unwrap().kind else { panic!() };
+        let QueryKind::Pipeline(p) = parse("{ .a } >> { .b } | count() > 2 | by(.c) | select(.d)")
+            .unwrap()
+            .kind
+        else {
+            panic!()
+        };
         assert_eq!(p.elements.len(), 4);
-        assert!(matches!(&p.elements[0], Element::Spanset(Spansets::Op { op: SpansetOp::Descendant, .. })));
+        assert!(matches!(
+            &p.elements[0],
+            Element::Spanset(Spansets::Op {
+                op: SpansetOp::Descendant,
+                ..
+            })
+        ));
         assert!(matches!(&p.elements[1], Element::ScalarFilter(_)));
         assert!(matches!(&p.elements[2], Element::Group(_)));
         assert!(matches!(&p.elements[3], Element::Select(a) if a.len() == 1));
@@ -943,18 +1108,46 @@ mod tests {
     #[test]
     fn metrics_queries_math_and_hints_parse_into_their_parts() {
         let q = parse("{ status = error } | quantile_over_time(duration, 0.5, 0.9) by (span.http.path) | topk(3) with(sample=0.1)").unwrap();
-        let QueryKind::Metrics(m) = q.kind else { panic!() };
+        let QueryKind::Metrics(m) = q.kind else {
+            panic!()
+        };
         assert!(matches!(&m.agg.func, MetricsFn::QuantileOverTime(_, qs) if qs == &[0.5, 0.9]));
         assert_eq!(m.agg.by.len(), 1);
         assert_eq!(m.second, vec![SecondStage::TopK(3)]);
-        assert_eq!(q.hints, vec![Hint { name: "sample".into(), value: Static::Float(0.1) }]);
+        assert_eq!(
+            q.hints,
+            vec![Hint {
+                name: "sample".into(),
+                value: Static::Float(0.1)
+            }]
+        );
 
-        let QueryKind::MetricsMath { expr, second } = parse("100 * ({} | rate()) / ({} | count_over_time()) > 5").unwrap().kind else { panic!() };
+        let QueryKind::MetricsMath { expr, second } =
+            parse("100 * ({} | rate()) / ({} | count_over_time()) > 5")
+                .unwrap()
+                .kind
+        else {
+            panic!()
+        };
         assert!(matches!(expr, MetricsExpr::Binary { op: Op::Div, .. }));
-        assert_eq!(second, vec![SecondStage::Filter { op: Op::Gt, value: Static::Int(5) }]);
+        assert_eq!(
+            second,
+            vec![SecondStage::Filter {
+                op: Op::Gt,
+                value: Static::Int(5)
+            }]
+        );
         // constants fold: 1 / 2 is an integer division
-        let QueryKind::Metrics(m) = parse("{} | rate() > 1 / 2").unwrap().kind else { panic!() };
-        assert_eq!(m.second, vec![SecondStage::Filter { op: Op::Gt, value: Static::Int(0) }]);
+        let QueryKind::Metrics(m) = parse("{} | rate() > 1 / 2").unwrap().kind else {
+            panic!()
+        };
+        assert_eq!(
+            m.second,
+            vec![SecondStage::Filter {
+                op: Op::Gt,
+                value: Static::Int(0)
+            }]
+        );
     }
 
     #[test]
