@@ -23,6 +23,9 @@ class Query:
     build: Callable[[Workload, int], Tuple[str, Dict[str, str]]]  # -> (url, headers)
     parse: Callable[[str], Optional[float]]  # response body -> observed value
     expected: Callable[[Workload, int], float]
+    # Core intents are cheap lookups that also decide when ingested data is visible. The others
+    # read or count every record of a service, so their latency grows with the data (`--intents`).
+    core: bool = True
 
 
 @dataclass
@@ -74,6 +77,19 @@ def prom_range_max(body: str) -> Optional[float]:
     return max(values) if values else None
 
 
+def vector_sum(body: str) -> Optional[float]:
+    """Sum of the values of an instant-query vector (Loki and Prometheus alike)."""
+    data = json.loads(body)
+    result = data.get("data", {}).get("result", [])
+    if data.get("status") != "success" or not result:
+        return None
+    return float(sum(float(s["value"][1]) for s in result))
+
+
+def search_traces(body: str) -> Optional[float]:
+    return float(len(json.loads(body).get("traces") or []))
+
+
 def tempo_spans(body: str) -> Optional[float]:
     data = json.loads(body)
     batches = data.get("batches") or data.get("trace", {}).get("resourceSpans") or []
@@ -117,7 +133,7 @@ def _prom_queries(base: str, label: str, prefix: str, headers: Dict[str, str],
     def points(w: Workload, i: int):
         start = w.base_ns // 10**9
         return (
-            f"{base}{prefix}/api/v1/query_range?start={start}&end={_last(w)}&step=1"
+            f"{base}{prefix}/api/v1/query_range?start={start}&end={_last(w)}&step={w.points_step}"
             f"&query={q(sel('bench_gauge', i, w))}",
             headers,
         )
@@ -126,7 +142,7 @@ def _prom_queries(base: str, label: str, prefix: str, headers: Dict[str, str],
         # A 15 s step spans 15 samples per bucket, so a stack that averages a bucket instead of
         # taking the newest sample cannot reach the sawtooth peak.
         return (
-            f"{base}{prefix}/api/v1/query_range?start={w.base_ns // 10**9}&end={_last(w)}&step=15"
+            f"{base}{prefix}/api/v1/query_range?start={w.base_ns // 10**9}&end={_last(w)}&step={w.peak_step}"
             f"&query={q(sel('bench_gauge', i, w))}",
             headers,
         )
@@ -164,6 +180,72 @@ def _loki_queries(base: str, headers: Dict[str, str]) -> List[Query]:
     ]
 
 
+def _scale_queries(loki: str, prom: str, prom_prefix: str, tempo: str, headers: Dict[str, str],
+                   counter: str) -> List[Query]:
+    """Shapes whose cost grows with the data: each reads or counts every record of a service, or
+    of all of them. Same questions and closed-form answers for every stack that speaks LogQL, PromQL
+    and TraceQL. `loki`, `prom` and `tempo` are the base URLs of the three APIs."""
+
+    def logql(expr: Callable[[Workload, int], str]):
+        return lambda w, i: (
+            f"{loki}/loki/api/v1/query?time={_last(w) + 1}&query={q(expr(w, i))}", headers)
+
+    def promql(expr: Callable[[Workload, int], str]):
+        return lambda w, i: (
+            f"{prom}{prom_prefix}/api/v1/query?time={_last(w)}&query={q(expr(w, i))}", headers)
+
+    def one(w: Workload, i: int) -> str:
+        return '{service_name="%s"}' % w.service(i)
+
+    def every(w: Workload, i: int) -> str:
+        return '{service_name=~"%s"}' % w.service_regex
+
+    def newest(w: Workload, i: int):
+        s, e = _window(w)
+        return (f"{loki}/loki/api/v1/query_range?query={q(one(w, i))}&limit=100&start={s}&end={e}"
+                f"&direction=backward", headers)
+
+    def search(w: Workload, i: int):
+        s, e = _window(w)
+        expr = '{ resource.service.name = "%s" }' % w.service(i)
+        return f"{tempo}/api/search?q={q(expr)}&limit=20&start={s}&end={e}", headers
+
+    def series(name: str, w: Workload, i: int) -> str:
+        return f'{name}{{job="{w.service(i)}"}}'
+
+    def ex(key: str):
+        return lambda w, i: w.expected(i)[key]
+
+    return [
+        Query("log_count_over_time", "logs",
+              logql(lambda w, i: f"sum(count_over_time({one(w, i)}[{w.window_s}s]))"),
+              vector_sum, ex("log_count_over_time"), core=False),
+        Query("log_count_all", "logs",
+              logql(lambda w, i: f"sum(count_over_time({every(w, i)}[{w.window_s}s]))"),
+              vector_sum, ex("log_count_all"), core=False),
+        Query("log_count_by_service", "logs",
+              logql(lambda w, i: f"max(sum by (service_name) (count_over_time({every(w, i)}[{w.window_s}s])))"),
+              vector_sum, ex("log_count_over_time"), core=False),
+        Query("log_regex_count", "logs",
+              logql(lambda w, i: f'sum(count_over_time({one(w, i)} |~ "event [0-9]*5$" [{w.window_s}s]))'),
+              vector_sum, ex("log_regex_count"), core=False),
+        Query("log_newest", "logs", newest, loki_lines, ex("log_newest"), core=False),
+        Query("metric_sum_over_time", "metrics",
+              promql(lambda w, i: f"sum_over_time({series('bench_gauge', w, i)}[{w.window_s}s])"),
+              vector_sum, ex("metric_sum_over_time"), core=False),
+        Query("metric_count_over_time", "metrics",
+              promql(lambda w, i: f"count_over_time({series('bench_gauge', w, i)}[{w.window_s}s])"),
+              vector_sum, ex("metric_count_over_time"), core=False),
+        Query("metric_max_counter", "metrics",
+              promql(lambda w, i: f"max_over_time({series(counter, w, i)}[{w.window_s}s])"),
+              vector_sum, ex("metric_max_counter"), core=False),
+        Query("metric_sum_all", "metrics",
+              promql(lambda w, i: 'sum(bench_gauge{job=~"%s"})' % w.service_regex),
+              vector_sum, ex("metric_sum_all"), core=False),
+        Query("trace_search", "traces", search, search_traces, ex("trace_search"), core=False),
+    ]
+
+
 # ---- stacks -----------------------------------------------------------------
 
 
@@ -182,7 +264,8 @@ def canardstack() -> Backend:
         ready=[f"{query}/healthz"],
         queries=_loki_queries(query, auth)
         + _prom_queries(query, "job", "", auth, "bench_requests_total")
-        + [Query("trace_by_id", "traces", trace, tempo_spans, lambda w, i: 2)],
+        + [Query("trace_by_id", "traces", trace, tempo_spans, lambda w, i: 2)]
+        + _scale_queries(query, query, "", query, auth, "bench_requests_total"),
         compose_dir="canardstack",
         project="bench-canardstack",
     )
@@ -205,7 +288,8 @@ def canardstack_pg() -> Backend:
         ready=[f"{query}/healthz"],
         queries=_loki_queries(query, auth)
         + _prom_queries(query, "job", "", auth, "bench_requests_total")
-        + [Query("trace_by_id", "traces", trace, tempo_spans, lambda w, i: 2)],
+        + [Query("trace_by_id", "traces", trace, tempo_spans, lambda w, i: 2)]
+        + _scale_queries(query, query, "", query, auth, "bench_requests_total"),
         compose_dir="canardstack-pg",
         project="bench-canardstack-pg",
         unsupported=base.unsupported,
@@ -228,7 +312,8 @@ def canardstack_sqlite() -> Backend:
         ready=[f"{query}/healthz"],
         queries=_loki_queries(query, auth)
         + _prom_queries(query, "job", "", auth, "bench_requests_total")
-        + [Query("trace_by_id", "traces", trace, tempo_spans, lambda w, i: 2)],
+        + [Query("trace_by_id", "traces", trace, tempo_spans, lambda w, i: 2)]
+        + _scale_queries(query, query, "", query, auth, "bench_requests_total"),
         compose_dir="canardstack-sqlite",
         project="bench-canardstack-sqlite",
     )
@@ -250,7 +335,8 @@ def lgtm() -> Backend:
         ready=[f"{loki}/ready", f"{tempo}/ready", f"{mimir}/ready"],
         queries=_loki_queries(loki, {})
         + _prom_queries(mimir, "job", "/prometheus", {})
-        + [Query("trace_by_id", "traces", trace, tempo_spans, lambda w, i: 2)],
+        + [Query("trace_by_id", "traces", trace, tempo_spans, lambda w, i: 2)]
+        + _scale_queries(loki, mimir, "/prometheus", tempo, {}, "bench_requests"),
         compose_dir="lgtm",
         project="bench-lgtm",
     )

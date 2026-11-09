@@ -185,36 +185,35 @@ def ingest(backend: Backend, workload: Workload, concurrency: int) -> Dict[str, 
     results: Dict[str, dict] = {}
     for signal, make in sources.items():
         url, headers = backend.ingest[signal]
-        payloads = list(make())
-        # Payloads are generated service by service; send each service's batches in
-        # timestamp order (backends like Mimir reject out-of-order samples within a
-        # series) and parallelize across services only.
-        per_service = [payloads[n:n + workload.batches_per_service()]
-                       for n in range(0, len(payloads), workload.batches_per_service())]
+        # Each service's batches are generated while they are sent, in timestamp order (backends
+        # like Mimir reject out-of-order samples within a series), so memory stays flat however
+        # large the workload is; services are sent in parallel.
         statuses: Dict[str, int] = {}
+        sent = [0]
         lock = threading.Lock()
 
-        def send_service(batches: List[dict]) -> None:
-            for payload in batches:
+        def send_service(i: int) -> None:
+            for payload in make([i]):
                 status, body = post(url, signal, payload, headers)
                 with lock:
+                    sent[0] += 1
                     statuses[str(status)] = statuses.get(str(status), 0) + 1
                     if status >= 300 and statuses[str(status)] == 1:
                         print(f"  ! {signal} HTTP {status}: {body[:160]!r}")
 
         started = time.perf_counter()
         with ThreadPoolExecutor(concurrency) as pool:
-            list(pool.map(send_service, per_service))
+            list(pool.map(send_service, range(workload.services)))
         elapsed = time.perf_counter() - started
         rows = {"logs": workload.total()["logs"],
                 "metrics": workload.total()["gauge_points"] + workload.total()["sum_points"],
                 "traces": workload.total()["spans"]}[signal]
         results[signal] = {
-            "batches": len(payloads),
+            "batches": sent[0],
             "statuses": statuses,
             "seconds": elapsed,
             "accepted_rows_per_s": rows / elapsed
-            if sum(n for code, n in statuses.items() if code.startswith("2")) == len(payloads) else None,
+            if sum(n for code, n in statuses.items() if code.startswith("2")) == sent[0] else None,
             "finished_at": time.time(),
         }
         print(f"ingest {signal}: {elapsed:.2f}s {statuses}")
@@ -252,7 +251,7 @@ def visibility(backend: Backend, workload: Workload, ingest_done: Dict[str, dict
         for signal in signals:
             if signal in visible_at:
                 continue
-            queries = [qy for qy in backend.queries if qy.signal == signal]
+            queries = [qy for qy in backend.queries if qy.signal == signal and qy.core]
             if all(run_once(qy, workload, i)[0] == "ok"
                    for qy in queries for i in range(workload.services)):
                 visible_at[signal] = time.time()
@@ -270,7 +269,33 @@ def visibility(backend: Backend, workload: Workload, ingest_done: Dict[str, dict
     return out
 
 
-def query_suite(backend: Backend, workload: Workload, repeats: int, clients: int,
+def settle(queries: List[Query], workload: Workload, ingest_done: Dict[str, dict],
+           timeout: float) -> Dict[str, dict]:
+    """Wait for each non-core intent to answer correctly for every service, and record how long after
+    ingest finished that took. Some are not served from the same state as the cheap lookups: Tempo
+    searches a trace only after its ingester has closed it, for example."""
+    out: Dict[str, dict] = {}
+    for query in queries:
+        if query.core:
+            continue
+        deadline = time.time() + timeout
+        ok = False
+        while time.time() < deadline:
+            ok = all(run_once(query, workload, i)[0] == "ok" for i in range(workload.services))
+            if ok:
+                break
+            time.sleep(1)
+        out[query.id] = {
+            "seconds_after_accept": max(0.0, time.time() - ingest_done[query.signal]["finished_at"]) if ok else None,
+            "timed_out": not ok,
+        }
+    print("settle: " + ", ".join(
+        f"{k}={'timeout' if v['timed_out'] else format(v['seconds_after_accept'], '.1f') + 's'}"
+        for k, v in out.items()))
+    return out
+
+
+def query_suite(queries: List[Query], workload: Workload, repeats: int, clients: int,
                 rounds: int, warmup_rounds: int) -> Dict[str, dict]:
     """Per query: `warmup_rounds` discarded, then `rounds` x `repeats` timed runs.
 
@@ -278,7 +303,7 @@ def query_suite(backend: Backend, workload: Workload, repeats: int, clients: int
     the spread between rounds is visible.
     """
     results: Dict[str, dict] = {}
-    for query in backend.queries:
+    for query in queries:
         lock = threading.Lock()
         first_wrong: List[dict] = []
         per_round: List[List[Tuple[str, float, Optional[float]]]] = []
@@ -338,6 +363,11 @@ def main() -> None:
     ap.add_argument("--seed", type=int, default=1)
     ap.add_argument("--services", type=int, default=5)
     ap.add_argument("--records", type=int, default=1000, help="per service, per signal")
+    ap.add_argument("--users", type=int, default=0,
+                    help="distinct values of a log attribute `bench.user` (0: no attribute). Loki keeps "
+                         "it as structured metadata; canardstack makes it part of the stream")
+    ap.add_argument("--intents", choices=("core", "scale", "all"), default="core",
+                    help="core: cheap lookups; scale: shapes that read or count every record; all: both")
     ap.add_argument("--ingest-concurrency", type=int, default=4)
     ap.add_argument("--repeats", type=int, default=60, help="runs per round")
     ap.add_argument("--rounds", type=int, default=5, help="timed rounds per query and client count")
@@ -362,12 +392,16 @@ def main() -> None:
         time.sleep(20)  # Loki/Tempo/Mimir hold ingesters unready for ~15s after boot
 
     base_ns = (int(time.time()) - args.records - 120) * 10**9  # whole seconds: no float drift in range queries
-    workload = Workload(args.seed, args.services, args.records, base_ns, run=format(base_ns // 10**9, 'x'))
+    workload = Workload(args.seed, args.services, args.records, base_ns, run=format(base_ns // 10**9, 'x'),
+                        users=args.users)
+    selected = [qy for qy in backend.queries
+                if args.intents == "all" or (args.intents == "core") == qy.core]
     sampler = StatsSampler(backend.project)
     sampler.start()
     ingest_result = ingest(backend, workload, args.ingest_concurrency)
     visible = visibility(backend, workload, ingest_result, args.visibility_timeout)
-    queries = {f"clients_{c}": query_suite(backend, workload, args.repeats, c, args.rounds, args.warmup_rounds)
+    settled = settle(selected, workload, ingest_result, args.visibility_timeout)
+    queries = {f"clients_{c}": query_suite(selected, workload, args.repeats, c, args.rounds, args.warmup_rounds)
                for c in args.clients}
     sampler.stop.set()
 
@@ -375,7 +409,7 @@ def main() -> None:
         "stack": backend.name,
         "started": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
         "workload": {"seed": args.seed, "services": args.services, "records": args.records,
-                     "totals": workload.total()},
+                     "users": args.users, "intents": args.intents, "totals": workload.total()},
         "environment": {
             "host": platform.platform(), "podman_vm": "applehv 4 CPU / 8 GiB",
             "images": (HERE / "versions.env").read_text(),
@@ -391,6 +425,7 @@ def main() -> None:
         "unsupported": backend.unsupported,
         "ingest": ingest_result,
         "visibility": visible,
+        "settle": settled,
         "queries": queries,
         "containers": sampler.summary(),
     }

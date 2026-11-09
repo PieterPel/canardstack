@@ -46,6 +46,38 @@ pick up changes through the bind mount. Screenshots from the image renderer are 
 The demo stacks use the same host ports as the benchmark profiles, so do not run `demo.py` while a
 benchmark is running.
 
+## Scaling with the data
+
+The default workload is small (`--records 2000` per service, one stream per service, only lookups), so
+it cannot show which queries slow down as the data grows. `sweep.py` runs the same workload at several
+sizes, with extra intents that read or count every record, and `scale_report.py` tabulates the result.
+
+```bash
+uv run --project bench bench/sweep.py --stacks canardstack-pg lgtm --records 1000 10000 50000 200000
+uv run --project bench bench/sweep.py --stacks canardstack-pg lgtm --records 10000 100000 --users 1000
+uv run --project bench bench/scale_report.py [--users 1000]
+```
+
+`--intents core|scale|all` selects the cheap lookups, the heavy shapes, or both. The heavy intents (LogQL,
+PromQL and TraceQL stacks; Victoria has none) are `log_count_over_time`, `log_count_all` and
+`log_count_by_service` (counts over one service, over all, and per service), `log_regex_count` (a regex
+filter, which canardstack evaluates line by line), `log_newest` (the newest 100 lines),
+`metric_sum_over_time`, `metric_count_over_time`, `metric_max_counter`, `metric_sum_all`, and
+`trace_search` (a TraceQL search). Each has a closed-form answer from the workload seed, validated
+against Loki, Mimir and Tempo, so a wrong answer counts as wrong whatever its latency. After ingest, the
+run waits until every heavy intent answers correctly (`settle` in the result): Tempo, for one, searches
+a trace only after its ingester has closed it.
+
+`--users N` gives each log line a `bench.user` attribute with N distinct values. Loki stores an OTLP
+attribute as structured metadata, which does not multiply streams; canardstack makes every attribute part
+of a stream's identity, so this exposes the cost of high-cardinality attributes.
+
+The report's slope is the fitted exponent of p50 against records on log-log axes (about 0: independent
+of the data; about 1: in proportion), and it ends with the canardstack-to-LGTM ratio at the largest size.
+Timestamps are one second apart, so the sizes are bounded by how old a sample Loki accepts (seven days by
+default): keep `--records` at or below 200,000. Other limits that make a cell `err`, such as canardstack's
+`CANARDSTACK_QUERY_MAX_LOG_LINES`, are the result, not a harness failure.
+
 ## Query compatibility
 
 `bench/compat/` scores how much of PromQL, LogQL and Tempo's search API each stack answers
@@ -91,7 +123,7 @@ TraceQL). Each stack uses its native dialect: LogQL (Loki, canardstack), LogsQL
 - Direct OTLP/HTTP protobuf ingest and direct backend queries. No Grafana and no collector in
   the measured path, so client-side overhead is not included.
 - Not yet covered: Azure Functions hosting, cold starts, scale-out, Blob storage, cost
-  accounting, restarts and outages, mixed ingest/query load, retained-data size sweeps, and
+  accounting, restarts and outages, mixed ingest/query load, and
   durability (as opposed to acceptance) of ingested data.
 - Mimir exposes `service.name` as `job`; VictoriaMetrics keeps the dotted label
   `"service.name"`; canardstack and Loki use `service_name`.
