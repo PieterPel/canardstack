@@ -1,15 +1,17 @@
+# Install once with `pre-commit install` (for example `uv tool install pre-commit`). These are the checks
+# CI runs on every pull request; the script falls back to a Nix toolchain when cargo has no rustfmt or clippy.
 repos:
   - repo: local
     hooks:
       - id: cargo-fmt
         name: cargo fmt
-        entry: cargo fmt --all -- --check
+        entry: scripts/rust-check.sh fmt
         language: system
         types: [rust]
         pass_filenames: false
       - id: cargo-clippy
         name: cargo clippy
-        entry: cargo clippy --all-targets --all-features --locked -- -D warnings
+        entry: scripts/rust-check.sh clippy
         language: system
         types: [rust]
         pass_filenames: false

@@ -21,9 +21,13 @@ cargo build --all-targets --locked
 cargo test
 cargo test <test_name>
 
-# Lint and formatting
+# Lint and formatting (CI runs both on every pull request into main)
 cargo fmt --all -- --check
 cargo clippy --all-targets --all-features --locked -- -D warnings
+# The same checks through a script that falls back to a Nix toolchain when cargo has no rustfmt or clippy,
+# and as git hooks: install once with `pre-commit install` (for example `uv tool install pre-commit`).
+scripts/rust-check.sh fmt
+scripts/rust-check.sh clippy
 
 # Site
 cd site && ASTRO_TELEMETRY_DISABLED=1 npm run build
