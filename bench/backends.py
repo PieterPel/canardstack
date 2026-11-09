@@ -7,6 +7,7 @@ workload, never from a backend.
 from __future__ import annotations
 
 import json
+import time
 import urllib.parse
 from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Optional, Tuple
@@ -206,7 +207,11 @@ def _scale_queries(loki: str, prom: str, prom_prefix: str, tempo: str, headers: 
                 f"&direction=backward", headers)
 
     def search(w: Workload, i: int):
-        s, e = _window(w)
+        # The window ends after now, not after the last span. Tempo dates a block by when its traces
+        # arrived, so a window that ends at the (hours-old) synthetic timestamp of the last span skips
+        # the blocks that hold them; real telemetry is stamped about when it arrives.
+        s, _ = _window(w)
+        e = int(time.time()) + 60
         expr = '{ resource.service.name = "%s" }' % w.service(i)
         return f"{tempo}/api/search?q={q(expr)}&limit=20&start={s}&end={e}", headers
 
