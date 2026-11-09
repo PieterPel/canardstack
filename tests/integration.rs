@@ -1329,3 +1329,207 @@ fn grafana_health_probes_for_loki_and_tempo_are_answered() {
     );
     assert_eq!(unauthorized.status(), 401);
 }
+
+/// 300 log lines, 700 ms apart from 2026-01-01T00:00:00Z, over three services, with bodies of
+/// different lengths (every seventh line is longer), and a query-line cap of `max_log_lines`.
+fn app_with_many_log_lines(max_log_lines: usize) -> (tempfile::TempDir, AppState) {
+    let dir = tempdir().unwrap();
+    let mut config = Config::test(dir.path().join("canardstack.duckdb"));
+    config.operator.local_storage_dir = dir.path().join("storage");
+    config.operator.query_interactive.max_log_lines = max_log_lines;
+    let state = AppState::new_with_storage_hook_for_tests(config, |storage| {
+        storage
+            .with_conn(|conn, prefix| {
+                conn.execute_batch(&format!(
+                    "INSERT INTO {prefix}otlp_logs (time_unix_nano, body, service_name, severity_text, \
+                     resource_attributes, log_attributes) \
+                     SELECT TIMESTAMP_NS '2026-01-01 00:00:00' + INTERVAL (i * 700) MILLISECOND, \
+                     'line ' || i || CASE WHEN i % 7 = 0 THEN ' with a longer body' ELSE '' END, \
+                     's' || (i % 3), CASE WHEN i % 2 = 0 THEN 'INFO' ELSE 'ERROR' END, '{{}}', '{{}}' \
+                     FROM range(300) t(i);"
+                ))?;
+                Ok(())
+            })
+            .unwrap();
+    })
+    .unwrap();
+    (dir, state)
+}
+
+fn loki_response(state: &AppState, path: &str, query: &[(&str, &str)]) -> (u16, Value) {
+    let params = query
+        .iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect::<HashMap<_, _>>();
+    let response = http::route("GET", path, &params, &api_headers(), &[], state);
+    (response.status(), response.json_body())
+}
+
+/// The series of a successful Loki range query, in a fixed order.
+fn loki_series(state: &AppState, query: &str, step: &str) -> Vec<Value> {
+    let (status, body) = loki_response(
+        state,
+        "/loki/api/v1/query_range",
+        &[
+            ("query", query),
+            ("start", "1767225600"),
+            ("end", "1767225810"),
+            ("step", step),
+        ],
+    );
+    assert_eq!(status, 200, "{query}: {body}");
+    let mut series = body["data"]["result"].as_array().unwrap().clone();
+    series.sort_by_key(|s| s["metric"].to_string());
+    series
+}
+
+/// A metric query that counts in the database must answer exactly as one that reads the lines. The
+/// regex filter `|~ ".*"` keeps every line but is not a plain filter, so it takes the line-reading path.
+#[test]
+fn loki_counted_range_aggregations_match_reading_the_lines() {
+    let (_dir, state) = app_with_many_log_lines(1_000_000);
+    let cases = [
+        // (aggregation, range, step): steps that divide the range, equal it, and share only a factor.
+        ("count_over_time", "1m", "15s"),
+        ("count_over_time", "10s", "10s"),
+        ("count_over_time", "60s", "25s"),
+        ("rate", "30s", "7s"),
+        ("bytes_over_time", "45s", "15s"),
+        ("bytes_rate", "20s", "5s"),
+        ("count_over_time", "5m", "30s"),
+    ];
+    for (op, range, step) in cases {
+        for selector in [
+            r#"{service_name="s1"}"#,
+            r#"{service_name=~"s0|s2"}"#,
+            r#"{service_name=~".+"}"#,
+            r#"{service_name="s0", severity_text="INFO"}"#,
+        ] {
+            for filter in ["", r#" |= "longer""#, r#" != "line 1""#] {
+                let counted = format!("{op}({selector}{filter}[{range}])");
+                let read = format!(r#"{op}({selector}{filter} |~ ".*" [{range}])"#);
+                assert_eq!(
+                    loki_series(&state, &counted, step),
+                    loki_series(&state, &read, step),
+                    "{counted} step {step}"
+                );
+            }
+        }
+    }
+    // Grouped and offset forms, and a vector aggregation on top.
+    for query in [
+        r#"sum by (service_name) (count_over_time({service_name=~".+"}[1m]))"#,
+        r#"sum(rate({service_name=~".+"}[30s]))"#,
+        r#"count_over_time({service_name="s1"}[1m] offset 30s)"#,
+        r#"sum by (severity_text) (bytes_over_time({service_name=~".+"}[1m]))"#,
+    ] {
+        let read = query.replace("}[", r#"} |~ ".*" ["#).replace("}[", "} |~ \".*\" [");
+        assert_eq!(
+            loki_series(&state, query, "20s"),
+            loki_series(&state, &read, "20s"),
+            "{query}"
+        );
+    }
+    // The totals are what was inserted: 300 lines, 100 per service.
+    let series = loki_series(&state, r#"sum(count_over_time({service_name=~".+"}[5m]))"#, "210s");
+    let last: f64 = series[0]["values"].as_array().unwrap().last().unwrap()[1]
+        .as_str()
+        .unwrap()
+        .parse()
+        .unwrap();
+    assert_eq!(last, 300.0);
+}
+
+/// The line cap bounds what is read into memory. Counting in the database and asking for a few of
+/// the newest lines read no more than that, so neither is refused when the window holds more
+/// lines than the cap; a query that has to read every line is.
+#[test]
+fn loki_line_cap_bounds_reading_but_not_counting_or_limits() {
+    let (_dir, state) = app_with_many_log_lines(50);
+    // 300 lines in the window, a cap of 50.
+    let counted = loki_series(&state, r#"sum(count_over_time({service_name=~".+"}[5m]))"#, "210s");
+    let total: f64 = counted[0]["values"].as_array().unwrap().last().unwrap()[1]
+        .as_str()
+        .unwrap()
+        .parse()
+        .unwrap();
+    assert_eq!(total, 300.0);
+
+    let (status, body) = loki_response(
+        &state,
+        "/loki/api/v1/query_range",
+        &[
+            ("query", r#"{service_name=~".+"}"#),
+            ("start", "1767225600"),
+            ("end", "1767225810"),
+            ("limit", "5"),
+        ],
+    );
+    assert_eq!(status, 200, "{body}");
+    let mut newest: Vec<(String, String)> = body["data"]["result"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|s| s["values"].as_array().unwrap().iter())
+        .map(|v| (v[0].as_str().unwrap().to_string(), v[1].as_str().unwrap().to_string()))
+        .collect();
+    newest.sort_by_key(|(ts, _)| ts.parse::<i128>().unwrap());
+    let lines: Vec<&str> = newest.iter().map(|(_, l)| l.as_str()).collect();
+    assert_eq!(lines, ["line 295", "line 296", "line 297", "line 298", "line 299"]);
+
+    // Forward starts from the oldest line.
+    let (status, body) = loki_response(
+        &state,
+        "/loki/api/v1/query_range",
+        &[
+            ("query", r#"{service_name="s0"}"#),
+            ("start", "1767225600"),
+            ("end", "1767225810"),
+            ("limit", "2"),
+            ("direction", "forward"),
+        ],
+    );
+    assert_eq!(status, 200, "{body}");
+    // Two streams (INFO and ERROR lines); together they hold the two oldest lines of the service.
+    let mut oldest: Vec<(i128, String)> = body["data"]["result"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|s| s["values"].as_array().unwrap().iter())
+        .map(|v| (v[0].as_str().unwrap().parse().unwrap(), v[1].as_str().unwrap().to_string()))
+        .collect();
+    oldest.sort();
+    let lines: Vec<&str> = oldest.iter().map(|(_, l)| l.as_str()).collect();
+    assert_eq!(lines, ["line 0 with a longer body", "line 3"]);
+
+    // A pipeline stage the database cannot count makes the query read every line: refused.
+    let (status, body) = loki_response(
+        &state,
+        "/loki/api/v1/query_range",
+        &[
+            ("query", r#"sum(count_over_time({service_name=~".+"} |~ ".*" [5m]))"#),
+            ("start", "1767225600"),
+            ("end", "1767225810"),
+            ("step", "210s"),
+        ],
+    );
+    assert_eq!(status, 422, "{body}");
+    assert!(
+        body["error"].as_str().unwrap().contains("CANARDSTACK_QUERY_MAX_LOG_LINES"),
+        "{body}"
+    );
+
+    // A selective filter that needs more rows than the cap to find its lines is refused too, rather
+    // than answered with fewer lines than exist.
+    let (status, body) = loki_response(
+        &state,
+        "/loki/api/v1/query_range",
+        &[
+            ("query", r#"{service_name=~".+"} |~ "line 1$""#),
+            ("start", "1767225600"),
+            ("end", "1767225810"),
+            ("limit", "100"),
+        ],
+    );
+    assert_eq!(status, 422, "{body}");
+}

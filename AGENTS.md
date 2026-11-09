@@ -85,7 +85,7 @@ Storage signals are `Logs`, `Spans`, `MetricGauge`, `MetricSum`, `MetricHistogra
 - Use async semaphores for admission waits. Keep ordinary mutexes for short synchronous state access; never hold a std mutex guard across `.await`. Prefer `LockExt::lock_or_poisoned()` over `.lock().unwrap()` for shared state.
 - Keep hosting-platform adaptation in deployment configuration or launch scripts, not in application configuration or query code.
 - Do not add gRPC, Kafka, a second binary, or another long-running service unless the task explicitly changes the architecture.
-- Keep query routes bounded by time range, row limit, timeout, DuckDB memory limit, and concurrency caps through `QueryEngine`.
+- Keep query routes bounded by time range, row limit, timeout, DuckDB memory limit, and concurrency caps through `QueryEngine`. LogQL reads lines into memory only up to `CANARDSTACK_QUERY_MAX_LOG_LINES`; shapes that can be counted or limited in SQL must be (see `docs/architecture/query-api.md`), and a change that adds a bound needs a test that runs it below the data size.
 - Do not expose arbitrary SQL through the compatibility APIs. Direct SQL is intentionally an external DuckDB CLI / MotherDuck path.
 - Preserve the Prometheus/Loki error envelope shape: `{"status":"error","errorType":"...","error":"..."}`.
 - canardstack does not own ingestion durability or visibility timing. It queries whatever rows are visible in the attached DuckLake catalog.

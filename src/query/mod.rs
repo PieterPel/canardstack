@@ -31,6 +31,7 @@ use std::time::Duration;
 pub struct QueryEngine {
     interactive_timeout: Duration,
     interactive_memory_limit: String,
+    max_log_lines: usize,
     execution: Option<Arc<QueryExecution>>,
     prom_name_suffixes: bool,
     exp_histograms: Arc<std::sync::Mutex<Option<(std::time::Instant, bool)>>>,
@@ -43,10 +44,16 @@ impl QueryEngine {
                 config.operator.query_interactive.timeout_secs,
             ),
             interactive_memory_limit: config.operator.query_interactive.memory_limit.clone(),
+            max_log_lines: config.operator.query_interactive.max_log_lines,
             execution: None,
             prom_name_suffixes: config.operator.prometheus_name_suffixes,
             exp_histograms: Default::default(),
         }
+    }
+
+    /// The most log lines a LogQL query may load into memory.
+    pub fn max_log_lines(&self) -> usize {
+        self.max_log_lines
     }
 
     /// Whether any native (exponential) histogram has been stored. Checked at most every 30 seconds,

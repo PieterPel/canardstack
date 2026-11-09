@@ -4,7 +4,7 @@
 //! The lines are fetched once for the whole evaluation window and grouped into series; each step
 //! then looks at the samples in `(t - range - offset, t - offset]`.
 
-use super::fetch::fetch;
+use super::fetch::{countable, counts, fetch_all};
 use super::pipeline::{anchored, Pipeline};
 use super::values::{parse_bytes, parse_duration_secs};
 use crate::query::prom_labels::Labels;
@@ -15,6 +15,17 @@ use crate::validation::{ApiError, ApiResult};
 use chrono::{TimeZone, Utc};
 use logql_syntax::ast::{self, BinOp, Conv, Expr, MatchOp, RangeAgg, RangeOp, VecOp};
 use std::collections::BTreeMap;
+
+/// The most time buckets one counted series may span; wider evaluations read the lines.
+const MAX_BUCKETS: i64 = 1_000_000;
+
+fn gcd(a: i64, b: i64) -> i64 {
+    if b == 0 {
+        a
+    } else {
+        gcd(b, a % b)
+    }
+}
 
 pub enum Value {
     Scalar(Vec<f64>),
@@ -173,9 +184,12 @@ impl Ev<'_> {
     }
 
     fn range(&self, r: &RangeAgg) -> ApiResult<Vec<Series>> {
+        if let Some(series) = self.range_counted(r)? {
+            return Ok(series);
+        }
         let pipeline = Pipeline::compile(&r.log.stages)?;
         let at = |ms: i64| Utc.timestamp_millis_opt(ms).single().ok_or_else(|| bad("time out of range"));
-        let entries = fetch(
+        let entries = fetch_all(
             self.engine,
             self.storage,
             &r.log.matchers,
@@ -227,6 +241,89 @@ impl Ev<'_> {
             }
         }
         Ok(out)
+    }
+
+    /// `count_over_time`, `rate`, `bytes_over_time` and `bytes_rate` over lines that only plain line
+    /// filters select need no line in memory: the database counts them per stream and time bucket and
+    /// the windows are sums of buckets. `None` when the query has another shape, which reads the lines.
+    fn range_counted(&self, r: &RangeAgg) -> ApiResult<Option<Vec<Series>>> {
+        let counted_op = matches!(
+            r.op,
+            RangeOp::CountOverTime | RangeOp::Rate | RangeOp::BytesOverTime | RangeOp::BytesRate
+        );
+        if !counted_op || r.unwrap.is_some() || !countable(&r.log.stages) || r.range_ms <= 0 {
+            return Ok(None);
+        }
+        // Every window edge falls on a bucket edge when the buckets are as wide as the greatest
+        // common divisor of the step and the range.
+        let steps = self.n();
+        let step_ms = if steps > 1 { self.grid.step_ms } else { r.range_ms };
+        if step_ms <= 0 {
+            return Ok(None);
+        }
+        let width = gcd(step_ms, r.range_ms);
+        let (per_step, per_window) = (step_ms / width, r.range_ms / width);
+        let total = (steps as i64 - 1) * per_step + per_window;
+        if total > MAX_BUCKETS {
+            return Ok(None);
+        }
+        let origin_ms = self.grid.start_ms - r.offset_ms - r.range_ms;
+        let end_ms = self.grid.end_ms() - r.offset_ms;
+        let found = counts(
+            self.engine,
+            self.storage,
+            &r.log.matchers,
+            &r.log.stages,
+            origin_ms * 1_000_000,
+            end_ms * 1_000_000,
+            width * 1_000_000,
+        )?;
+        let group = grouping(&r.grouping);
+        // Streams that group to the same series add up.
+        let mut by_series: BTreeMap<Labels, (Vec<u64>, Vec<f64>)> = BTreeMap::new();
+        for stream in found {
+            let key = match &group {
+                Some(Grouping { by: true, .. }) => vector::group_key(&stream.labels, &group),
+                _ => vector::group_key_or_all(&stream.labels, &group),
+            };
+            let (lines, bytes) = by_series
+                .entry(key)
+                .or_insert_with(|| (vec![0; total as usize + 1], vec![0.0; total as usize + 1]));
+            for (bucket, n, b) in stream.buckets {
+                // Prefix sums are built below; here the counts sit at their bucket.
+                if let Some(slot) = usize::try_from(bucket).ok().filter(|i| *i < total as usize) {
+                    lines[slot + 1] += n;
+                    bytes[slot + 1] += b;
+                }
+            }
+        }
+        let range_secs = r.range_ms as f64 / 1000.0;
+        let mut out = Vec::new();
+        for (labels, (mut lines, mut bytes)) in by_series {
+            for i in 1..lines.len() {
+                lines[i] += lines[i - 1];
+                bytes[i] += bytes[i - 1];
+            }
+            let vals: Vec<Option<f64>> = (0..steps as i64)
+                .map(|i| {
+                    let (lo, hi) = ((i * per_step) as usize, (i * per_step + per_window) as usize);
+                    let (n, b) = (lines[hi] - lines[lo], bytes[hi] - bytes[lo]);
+                    if n == 0 {
+                        return None;
+                    }
+                    Some(match r.op {
+                        RangeOp::CountOverTime => n as f64,
+                        RangeOp::Rate => n as f64 / range_secs,
+                        RangeOp::BytesOverTime => b,
+                        _ => b / range_secs,
+                    })
+                })
+                .collect();
+            if vals.iter().any(Option::is_some) {
+                out.push(Series { labels, vals });
+            }
+        }
+        Ok(Some(out))
     }
 
     /// `absent_over_time`: 1 at every step where no line at all is in the window.
