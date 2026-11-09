@@ -200,19 +200,93 @@ pub fn countable(stages: &[Stage]) -> bool {
     })
 }
 
-/// Counts the lines and their bytes per stream and time bucket, inside the database. The lines in
-/// `(origin_ns, end_ns]` are put in buckets `bucket_ns` wide, bucket `b` holding
-/// `(origin + b * width, origin + (b + 1) * width]`. No line is read into memory, so only the number
-/// of streams times buckets is bounded.
+/// The lines to count: those in `(origin_ns, end_ns]`, in buckets `bucket_ns` wide, bucket `b`
+/// holding `(origin + b * width, origin + (b + 1) * width]`.
+#[derive(Clone, Copy)]
+pub struct CountWindow {
+    pub origin_ns: i64,
+    pub end_ns: i64,
+    pub bucket_ns: i64,
+}
+
+/// The label columns of a log row, in the order [`labels_from_row`] takes them.
+const LABEL_COLUMNS: [&str; 8] = [
+    "service_name",
+    "service_namespace",
+    "service_instance_id",
+    "resource_attributes",
+    "log_attributes",
+    "severity_text",
+    "trace_id",
+    "span_id",
+];
+
+/// The columns that alone decide the labels `names`, or `None` when some name can only come from an
+/// attribute and the attribute columns are needed.
+fn columns_for(names: &[String]) -> Option<Vec<&'static str>> {
+    let mut columns = Vec::new();
+    for name in names {
+        let column = LABEL_COLUMNS
+            .iter()
+            .copied()
+            .find(|c| *c == name.as_str() && !c.ends_with("_attributes"))?;
+        if !columns.contains(&column) {
+            columns.push(column);
+        }
+    }
+    Some(columns)
+}
+
+/// `hash(...)` of the stream columns in `columns`, and the select list that returns each label
+/// column of the stream (`NULL` for the ones left out).
+fn stream_sql_parts(columns: Option<&[&'static str]>) -> (String, String) {
+    let used = |c: &str| columns.is_none_or(|cols| cols.contains(&c));
+    let key_parts: Vec<String> = LABEL_COLUMNS
+        .iter()
+        .filter(|c| used(c))
+        .map(|c| format!("coalesce({c}::VARCHAR, '')"))
+        .collect();
+    let key = if key_parts.is_empty() {
+        "hash(0)".to_string()
+    } else {
+        format!("hash(concat_ws(chr(31), {}))", key_parts.join(", "))
+    };
+    let select = LABEL_COLUMNS
+        .iter()
+        .map(|c| {
+            if used(c) {
+                format!("any_value({c})")
+            } else {
+                "NULL::VARCHAR".to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    (key, select)
+}
+
+/// Counts the lines and their bytes per stream and time bucket, inside the database. No line is read
+/// into memory, so only the number of streams times buckets is bounded.
+///
+/// A stream is identified by all its label columns, and every log attribute is one, so a query can
+/// span hundreds of thousands of streams. When the caller needs only the labels `labels` (the ones its
+/// selector and its `sum by (...)` use) and each comes from a column that holds a value in every row
+/// of the window, the streams are those columns alone, which is a handful. A column that is empty in
+/// some row lets an attribute of the same name supply the label there, so then, as for a label that
+/// only an attribute can supply, the streams are told apart by every column and the answer is exact.
 pub fn counts(
     engine: &QueryEngine,
     storage: &Storage,
     matchers: &[Matcher],
     stages: &[Stage],
-    origin_ns: i64,
-    end_ns: i64,
-    bucket_ns: i64,
+    window: CountWindow,
+    labels: Option<&[String]>,
 ) -> ApiResult<Vec<Counted>> {
+    let CountWindow {
+        origin_ns,
+        end_ns,
+        bucket_ns,
+    } = window;
     let tests = matchers
         .iter()
         .map(|m| Ok((m.name.clone(), ValueTest::new(m.op, &m.value)?)))
@@ -230,29 +304,38 @@ pub fn counts(
     ];
     filters.extend(pushdown(matchers, stages));
     let wherever = filters.join(" AND ");
-    // A stream is identified by all its label columns, and every log attribute is one, so a query can
-    // span hundreds of thousands of streams. Counting groups on a hash of those columns and returns
-    // numbers only; the label columns themselves come once per stream, from a second query.
-    let key = "hash(concat_ws(chr(31), coalesce(service_name, ''), coalesce(service_namespace, ''), \
-         coalesce(service_instance_id, ''), coalesce(resource_attributes::VARCHAR, ''), \
-         coalesce(log_attributes::VARCHAR, ''), coalesce(severity_text, ''), coalesce(trace_id, ''), \
-         coalesce(span_id, '')))";
-    let count_sql = format!(
-        "SELECT {key} AS sk, (epoch_ns(time_unix_nano) - {origin_ns} - 1) // {bucket_ns} AS bucket, count(*), \
-         sum(strlen(coalesce(body, '')))::DOUBLE FROM {{prefix}}otlp_logs WHERE {wherever} GROUP BY sk, bucket"
-    );
-    let stream_sql = format!(
-        "SELECT {key} AS sk, any_value(service_name), any_value(service_namespace), any_value(service_instance_id), \
-         any_value(resource_attributes), any_value(log_attributes), any_value(severity_text), any_value(trace_id), \
-         any_value(span_id) FROM {{prefix}}otlp_logs WHERE {wherever} GROUP BY sk"
-    );
+    let reduced = labels.and_then(columns_for);
     let max = engine.max_log_lines();
     engine.run_interactive(storage, |conn, prefix| {
+        // Only columns that are filled in every row can stand in for the attributes' say.
+        let mut columns = reduced.clone();
+        if let Some(cols) = &columns {
+            if !cols.is_empty() {
+                let empty = cols
+                    .iter()
+                    .map(|c| format!("{c} IS NULL OR {c} = ''"))
+                    .collect::<Vec<_>>()
+                    .join(" OR ");
+                let probe = format!("SELECT count(*) FROM {prefix}otlp_logs WHERE {wherever} AND ({empty})");
+                let gaps: i64 = conn.query_row(&probe, [], |row| row.get(0))?;
+                if gaps > 0 {
+                    columns = None;
+                }
+            }
+        }
+        let (key, select) = stream_sql_parts(columns.as_deref());
+        let count_sql = format!(
+            "SELECT {key} AS sk, (epoch_ns(time_unix_nano) - {origin_ns} - 1) // {bucket_ns} AS bucket, count(*), \
+             sum(strlen(coalesce(body, '')))::DOUBLE FROM {prefix}otlp_logs WHERE {wherever} GROUP BY sk, bucket"
+        );
+        let stream_sql = format!(
+            "SELECT {key} AS sk, {select} FROM {prefix}otlp_logs WHERE {wherever} GROUP BY sk"
+        );
         // Counts first: they are bounded, and a query that exceeds the bound stops before it reads labels.
         let mut by_stream: HashMap<u64, Vec<(i64, u64, f64)>> = HashMap::new();
         let mut groups = 0usize;
         {
-            let mut stmt = conn.prepare(&count_sql.replace("{prefix}", prefix))?;
+            let mut stmt = conn.prepare(&count_sql)?;
             let mut result = stmt.query([])?;
             while let Some(row) = result.next()? {
                 groups += 1;
@@ -263,12 +346,13 @@ pub fn counts(
                         format!("query produces more than {max} series-buckets; use a larger step or a narrower time range (the limit is CANARDSTACK_QUERY_MAX_LOG_LINES)"),
                     )));
                 }
-                let (sk, bucket, lines, bytes): (u64, i64, i64, f64) = (row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?);
+                let (sk, bucket, lines, bytes): (u64, i64, i64, f64) =
+                    (row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?);
                 by_stream.entry(sk).or_default().push((bucket, lines as u64, bytes));
             }
         }
         let mut out = Vec::with_capacity(by_stream.len());
-        let mut stmt = conn.prepare(&stream_sql.replace("{prefix}", prefix))?;
+        let mut stmt = conn.prepare(&stream_sql)?;
         let mut result = stmt.query([])?;
         while let Some(row) = result.next()? {
             let sk: u64 = row.get(0)?;
@@ -289,4 +373,42 @@ pub fn counts(
         }
         Ok(Ok(out))
     })?
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn names(list: &[&str]) -> Vec<String> {
+        list.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn labels_that_have_a_column_are_told_apart_by_those_columns_alone() {
+        let columns = columns_for(&names(&["service_name", "severity_text", "service_name"]));
+        assert_eq!(columns, Some(vec!["service_name", "severity_text"]));
+        assert_eq!(columns_for(&[]), Some(Vec::new()));
+    }
+
+    #[test]
+    fn a_label_only_an_attribute_can_supply_needs_every_column() {
+        assert_eq!(columns_for(&names(&["service_name", "user"])), None);
+        assert_eq!(columns_for(&names(&["log_attributes"])), None);
+        assert_eq!(columns_for(&names(&["resource_attributes"])), None);
+    }
+
+    #[test]
+    fn the_stream_key_and_select_list_follow_the_columns_used() {
+        let (key, select) = stream_sql_parts(Some(&["service_name", "trace_id"]));
+        assert!(key.contains("coalesce(service_name::VARCHAR, '')"));
+        assert!(key.contains("coalesce(trace_id::VARCHAR, '')"));
+        assert!(!key.contains("log_attributes"));
+        // Eight columns come back whatever is used; the unused ones are NULL.
+        assert_eq!(select.split(", ").count(), 8);
+        assert_eq!(select.matches("NULL::VARCHAR").count(), 6);
+        let (key, select) = stream_sql_parts(None);
+        assert!(key.contains("log_attributes"));
+        assert!(!select.contains("NULL"));
+        assert_eq!(stream_sql_parts(Some(&[])).0, "hash(0)");
+    }
 }

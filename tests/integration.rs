@@ -1699,6 +1699,32 @@ fn loki_series(state: &AppState, query: &str, step: &str) -> Vec<Value> {
     series
 }
 
+/// Two Loki range results are the same series with the same timestamps and values that agree to a
+/// relative 1e-9 (rates add per-stream floats in a different order when streams are added first).
+fn assert_series_close(counted: &[Value], read: &[Value], context: &str) {
+    assert_eq!(counted.len(), read.len(), "{context}: series count");
+    for (a, b) in counted.iter().zip(read) {
+        assert_eq!(a["metric"], b["metric"], "{context}: labels");
+        let (av, bv) = (
+            a["values"].as_array().unwrap(),
+            b["values"].as_array().unwrap(),
+        );
+        assert_eq!(av.len(), bv.len(), "{context}: points of {}", a["metric"]);
+        for (x, y) in av.iter().zip(bv) {
+            assert_eq!(x[0], y[0], "{context}: timestamp");
+            let (xf, yf): (f64, f64) = (
+                x[1].as_str().unwrap().parse().unwrap(),
+                y[1].as_str().unwrap().parse().unwrap(),
+            );
+            assert!(
+                (xf - yf).abs() <= 1e-9 * xf.abs().max(yf.abs()).max(1.0),
+                "{context}: {xf} vs {yf} in {}",
+                a["metric"]
+            );
+        }
+    }
+}
+
 /// A metric query that counts in the database must answer exactly as one that reads the lines. The
 /// regex filter `|~ ".*"` keeps every line but is not a plain filter, so it takes the line-reading path.
 #[test]
@@ -1724,10 +1750,10 @@ fn loki_counted_range_aggregations_match_reading_the_lines() {
             for filter in ["", r#" |= "longer""#, r#" != "line 1""#] {
                 let counted = format!("{op}({selector}{filter}[{range}])");
                 let read = format!(r#"{op}({selector}{filter} |~ ".*" [{range}])"#);
-                assert_eq!(
-                    loki_series(&state, &counted, step),
-                    loki_series(&state, &read, step),
-                    "{counted} step {step}"
+                assert_series_close(
+                    &loki_series(&state, &counted, step),
+                    &loki_series(&state, &read, step),
+                    &format!("{counted} step {step}"),
                 );
             }
         }
@@ -1742,10 +1768,10 @@ fn loki_counted_range_aggregations_match_reading_the_lines() {
         let read = query
             .replace("}[", r#"} |~ ".*" ["#)
             .replace("}[", "} |~ \".*\" [");
-        assert_eq!(
-            loki_series(&state, query, "20s"),
-            loki_series(&state, &read, "20s"),
-            "{query}"
+        assert_series_close(
+            &loki_series(&state, query, "20s"),
+            &loki_series(&state, &read, "20s"),
+            query,
         );
     }
     // The totals are what was inserted: 300 lines, 100 per service.
@@ -1877,4 +1903,101 @@ fn loki_line_cap_bounds_reading_but_not_counting_or_limits() {
         ],
     );
     assert_eq!(status, 422, "{body}");
+}
+
+/// 120 lines a second apart over three services, built so that reducing a stream to a few columns
+/// could go wrong: `severity_text` is empty on a quarter of the lines and missing on another quarter,
+/// `user` is a log attribute with five values, and every eighth line carries a `severity_text`
+/// attribute that must supply the label only where the column has none.
+fn app_with_attribute_streams() -> (tempfile::TempDir, AppState) {
+    let dir = tempdir().unwrap();
+    let mut config = Config::test(dir.path().join("canardstack.duckdb"));
+    config.operator.local_storage_dir = dir.path().join("storage");
+    let state = AppState::new_with_storage_hook_for_tests(config, |storage| {
+        storage
+            .with_conn(|conn, prefix| {
+                conn.execute_batch(&format!(
+                    r#"INSERT INTO {prefix}otlp_logs (time_unix_nano, body, service_name, severity_text,
+                        resource_attributes, log_attributes)
+                     SELECT TIMESTAMP_NS '2026-01-01 00:00:00' + INTERVAL (i) SECOND,
+                        'event ' || i,
+                        's' || (i % 3),
+                        CASE i % 4 WHEN 0 THEN 'INFO' WHEN 1 THEN 'ERROR' WHEN 2 THEN '' ELSE NULL END,
+                        '{{}}',
+                        '{{"user":"u' || (i % 5) || '"' ||
+                          CASE WHEN i % 8 = 0 THEN ',"severity_text":"fromattr"' ELSE '' END || '}}'
+                     FROM range(120) t(i);"#
+                ))?;
+                Ok(())
+            })
+            .unwrap();
+    })
+    .unwrap();
+    (dir, state)
+}
+
+fn attribute_series(state: &AppState, query: &str) -> Vec<Value> {
+    let (status, body) = loki_response(
+        state,
+        "/loki/api/v1/query_range",
+        &[
+            ("query", query),
+            ("start", "1767225600"),
+            ("end", "1767225720"),
+            ("step", "20s"),
+        ],
+    );
+    assert_eq!(status, 200, "{query}: {body}");
+    let mut series = body["data"]["result"].as_array().unwrap().clone();
+    series.sort_by_key(|s| s["metric"].to_string());
+    series
+}
+
+/// `sum by (...)` over a counted range aggregation reduces the streams to the labels it looks at when
+/// it can prove that is exact. It must answer as the line-reading path does in every case: a label
+/// with gaps in its column (the attribute fills them), a label only an attribute has, a matcher on
+/// either, `without`, and labels that are complete.
+#[test]
+fn loki_sums_over_reduced_streams_match_reading_the_lines() {
+    let (_dir, state) = app_with_attribute_streams();
+    let ranges = [
+        ("count_over_time", "1m"),
+        ("rate", "30s"),
+        ("bytes_over_time", "1m"),
+        ("bytes_rate", "40s"),
+    ];
+    let aggregations = [
+        "sum",
+        "sum by (service_name)",
+        "sum by (service_name, severity_text)",
+        "sum by (severity_text)",
+        "sum by (user)",
+        "sum by (user, service_name)",
+        "sum by (nothing_like_this)",
+        "sum without (user)",
+        "sum without (severity_text, user)",
+    ];
+    let selectors = [
+        r#"{service_name=~".+"}"#,
+        r#"{service_name="s1"}"#,
+        r#"{service_name=~"s0|s2"}"#,
+        r#"{service_name="s0", severity_text="INFO"}"#,
+        r#"{service_name=~".+", severity_text=~"fromattr|ERROR"}"#,
+        r#"{user="u1"}"#,
+        r#"{service_name="s2", user!="u0"}"#,
+        r#"{severity_text=""}"#,
+    ];
+    for (op, range) in ranges {
+        for aggregation in aggregations {
+            for selector in selectors {
+                let counted = format!("{aggregation} ({op}({selector}[{range}]))");
+                let read = format!(r#"{aggregation} ({op}({selector} |~ ".*" [{range}]))"#);
+                assert_series_close(
+                    &attribute_series(&state, &counted),
+                    &attribute_series(&state, &read),
+                    &counted,
+                );
+            }
+        }
+    }
 }

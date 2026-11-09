@@ -4,7 +4,7 @@
 //! The lines are fetched once for the whole evaluation window and grouped into series; each step
 //! then looks at the samples in `(t - range - offset, t - offset]`.
 
-use super::fetch::{countable, counts, fetch_all};
+use super::fetch::{countable, counts, fetch_all, CountWindow};
 use super::pipeline::{anchored, Pipeline};
 use super::values::{parse_bytes, parse_duration_secs};
 use crate::query::prom_labels::Labels;
@@ -64,6 +64,22 @@ struct Sample {
     bytes: f64,
 }
 
+/// The labels that a `sum` over a range aggregation, and the selector under it, look at: those of the
+/// selector's matchers and of the sum's `by (...)`. `None` for `without (...)`, which keeps every label
+/// but the listed ones.
+fn sum_labels(grouping: Option<&ast::Grouping>, r: &RangeAgg) -> Option<Vec<String>> {
+    let mut names: Vec<String> = r.log.matchers.iter().map(|m| m.name.clone()).collect();
+    if let Some(g) = grouping {
+        if !g.by {
+            return None;
+        }
+        names.extend(g.labels.iter().cloned());
+    }
+    names.sort();
+    names.dedup();
+    Some(names)
+}
+
 fn grouping(g: &Option<ast::Grouping>) -> Option<Grouping> {
     g.as_ref().map(|g| Grouping {
         by: g.by,
@@ -103,7 +119,15 @@ impl Ev<'_> {
             Expr::Log(_) => Err(bad("a log query is not a metric query: wrap it in a range aggregation such as count_over_time")),
             Expr::Range(r) => Ok(Value::Vector(self.range(r)?)),
             Expr::Vector(v) => {
-                let input = self.vector(&v.expr)?;
+                let input = match (v.op, &v.expr) {
+                    // A sum adds the streams' windows, so the streams may be added first, and then
+                    // only the labels the sum and the selector look at are needed.
+                    (VecOp::Sum, Expr::Range(r)) => {
+                        let labels = sum_labels(v.grouping.as_ref(), r);
+                        self.range_with(r, labels.as_deref())?
+                    }
+                    _ => self.vector(&v.expr)?,
+                };
                 if matches!(v.op, VecOp::Sort | VecOp::SortDesc) {
                     return Ok(Value::Vector(sorted(input, v.op == VecOp::SortDesc)));
                 }
@@ -215,7 +239,12 @@ impl Ev<'_> {
     }
 
     fn range(&self, r: &RangeAgg) -> ApiResult<Vec<Series>> {
-        if let Some(series) = self.range_counted(r)? {
+        self.range_with(r, None)
+    }
+
+    /// `labels`, when given, are the only labels the caller will look at (see [`sum_labels`]).
+    fn range_with(&self, r: &RangeAgg, labels: Option<&[String]>) -> ApiResult<Vec<Series>> {
+        if let Some(series) = self.range_counted(r, labels)? {
             return Ok(series);
         }
         let pipeline = Pipeline::compile(&r.log.stages)?;
@@ -293,7 +322,11 @@ impl Ev<'_> {
     /// `count_over_time`, `rate`, `bytes_over_time` and `bytes_rate` over lines that only plain line
     /// filters select need no line in memory: the database counts them per stream and time bucket and
     /// the windows are sums of buckets. `None` when the query has another shape, which reads the lines.
-    fn range_counted(&self, r: &RangeAgg) -> ApiResult<Option<Vec<Series>>> {
+    fn range_counted(
+        &self,
+        r: &RangeAgg,
+        labels: Option<&[String]>,
+    ) -> ApiResult<Option<Vec<Series>>> {
         let counted_op = matches!(
             r.op,
             RangeOp::CountOverTime | RangeOp::Rate | RangeOp::BytesOverTime | RangeOp::BytesRate
@@ -320,14 +353,20 @@ impl Ev<'_> {
         }
         let origin_ms = self.grid.start_ms - r.offset_ms - r.range_ms;
         let end_ms = self.grid.end_ms() - r.offset_ms;
+        let window = CountWindow {
+            origin_ns: origin_ms * 1_000_000,
+            end_ns: end_ms * 1_000_000,
+            bucket_ns: width * 1_000_000,
+        };
+        // A grouping of the range aggregation itself needs the labels as they are.
+        let labels = labels.filter(|_| r.grouping.is_none());
         let found = counts(
             self.engine,
             self.storage,
             &r.log.matchers,
             &r.log.stages,
-            origin_ms * 1_000_000,
-            end_ms * 1_000_000,
-            width * 1_000_000,
+            window,
+            labels,
         )?;
         let group = grouping(&r.grouping);
         // Streams that group to the same series add up.

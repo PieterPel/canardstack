@@ -119,12 +119,13 @@ log table a query reads depends on its shape:
 
 | Shape | How it is evaluated | Bound |
 | --- | --- | --- |
-| `count_over_time`, `rate`, `bytes_over_time`, `bytes_rate` over a selector with no stage except plain `\|=` / `!=` text filters | Counted inside DuckDB: `GROUP BY` stream and time bucket. No line is read into memory. | Streams times buckets, at most `CANARDSTACK_QUERY_MAX_LOG_LINES` (default 1,000,000). Not limited by the number of lines. |
+| `count_over_time`, `rate`, `bytes_over_time`, `bytes_rate` over a selector with no stage except plain `\|=` / `!=` text filters | Counted inside DuckDB: `GROUP BY` stream and time bucket. No line is read into memory. | Streams times buckets, at most `CANARDSTACK_QUERY_MAX_LOG_LINES` (default 1,000,000). Not limited by the number of lines. Under a `sum` (`sum by (service_name) (count_over_time(...))`), streams are first reduced to the labels the selector and the `by (...)` use, when each is a column with a value in every row of the window; any label only an attribute supplies, a gap in a column, or `without (...)` keeps every stream. |
 | A log query (not a metric) | Reads the newest (or, with `direction=forward`, the oldest) rows in the database with `ORDER BY ... LIMIT`, a few times `limit` at first, and more only when a stage dropped too many to fill the limit. | At most `CANARDSTACK_QUERY_MAX_LOG_LINES` rows read; a query that cannot find `limit` matching lines within that is refused. |
 | Any other metric query (regex filters, parsers, `unwrap`, other range functions) | Every matching line is read into memory and evaluated per line. | More than `CANARDSTACK_QUERY_MAX_LOG_LINES` matching lines is refused with HTTP 422 and "narrow the selector or the time range". |
 
 Tests: `loki_counted_range_aggregations_match_reading_the_lines` runs the counted shapes and the
 line-reading path on the same data and requires equal answers;
+`loki_sums_over_reduced_streams_match_reading_the_lines` does the same for `sum by (...)` over data built to break the reduction (empty and missing columns, attributes that shadow a column);
 `loki_line_cap_bounds_reading_but_not_counting_or_limits` runs with a cap smaller than the data.
 Before this was written down, the cap was an undocumented constant of 1,000,000 that no test reached.
 
