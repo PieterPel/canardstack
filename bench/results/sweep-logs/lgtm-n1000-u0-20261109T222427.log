@@ -1,0 +1,53 @@
+Error: no container with name or ID "bench-lgtm_tempo_1" found: no such container
+Error: no container with name or ID "bench-lgtm_mimir_1" found: no such container
+Error: no container with name or ID "bench-lgtm_loki_1" found: no such container
+Error: no container with ID or name "bench-lgtm_mimir_1" found: no such container
+Error: no container with ID or name "bench-lgtm_tempo_1" found: no such container
+Error: no container with ID or name "bench-lgtm_loki_1" found: no such container
+Error: unable to find pod "pod_bench-lgtm": no such pod
+72f7f19a86b5799b0ba121bd0ca18958768a0e90d2d445cec751ae91df5bfb01
+3f691db8cd2f3312fccbe58bfd8e90094d65e3ae13e565034051fb7abd333618
+74939379ad755b6b16b256a24ec8833a5b03281b76c4ed15a311e491e6e37b95
+c3f8d2293f3d6c5173d663d71e6df4227b84e792339dde228cf9c48f14997842
+b7871bee1d9bdb9eb4607f5139d70015cbc748282e5b71110462c7255c170e2d
+46cea12c8e8661adc707a05e47ec7aa27bb7e78a60e602df625b380b01098595
+4ce0eeba2157945f659cbe647415a85a0535bdc5e80f6686b920f839cdef8db3
+bench-lgtm_loki_1
+bench-lgtm_tempo_1
+bench-lgtm_mimir_1
+bench-lgtm_tempo_1
+bench-lgtm_loki_1
+bench-lgtm_mimir_1
+bench-lgtm_mimir_1
+bench-lgtm_tempo_1
+bench-lgtm_loki_1
+bench-lgtm_loki-data
+bench-lgtm_tempo-data
+bench-lgtm_mimir-data
+c3f8d2293f3d6c5173d663d71e6df4227b84e792339dde228cf9c48f14997842
+bench-lgtm_default
+ingest logs: 0.16s {'204': 25}
+ingest metrics: 0.16s {'200': 25}
+ingest traces: 0.28s {'200': 25}
+visibility logs: {'visible_seconds_after_accept': 0.53013014793396, 'timed_out': False}
+visibility metrics: {'visible_seconds_after_accept': 0.453510046005249, 'timed_out': False}
+visibility traces: {'visible_seconds_after_accept': 0.20306110382080078, 'timed_out': False}
+settle: log_count_over_time=0.9s, log_count_all=1.0s, log_count_by_service=1.1s, log_regex_count=1.1s, log_newest=1.1s, metric_sum_over_time=1.0s, metric_count_over_time=1.0s, metric_max_counter=1.0s, metric_sum_all=1.0s, trace_search=10.8s
+query log_lines        ok=15/15 wrong=0 err=0 p50=7.2ms rounds p50 6.9-9.8
+query log_error_lines  ok=15/15 wrong=0 err=0 p50=4.2ms rounds p50 3.7-4.3
+query gauge_range_max  ok=15/15 wrong=0 err=0 p50=2.3ms rounds p50 2.2-2.9
+query gauge_last       ok=15/15 wrong=0 err=0 p50=2.3ms rounds p50 2.0-2.4
+query sum_last         ok=15/15 wrong=0 err=0 p50=2.2ms rounds p50 2.2-2.6
+query gauge_points     ok=15/15 wrong=0 err=0 p50=3.0ms rounds p50 2.5-3.3
+query trace_by_id      ok=15/15 wrong=0 err=0 p50=9.5ms rounds p50 7.3-11.0
+query log_count_over_time ok=15/15 wrong=0 err=0 p50=4.4ms rounds p50 4.2-6.5
+query log_count_all    ok=15/15 wrong=0 err=0 p50=8.0ms rounds p50 6.8-9.0
+query log_count_by_service ok=15/15 wrong=0 err=0 p50=9.5ms rounds p50 8.3-9.7
+query log_regex_count  ok=15/15 wrong=0 err=0 p50=4.4ms rounds p50 4.1-5.3
+query log_newest       ok=15/15 wrong=0 err=0 p50=4.3ms rounds p50 4.3-4.4
+query metric_sum_over_time ok=15/15 wrong=0 err=0 p50=2.2ms rounds p50 2.1-3.2
+query metric_count_over_time ok=15/15 wrong=0 err=0 p50=2.2ms rounds p50 2.1-2.4
+query metric_max_counter ok=15/15 wrong=0 err=0 p50=2.3ms rounds p50 2.3-2.3
+query metric_sum_all   ok=15/15 wrong=0 err=0 p50=2.7ms rounds p50 2.7-3.5
+query trace_search     ok=15/15 wrong=0 err=0 p50=5.6ms rounds p50 5.3-5.8
+wrote /Users/pieterpel/home/private-projects/canardstack/bench/results/lgtm-20261109T222523.json

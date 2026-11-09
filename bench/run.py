@@ -185,25 +185,28 @@ def ingest(backend: Backend, workload: Workload, concurrency: int) -> Dict[str, 
     results: Dict[str, dict] = {}
     for signal, make in sources.items():
         url, headers = backend.ingest[signal]
-        # Each service's batches are generated while they are sent, in timestamp order (backends
-        # like Mimir reject out-of-order samples within a series), so memory stays flat however
-        # large the workload is; services are sent in parallel.
+        # Batches are generated while they are sent, so memory stays flat however large the workload
+        # is, and sent in lockstep: batch j of every service goes out (in parallel) before batch
+        # j + 1 of any. A backend keeps one notion of "now" for all series (Mimir's head), and rejects
+        # samples that are too old against it, so services that raced ahead of each other by hours of
+        # timestamps would be refused. Real telemetry arrives in time order too.
         statuses: Dict[str, int] = {}
         sent = [0]
         lock = threading.Lock()
 
-        def send_service(i: int) -> None:
-            for payload in make([i]):
-                status, body = post(url, signal, payload, headers)
-                with lock:
-                    sent[0] += 1
-                    statuses[str(status)] = statuses.get(str(status), 0) + 1
-                    if status >= 300 and statuses[str(status)] == 1:
-                        print(f"  ! {signal} HTTP {status}: {body[:160]!r}")
+        def send(payload: dict) -> None:
+            status, body = post(url, signal, payload, headers)
+            with lock:
+                sent[0] += 1
+                statuses[str(status)] = statuses.get(str(status), 0) + 1
+                if status >= 300 and statuses[str(status)] == 1:
+                    print(f"  ! {signal} HTTP {status}: {body[:160]!r}")
 
         started = time.perf_counter()
+        streams = [make([i]) for i in range(workload.services)]
         with ThreadPoolExecutor(concurrency) as pool:
-            list(pool.map(send_service, range(workload.services)))
+            for batch in zip(*streams):
+                list(pool.map(send, batch))
         elapsed = time.perf_counter() - started
         rows = {"logs": workload.total()["logs"],
                 "metrics": workload.total()["gauge_points"] + workload.total()["sum_points"],

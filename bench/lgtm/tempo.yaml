@@ -18,5 +18,15 @@ storage:
       path: /var/tempo/wal
     local:
       path: /var/tempo/blocks
+# The defaults cap live traces at 10,000 per tenant and drop the spans of the rest (the metric
+# tempo_discarded_spans_total{reason="live_traces_exceeded"}). The benchmark sends tens of thousands of
+# traces faster than the ingester closes them, so, like Loki and Mimir above, Tempo is configured
+# to take the whole load instead of silently losing most of it.
+overrides:
+  defaults:
+    ingestion:
+      max_traces_per_user: 10000000
+      rate_limit_bytes: 200000000
+      burst_size_bytes: 400000000
 usage_report:
   reporting_enabled: false
