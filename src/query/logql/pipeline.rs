@@ -9,6 +9,12 @@ use logql_syntax::ast::*;
 use regex::Regex;
 use std::sync::OnceLock;
 
+/// The terminal colour and cursor escape sequences `decolorize` removes, compiled once.
+fn ansi_escapes() -> &'static Regex {
+    static ANSI: OnceLock<Regex> = OnceLock::new();
+    ANSI.get_or_init(|| Regex::new("\x1b\\[[0-9;]*[A-Za-z]").expect("static regex"))
+}
+
 const ERROR: &str = "__error__";
 const ERROR_DETAILS: &str = "__error_details__";
 
@@ -316,11 +322,7 @@ impl Pipeline {
                     }
                 }
                 Compiled::Decolorize => {
-                    static ANSI: OnceLock<Regex> = OnceLock::new();
-                    let re = ANSI.get_or_init(|| {
-                        Regex::new("\x1b\\[[0-9;]*[A-Za-z]").expect("static regex")
-                    });
-                    line = re.replace_all(&line, "").into_owned();
+                    line = ansi_escapes().replace_all(&line, "").into_owned();
                 }
                 Compiled::LabelFormat(items) => {
                     for (dst, fmt) in items {

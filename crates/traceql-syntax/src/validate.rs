@@ -593,7 +593,7 @@ pub fn regex_syntax_ok(pattern: &str) -> bool {
                     continue;
                 }
                 Repeat::Invalid => return false,
-                Repeat::NotARepeat => {
+                Repeat::Literal => {
                     repeatable = true;
                     after_repeat = false;
                 }
@@ -623,12 +623,12 @@ enum Repeat {
     /// Written like a repeat but with counts a regex engine rejects.
     Invalid,
     /// Just a literal `{`.
-    NotARepeat,
+    Literal,
 }
 
 fn repeat_at(chars: &[char], start: usize) -> Repeat {
     let Some(close) = (start..chars.len()).find(|&i| chars[i] == '}') else {
-        return Repeat::NotARepeat;
+        return Repeat::Literal;
     };
     let body: String = chars[start + 1..close].iter().collect();
     let digits = |t: &str| !t.is_empty() && t.chars().all(|c| c.is_ascii_digit());
@@ -642,7 +642,7 @@ fn repeat_at(chars: &[char], start: usize) -> Repeat {
             },
         ),
         None if digits(&body) => (body.parse::<u32>(), body.parse::<u32>().map(Some)),
-        _ => return Repeat::NotARepeat,
+        _ => return Repeat::Literal,
     };
     let (Ok(min), Ok(max)) = (min, max) else {
         return Repeat::Invalid;

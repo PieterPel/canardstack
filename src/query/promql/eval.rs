@@ -96,7 +96,6 @@ impl Ev<'_> {
     }
 
     /// Applies `f` to the samples in the left-open window `(t - range, t]` at every step.
-
     pub(super) fn windowed(
         &self,
         arg: &Expr,

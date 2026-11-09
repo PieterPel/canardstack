@@ -845,32 +845,38 @@ fn top(series: Vec<Series>, n: i64, steps: usize, highest: bool) -> Vec<Series> 
         })
         .collect();
     let mut kept: Vec<Vec<Option<f64>>> = vec![vec![None; steps]; series.len()];
-    for step in 0..steps {
-        let mut at: Vec<(usize, f64)> = series
-            .iter()
-            .enumerate()
-            .filter_map(|(i, s)| {
-                Some((
-                    i,
-                    s.samples
-                        .get(step)
-                        .copied()
-                        .flatten()
-                        .filter(|x| !x.is_nan())?,
-                ))
-            })
-            .collect();
-        at.sort_by(|a, b| {
-            let by_value = if highest {
-                b.1.partial_cmp(&a.1)
-            } else {
-                a.1.partial_cmp(&b.1)
-            };
-            by_value
-                .unwrap_or(std::cmp::Ordering::Equal)
-                .then_with(|| keys[a.0].cmp(&keys[b.0]))
-        });
-        for (i, v) in at.into_iter().take(n) {
+    let picks: Vec<Vec<(usize, f64)>> = (0..steps)
+        .map(|step| {
+            let mut at: Vec<(usize, f64)> = series
+                .iter()
+                .enumerate()
+                .filter_map(|(i, s)| {
+                    Some((
+                        i,
+                        s.samples
+                            .get(step)
+                            .copied()
+                            .flatten()
+                            .filter(|x| !x.is_nan())?,
+                    ))
+                })
+                .collect();
+            at.sort_by(|a, b| {
+                let by_value = if highest {
+                    b.1.partial_cmp(&a.1)
+                } else {
+                    a.1.partial_cmp(&b.1)
+                };
+                by_value
+                    .unwrap_or(std::cmp::Ordering::Equal)
+                    .then_with(|| keys[a.0].cmp(&keys[b.0]))
+            });
+            at.truncate(n);
+            at
+        })
+        .collect();
+    for (step, chosen) in picks.into_iter().enumerate() {
+        for (i, v) in chosen {
             kept[i][step] = Some(v);
         }
     }

@@ -342,7 +342,7 @@ pub fn aggregate(
         let k = param.ok_or("topk and bottomk need a k")?;
         for members in groups.values() {
             let mut kept: HashMap<usize, Vec<Option<f64>>> = HashMap::new();
-            for step in 0..steps {
+            for (step, &keep) in k.iter().enumerate().take(steps) {
                 let mut present: Vec<(usize, f64)> = members
                     .iter()
                     .filter_map(|&i| input[i].vals[step].map(|v| (i, v)))
@@ -354,7 +354,7 @@ pub fn aggregate(
                         a.1.total_cmp(&b.1)
                     }
                 });
-                for (i, v) in present.into_iter().take(k[step].max(0.0) as usize) {
+                for (i, v) in present.into_iter().take(keep.max(0.0) as usize) {
                     kept.entry(i).or_insert_with(|| vec![None; steps])[step] = Some(v);
                 }
             }

@@ -146,8 +146,11 @@ pub fn logfmt_extract(line: &str, wanted: &[Extraction]) -> Result<Vec<(String, 
         .collect())
 }
 
+/// The labels of a packed line, and the original line when it carried one.
+pub type Unpacked = (Vec<(String, String)>, Option<String>);
+
 /// Packed lines (`{"_entry": "...", "k": "v"}`): the labels, and the original line.
-pub fn unpack(line: &str) -> Result<(Vec<(String, String)>, Option<String>), String> {
+pub fn unpack(line: &str) -> Result<Unpacked, String> {
     let Value::Object(map) = serde_json::from_str::<Value>(line).map_err(|e| e.to_string())? else {
         return Err("the line is not a JSON object".to_string());
     };

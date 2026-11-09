@@ -162,6 +162,18 @@ pub fn stored_name_candidates(prom: &str) -> Vec<String> {
     out
 }
 
+/// The part of a histogram's series name that says which of its series it is.
+pub const HISTOGRAM_COMPONENTS: [&str; 3] = ["_bucket", "_sum", "_count"];
+
+/// `le` label text for a bucket bound, as Prometheus prints it.
+pub fn le_text(bound: Option<f64>) -> String {
+    match bound {
+        Some(b) if b.is_finite() => b.to_string(),
+        Some(b) if b < 0.0 => "-Inf".to_string(),
+        _ => "+Inf".to_string(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -205,17 +217,5 @@ mod tests {
         assert!(c.contains(&"http_server_duration_seconds".to_string()));
         let c = stored_name_candidates("net_rate_bytes_per_second_total");
         assert!(c.contains(&"net_rate".to_string()));
-    }
-}
-
-/// The part of a histogram's series name that says which of its series it is.
-pub const HISTOGRAM_COMPONENTS: [&str; 3] = ["_bucket", "_sum", "_count"];
-
-/// `le` label text for a bucket bound, as Prometheus prints it.
-pub fn le_text(bound: Option<f64>) -> String {
-    match bound {
-        Some(b) if b.is_finite() => b.to_string(),
-        Some(b) if b < 0.0 => "-Inf".to_string(),
-        _ => "+Inf".to_string(),
     }
 }
