@@ -15,6 +15,10 @@ pub(super) struct Req {
     pub(super) key: String,
     vs: VectorSelector,
     window_ms: i64,
+    /// An instant selector at the top level of the query, which only ever looks at the newest sample
+    /// at or before each step: the database then keeps one sample per series and step instead of every
+    /// sample of the lookback window. Not inside a subquery, whose steps are finer than the grid's.
+    reduce: bool,
 }
 
 /// One stored series: float samples, or native histogram samples (never both).
@@ -32,8 +36,8 @@ pub(super) fn offset_ms(vs: &VectorSelector) -> i64 {
     }
 }
 
-pub(super) fn selector_key(vs: &VectorSelector, window_ms: i64) -> String {
-    format!("{vs}#{window_ms}")
+pub(super) fn selector_key(vs: &VectorSelector, window_ms: i64, reduce: bool) -> String {
+    format!("{vs}#{window_ms}{}", if reduce { "r" } else { "" })
 }
 
 /// Subquery step used when `[range:]` leaves it out (Prometheus' default evaluation interval).
@@ -58,8 +62,10 @@ pub(super) fn collect(expr: &Expr, out: &mut Vec<Req>) -> ApiResult<()> {
 
 fn collect_with(expr: &Expr, out: &mut Vec<Req>, extra: i64) -> ApiResult<()> {
     match expr {
-        Expr::VectorSelector(vs) => push_req(vs, LOOKBACK_MS + extra, out),
-        Expr::MatrixSelector(ms) => push_req(&ms.vs, ms.range.as_millis() as i64 + extra, out),
+        Expr::VectorSelector(vs) => push_req(vs, LOOKBACK_MS + extra, extra == 0, out),
+        Expr::MatrixSelector(ms) => {
+            push_req(&ms.vs, ms.range.as_millis() as i64 + extra, false, out)
+        }
         Expr::Call(call) => call
             .args
             .args
@@ -88,19 +94,25 @@ fn collect_with(expr: &Expr, out: &mut Vec<Req>, extra: i64) -> ApiResult<()> {
     }
 }
 
-fn push_req(vs: &VectorSelector, window_ms: i64, out: &mut Vec<Req>) -> ApiResult<()> {
+fn push_req(
+    vs: &VectorSelector,
+    window_ms: i64,
+    reduce: bool,
+    out: &mut Vec<Req>,
+) -> ApiResult<()> {
     if vs.at.is_some() {
         return Err(unsupported("the @ modifier is not supported"));
     }
     if !vs.matchers.or_matchers.is_empty() {
         return Err(unsupported("`or` between label matchers is not supported"));
     }
-    let key = selector_key(vs, window_ms);
+    let key = selector_key(vs, window_ms, reduce);
     if !out.iter().any(|r| r.key == key) {
         out.push(Req {
             key,
             vs: vs.clone(),
             window_ms,
+            reduce,
         });
     }
     Ok(())
@@ -282,7 +294,26 @@ pub(super) fn fetch(
                 "",
             ));
         }
-        let sql = format!("{} LIMIT {}", parts.join(" UNION ALL "), MAX_SAMPLES + 1);
+        let union = parts.join(" UNION ALL ");
+        let sql = if req.reduce {
+            // Step `i` looks at the newest sample at or before `grid.ts(i) - off`, so a sample can
+            // only matter if it is the newest of its series in the span of steps it falls in: bucket
+            // `b` holds the samples in `(ts(b - 1), ts(b)]`, and the first bucket everything before.
+            let bucket = if grid.steps > 1 && grid.step_ms > 0 {
+                format!(
+                    "(greatest(t + {off} - {}, 0) + {} - 1) // {}",
+                    grid.start_ms, grid.step_ms, grid.step_ms
+                )
+            } else {
+                "0".to_string()
+            };
+            format!(
+                "SELECT * FROM ({union}) QUALIFY row_number() OVER (PARTITION BY name, sid, comp, le, {bucket} ORDER BY t DESC) = 1 LIMIT {}",
+                MAX_SAMPLES + 1
+            )
+        } else {
+            format!("{union} LIMIT {}", MAX_SAMPLES + 1)
+        };
         let native_sql = (has_native && compiled.native).then(|| {
             format!(
                 "SELECT name, concat_ws(chr(31), coalesce(service_name, ''), coalesce(service_namespace, ''), coalesce(service_instance_id, ''), coalesce(CAST(resource_attributes AS VARCHAR), ''), coalesce(scope_name, ''), coalesce(CAST(metric_attributes AS VARCHAR), '')) AS sid, epoch_ms(time_unix_nano) AS t, scale, count, sum, zero_count, positive_offset, to_json(positive_bucket_counts), negative_offset, to_json(negative_bucket_counts), {SERIES_COLUMNS}, unit, zero_threshold FROM {{prefix}}{} WHERE {} LIMIT {}",

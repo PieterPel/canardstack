@@ -56,8 +56,21 @@ impl Ev<'_> {
     }
 
     pub(super) fn raw(&self, vs: &VectorSelector, window_ms: i64) -> ApiResult<&[Raw]> {
+        self.lookup(selector_key(vs, window_ms + self.extra_ms, false))
+    }
+
+    /// The samples of an instant selector, which at the top level are the newest per series and step.
+    pub(super) fn raw_instant(&self, vs: &VectorSelector) -> ApiResult<&[Raw]> {
+        self.lookup(selector_key(
+            vs,
+            LOOKBACK_MS + self.extra_ms,
+            self.extra_ms == 0,
+        ))
+    }
+
+    fn lookup(&self, key: String) -> ApiResult<&[Raw]> {
         self.data
-            .get(&selector_key(vs, window_ms + self.extra_ms))
+            .get(&key)
             .map(Vec::as_slice)
             .ok_or_else(|| exec_err("selector was not fetched"))
     }
@@ -71,7 +84,7 @@ impl Ev<'_> {
     ) -> ApiResult<Vec<Series>> {
         let off = offset_ms(vs);
         let mut out = Vec::new();
-        for raw in self.raw(vs, LOOKBACK_MS)? {
+        for raw in self.raw_instant(vs)? {
             let mut vals = vec![None; self.n()];
             for (i, slot) in vals.iter_mut().enumerate() {
                 let t = self.grid.ts(i) - off;

@@ -203,11 +203,7 @@ impl Ev<'_> {
     pub(super) fn hist_instant(&self, vs: &VectorSelector) -> ApiResult<Vec<SSeries>> {
         let off = offset_ms(vs);
         let mut out = Vec::new();
-        for raw in self
-            .raw(vs, LOOKBACK_MS)?
-            .iter()
-            .filter(|r| !r.hists.is_empty())
-        {
+        for raw in self.raw_instant(vs)?.iter().filter(|r| !r.hists.is_empty()) {
             let mut vals: Vec<Option<Sample>> = vec![None; self.n()];
             for (i, slot) in vals.iter_mut().enumerate() {
                 let t = self.grid.ts(i) - off;

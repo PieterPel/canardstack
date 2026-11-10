@@ -2144,3 +2144,102 @@ fn traceql_search_refuses_a_single_trace_above_the_span_cap() {
         "{body}"
     );
 }
+
+/// Three gauge series `orc` with irregular samples 700 ms apart over 17 minutes, with a gap of nearly
+/// six minutes in the middle (longer than the 5 minute lookback) and one series that stops early.
+fn app_with_irregular_gauges() -> (tempfile::TempDir, AppState) {
+    let dir = tempdir().unwrap();
+    let mut config = Config::test(dir.path().join("canardstack.duckdb"));
+    config.operator.local_storage_dir = dir.path().join("storage");
+    let state = AppState::new_with_storage_hook_for_tests(config, |storage| {
+        storage
+            .with_conn(|conn, prefix| {
+                conn.execute_batch(&format!(
+                    "INSERT INTO {prefix}otlp_metrics_gauge \
+                     (time_unix_nano, name, double_value, service_name, resource_attributes, metric_attributes) \
+                     SELECT TIMESTAMP_NS '2026-01-01 00:00:00' + INTERVAL (i * 700 + s) MILLISECOND, 'orc', \
+                            (i * (s + 3)) % 13, 'svc' || s, '{{}}', '{{}}' \
+                     FROM range(1500) r(i), range(3) q(s) \
+                     WHERE NOT (i BETWEEN 300 AND 800) AND NOT (s = 2 AND i > 1000);"
+                ))?;
+                Ok(())
+            })
+            .unwrap();
+    })
+    .unwrap();
+    (dir, state)
+}
+
+fn prom_series(state: &AppState, path: &str, query: &str, extra: &[(&str, &str)]) -> Vec<Value> {
+    let mut params = vec![("query", query)];
+    params.extend_from_slice(extra);
+    let mut series = prom_get(state, path, &params)["data"]["result"]
+        .as_array()
+        .unwrap()
+        .clone();
+    series.sort_by_key(|s| s["metric"].to_string());
+    series
+}
+
+/// An instant selector reads only the newest sample per series and step. That must change nothing:
+/// `last_over_time(x[5m])` is the same question answered from every sample of the window, so the two
+/// must agree for every step width, offset, aggregation and time, including in a gap longer than the
+/// lookback, on the exact timestamp of a sample, and before the first one.
+#[test]
+fn promql_instant_selectors_match_last_over_time_over_every_sample() {
+    let (_dir, state) = app_with_irregular_gauges();
+    for step in ["1", "7", "15", "60", "299", "300", "301"] {
+        for offset in ["", " offset 45s", " offset 10m"] {
+            for (reduced, full) in [
+                (
+                    format!("orc{offset}"),
+                    format!("last_over_time(orc[5m]{offset})"),
+                ),
+                (
+                    format!("sum(orc{offset})"),
+                    format!("sum(last_over_time(orc[5m]{offset}))"),
+                ),
+                (
+                    format!(r#"max by (job) (orc{{job=~"svc[01]"}}{offset})"#),
+                    format!(r#"max by (job) (last_over_time(orc{{job=~"svc[01]"}}[5m]{offset}))"#),
+                ),
+            ] {
+                let range = [
+                    ("start", "1767225590"),
+                    ("end", "1767226700"),
+                    ("step", step),
+                ];
+                assert_eq!(
+                    prom_series(&state, "/api/v1/query_range", &reduced, &range),
+                    prom_series(&state, "/api/v1/query_range", &full, &range),
+                    "{reduced} step {step}"
+                );
+            }
+        }
+    }
+    // Instant queries: before the data, on a sample's own millisecond, in the gap, after the end.
+    for time in [
+        "1767225500",
+        "1767225600",
+        "1767225600.7",
+        "1767225601.4",
+        "1767225700.1",
+        "1767225850",
+        "1767225930",
+        "1767226200",
+        "1767226500",
+        "1767226650.5",
+        "1767227500",
+    ] {
+        assert_eq!(
+            prom_series(&state, "/api/v1/query", "orc", &[("time", time)]),
+            prom_series(
+                &state,
+                "/api/v1/query",
+                "last_over_time(orc[5m])",
+                &[("time", time)]
+            ),
+            "instant at {time}"
+        );
+    }
+}
