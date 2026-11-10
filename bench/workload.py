@@ -11,7 +11,13 @@ import math
 from dataclasses import dataclass
 from typing import Dict, Iterable, Iterator, List, Optional
 
+# Sample spacing is one second, or less for large workloads so the whole dataset spans at most
+# SPAN_NS: a backend serves recent data from its ingesters and older data from blocks that are
+# flushed and synced on a schedule (Mimir's store-gateway syncs every 15 minutes, Loki queries
+# ingesters only for the last 3 hours, Tempo for 30 minutes), so back-dating hours of data makes
+# part of it invisible for a while. Real telemetry arrives about when it is stamped.
 STEP_NS = 1_000_000_000
+SPAN_NS = 1_500_000_000_000
 BATCH = 200
 
 
@@ -41,24 +47,48 @@ class Workload:
     @property
     def window_s(self) -> int:
         """Seconds a `[W]` range selector needs to reach every sample from the last one."""
-        return self.records + 60
+        return self.span_s + 60
 
     @property
     def points_step(self) -> int:
-        """Step of the full-resolution range query, wide enough to stay under 11,000 points."""
-        return max(1, -(-self.records // 5000))
+        """Step in seconds of the full-resolution range query, wide enough to stay under 5,000 points."""
+        return max(1, -(-self.span_s // 5000))
+
+    @property
+    def points_count(self) -> int:
+        """Points that range query returns: one per step from the first sample to the last."""
+        return (self.last_ms - self.base_ns // 1_000_000) // (self.points_step * 1000) + 1
 
     @property
     def peak_step(self) -> int:
-        """Step of the coarse range query. It is coprime with 7, the sawtooth period, so the
-        sampled points still reach the peak, and wide enough to stay under 11,000 points."""
-        step = max(15, -(-self.records // 10000))
-        while math.gcd(step, 7) != 1:
-            step += 1
-        return step
+        """Step in seconds of the coarse range query; each point is the newest sample at or before it."""
+        return 15
+
+    def peak_indices(self) -> List[int]:
+        start_ms = self.base_ns // 1_000_000
+        count = (self.last_ms - start_ms) // (self.peak_step * 1000) + 1
+        return [self.sample_at(start_ms + g * self.peak_step * 1000) for g in range(count)]
+
+    @property
+    def step_ns(self) -> int:
+        return min(STEP_NS, SPAN_NS // max(1, self.records))
 
     def ts(self, k: int) -> int:
-        return self.base_ns + k * STEP_NS
+        return self.base_ns + k * self.step_ns
+
+    @property
+    def last_ms(self) -> int:
+        """Millisecond timestamp, rounded up, of the last sample: the `time` or `end` of a query
+        that must see all of them (Prometheus timestamps have millisecond resolution)."""
+        return -(-self.ts(self.records - 1) // 1_000_000)
+
+    @property
+    def span_s(self) -> int:
+        return -(-(self.records - 1) * self.step_ns // 1_000_000_000)
+
+    def sample_at(self, t_ms: int) -> int:
+        """Index of the newest sample at or before `t_ms` (what an instant or range query returns)."""
+        return min(self.records - 1, max(0, (t_ms * 1_000_000 - self.base_ns) // self.step_ns))
 
     def trace_id(self, i: int, k: int) -> str:
         return hashlib.md5(f"{self.seed}:{self.run}:{i}:{k}".encode()).hexdigest()
@@ -93,8 +123,8 @@ class Workload:
             "gauge_last": self.gauge_value(i, n - 1),
             # Peak of the sawtooth seen by the coarse range query: every residue of k mod 7 is
             # sampled once there are at least 7 steps.
-            "gauge_range_max": max(self.gauge_value(i, k) for k in range(0, n, self.peak_step)),
-            "gauge_count": (n - 1) // self.points_step + 1,
+            "gauge_range_max": max(self.gauge_value(i, k) for k in self.peak_indices()),
+            "gauge_count": self.points_count,
             "sum_last": self.sum_value(n - 1),
             "trace_spans": 2,
             # Shapes that read or count every record of the service (see backends.py).

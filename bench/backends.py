@@ -114,8 +114,9 @@ def _window(w: Workload) -> Tuple[int, int]:
     return w.base_ns // 10**9 - 60, w.ts(w.records - 1) // 10**9 + 60
 
 
-def _last(w: Workload) -> int:
-    return w.ts(w.records - 1) // 10**9
+def _last(w: Workload) -> str:
+    """Time of the last sample for a query's `time` or `end`, in seconds with millisecond digits."""
+    return f"{w.last_ms / 1000:.3f}"
 
 
 def _prom_queries(base: str, label: str, prefix: str, headers: Dict[str, str],
@@ -189,7 +190,7 @@ def _scale_queries(loki: str, prom: str, prom_prefix: str, tempo: str, headers: 
 
     def logql(expr: Callable[[Workload, int], str]):
         return lambda w, i: (
-            f"{loki}/loki/api/v1/query?time={_last(w) + 1}&query={q(expr(w, i))}", headers)
+            f"{loki}/loki/api/v1/query?time={(w.last_ms + 1000) / 1000:.3f}&query={q(expr(w, i))}", headers)
 
     def promql(expr: Callable[[Workload, int], str]):
         return lambda w, i: (
