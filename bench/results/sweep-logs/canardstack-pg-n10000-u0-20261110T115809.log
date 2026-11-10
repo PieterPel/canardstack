@@ -1,0 +1,61 @@
+VM clock skew +0.15s
+Error: no container with name or ID "bench-canardstack-pg_postgres_1" found: no such container
+Error: no container with name or ID "bench-canardstack-pg_canardstack_1" found: no such container
+Error: no container with name or ID "bench-canardstack-pg_init_1" found: no such container
+Error: no container with name or ID "bench-canardstack-pg_ingest_1" found: no such container
+Error: no container with ID or name "bench-canardstack-pg_canardstack_1" found: no such container
+Error: no container with ID or name "bench-canardstack-pg_ingest_1" found: no such container
+Error: no container with ID or name "bench-canardstack-pg_postgres_1" found: no such container
+Error: no container with ID or name "bench-canardstack-pg_init_1" found: no such container
+Error: unable to find pod "pod_bench-canardstack-pg": no such pod
+f7bbaec1bd0330a8dba26f03e05f421bb3c8b807bb41873df3c3b0c3d1083d8f
+deeaa4982382a733e480eeff5c00a8a0a233ff3b8318bf4a351b114bb4898345
+bbdfc26f27f4b2fecdc289b63295a0228cab33657a7b859afe54dc78d184dd1d
+8c73ede94eae627fa95bd9e82d6a2bd533bdb758a0da0132e463486862340e32
+3b0bef12bac71e34dad0554600b7da1c27bf55e337414ea5c28e0ffd400b7041
+79c11a4b82673bfbc9e4984d91fe1a1fe44061607196f69e119207737975aea7
+02226e54245734fdbee97eaf237c1f8531e859af0c96a8f476dc228ef0b30223
+e4b52a0f3dcd81f53cd9d0aab3cafcb76e59301ee321925256f76eef0c4da097
+d2798cd8ff3a7ccff0019e14c8212e6d249116012de4f1d1bbbaa422a1fb9067
+bench-canardstack-pg_init_1
+bench-canardstack-pg_postgres_1
+bench-canardstack-pg_ingest_1
+Error: unable to start container "d2798cd8ff3a7ccff0019e14c8212e6d249116012de4f1d1bbbaa422a1fb9067": starting some containers: internal libpod error
+ingest logs: 0.65s {'202': 250}
+ingest metrics: 0.67s {'202': 250}
+ingest traces: 1.34s {'202': 250}
+visibility logs: {'visible_seconds_after_accept': 5.674999952316284, 'timed_out': False}
+visibility metrics: {'visible_seconds_after_accept': 5.441401958465576, 'timed_out': False}
+visibility traces: {'visible_seconds_after_accept': 4.21285605430603, 'timed_out': False}
+settle: log_count_over_time=6.6s, log_count_all=6.7s, log_count_by_service=6.8s, log_regex_count=6.9s, log_newest=6.9s, metric_sum_over_time=6.3s, metric_count_over_time=6.4s, metric_max_counter=6.5s, metric_sum_all=6.6s, trace_search=5.5s
+query log_lines        ok=15/15 wrong=0 err=0 p50=12.0ms rounds p50 11.8-16.5
+query log_error_lines  ok=15/15 wrong=0 err=0 p50=21.0ms rounds p50 15.0-21.0
+query gauge_range_max  ok=15/15 wrong=0 err=0 p50=23.6ms rounds p50 21.8-24.8
+query gauge_last       ok=15/15 wrong=0 err=0 p50=19.8ms rounds p50 15.7-23.8
+query sum_last         ok=15/15 wrong=0 err=0 p50=14.9ms rounds p50 13.0-25.9
+query gauge_points     ok=15/15 wrong=0 err=0 p50=26.5ms rounds p50 24.2-27.4
+query trace_by_id      ok=15/15 wrong=0 err=0 p50=20.1ms rounds p50 17.8-38.9
+query log_count_over_time ok=15/15 wrong=0 err=0 p50=24.3ms rounds p50 21.3-26.2
+query log_count_all    ok=15/15 wrong=0 err=0 p50=20.1ms rounds p50 19.9-20.8
+query log_count_by_service ok=15/15 wrong=0 err=0 p50=17.3ms rounds p50 15.6-22.7
+query log_regex_count  ok=15/15 wrong=0 err=0 p50=17.7ms rounds p50 14.4-20.3
+query log_newest       ok=15/15 wrong=0 err=0 p50=11.6ms rounds p50 10.8-15.2
+query metric_sum_over_time ok=15/15 wrong=0 err=0 p50=14.9ms rounds p50 14.5-15.6
+query metric_count_over_time ok=15/15 wrong=0 err=0 p50=16.0ms rounds p50 15.1-21.0
+query metric_max_counter ok=15/15 wrong=0 err=0 p50=17.5ms rounds p50 15.8-18.5
+query metric_sum_all   ok=15/15 wrong=0 err=0 p50=22.6ms rounds p50 19.8-25.2
+query trace_search     ok=15/15 wrong=0 err=0 p50=37.1ms rounds p50 35.3-43.4
+wrote /Users/pieterpel/home/private-projects/canardstack/bench/results/canardstack-pg-20261110T115910.json
+bench-canardstack-pg_init_1
+bench-canardstack-pg_canardstack_1
+bench-canardstack-pg_ingest_1
+bench-canardstack-pg_postgres_1
+bench-canardstack-pg_canardstack_1
+bench-canardstack-pg_ingest_1
+bench-canardstack-pg_postgres_1
+bench-canardstack-pg_init_1
+bench-canardstack-pg_ducklake-data
+bench-canardstack-pg_canardstack-data
+bench-canardstack-pg_pg-data
+3b0bef12bac71e34dad0554600b7da1c27bf55e337414ea5c28e0ffd400b7041
+bench-canardstack-pg_default

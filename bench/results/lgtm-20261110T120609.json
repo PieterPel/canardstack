@@ -1,17 +1,17 @@
 {
-  "stack": "canardstack-pg",
-  "started": "2026-11-10T10:42:16+0100",
+  "stack": "lgtm",
+  "started": "2026-11-10T12:06:09+0100",
   "workload": {
     "seed": 1,
     "services": 5,
-    "records": 200000,
-    "users": 0,
+    "records": 10000,
+    "users": 1000,
     "intents": "all",
     "totals": {
-      "logs": 1000000,
-      "gauge_points": 1000000,
-      "sum_points": 1000000,
-      "spans": 2000000
+      "logs": 50000,
+      "gauge_points": 50000,
+      "sum_points": 50000,
+      "spans": 100000
     }
   },
   "environment": {
@@ -19,12 +19,12 @@
     "podman_vm": "applehv 4 CPU / 8 GiB",
     "images": "# Pinned image tags for the comparison. Bump deliberately and record in results.\nLOKI_IMAGE=docker.io/grafana/loki:3.7.9\nTEMPO_IMAGE=docker.io/grafana/tempo:2.9.5\nMIMIR_IMAGE=docker.io/grafana/mimir:2.17.9\nVM_IMAGE=docker.io/victoriametrics/victoria-metrics:v1.155.0\nVL_IMAGE=docker.io/victoriametrics/victoria-logs:v1.53.0\nVT_IMAGE=docker.io/victoriametrics/victoria-traces:v0.12.1\nDUCKDB_OTLP_IMAGE=ghcr.io/smithclay/duckdb-otlp:0.7.3\nGRAFANA_IMAGE=docker.io/grafana/grafana-oss:12.4.3\nGRAFANA_RENDERER_IMAGE=docker.io/grafana/grafana-image-renderer:v5.12.10\nPOSTGRES_IMAGE=docker.io/library/postgres:17\n",
     "image_ids": {
-      "bench-canardstack-pg_postgres_1": "bbdfc26f27f4",
-      "bench-canardstack-pg_ingest_1": "8c73ede94eae",
-      "bench-canardstack-pg_canardstack_1": "f7c2911b543f"
+      "bench-lgtm_loki_1": "3f691db8cd2f",
+      "bench-lgtm_tempo_1": "74939379ad75",
+      "bench-lgtm_mimir_1": "72f7f19a86b5"
     },
     "git": {
-      "sha": "d0412b7508c8ea65268e8365158586b9e32dfc61",
+      "sha": "272b6c119b3eea4e56af427709e514e456d25350",
       "dirty": true
     },
     "resource_budget": "2 CPUs / 3 GiB per stack, enforced on the whole pod (--infra=false --share= --cpus=2 --memory=3g)",
@@ -36,8 +36,8 @@
     "background_cpu_pct_mean": 0.0,
     "note": "one benchmark stack at a time on the same VM; containers outside the stack (a developer compose stack) may be running, see background_cpu_pct_mean",
     "vm_clock_skew_s": {
-      "start": 0.1739208698272705,
-      "end": 0.3591957092285156
+      "start": 0.07781553268432617,
+      "end": 0.10009551048278809
     },
     "grafana_in_path": false,
     "collector_in_path": false
@@ -45,87 +45,87 @@
   "unsupported": {},
   "ingest": {
     "logs": {
-      "batches": 5000,
+      "batches": 250,
       "statuses": {
-        "202": 5000
+        "204": 250
       },
-      "seconds": 28.45952308300184,
-      "accepted_rows_per_s": 35137.62325122289,
-      "finished_at": 1794302874.1086888
+      "seconds": 1.2443791249970673,
+      "accepted_rows_per_s": 40180.68046594549,
+      "finished_at": 1794308730.33067
     },
     "metrics": {
-      "batches": 5000,
+      "batches": 250,
       "statuses": {
-        "202": 5000
+        "200": 250
       },
-      "seconds": 28.031269084000087,
-      "accepted_rows_per_s": 71348.89233900495,
-      "finished_at": 1794302902.14056
+      "seconds": 0.6746659170021303,
+      "accepted_rows_per_s": 148221.50857175174,
+      "finished_at": 1794308731.005574
     },
     "traces": {
-      "batches": 5000,
+      "batches": 250,
       "statuses": {
-        "202": 5000
+        "200": 250
       },
-      "seconds": 75.14710633300274,
-      "accepted_rows_per_s": 26614.46458280523,
-      "finished_at": 1794302977.288606
+      "seconds": 1.5856188339967048,
+      "accepted_rows_per_s": 63066.85935858896,
+      "finished_at": 1794308732.5912588
     }
   },
   "visibility": {
     "logs": {
-      "visible_seconds_after_accept": 103.97968006134033,
+      "visible_seconds_after_accept": 2.4656660556793213,
       "timed_out": false
     },
     "metrics": {
-      "visible_seconds_after_accept": 83.6593918800354,
+      "visible_seconds_after_accept": 1.8452379703521729,
       "timed_out": false
     },
     "traces": {
-      "visible_seconds_after_accept": 9.940348863601685,
+      "visible_seconds_after_accept": 0.27881431579589844,
       "timed_out": false
     }
   },
   "settle": {
     "log_count_over_time": {
-      "seconds_after_accept": 114.09530901908875,
+      "seconds_after_accept": 2.8322718143463135,
       "timed_out": false
     },
     "log_count_all": {
-      "seconds_after_accept": 114.8632321357727,
+      "seconds_after_accept": 2.994419813156128,
       "timed_out": false
     },
     "log_count_by_service": {
-      "seconds_after_accept": 116.1028401851654,
+      "seconds_after_accept": 3.1948187351226807,
       "timed_out": false
     },
     "log_regex_count": {
-      "seconds_after_accept": 117.94047999382019,
+      "seconds_after_accept": 3.241405963897705,
       "timed_out": false
     },
     "log_newest": {
-      "seconds_after_accept": 118.45642113685608,
+      "seconds_after_accept": 3.286115884780884,
       "timed_out": false
     },
     "metric_sum_over_time": {
-      "seconds_after_accept": 91.60351920127869,
+      "seconds_after_accept": 2.675410032272339,
       "timed_out": false
     },
     "metric_count_over_time": {
-      "seconds_after_accept": 92.71696090698242,
+      "seconds_after_accept": 2.7124500274658203,
       "timed_out": false
     },
     "metric_max_counter": {
-      "seconds_after_accept": 94.16752910614014,
+      "seconds_after_accept": 2.7409379482269287,
       "timed_out": false
     },
     "metric_sum_all": {
-      "seconds_after_accept": 95.36547613143921,
+      "seconds_after_accept": 2.763948917388916,
       "timed_out": false
     },
     "trace_search": {
-      "seconds_after_accept": null,
-      "timed_out": true
+      "seconds_after_accept": 9.270761251449585,
+      "timed_out": false
     }
   },
   "queries": {
@@ -141,18 +141,18 @@
         "first_wrong": null,
         "first_error": null,
         "latency_ms": {
-          "p50": 36.28020799806109,
-          "p95": 107.15579200041248,
-          "p99": 145.74349999747938,
-          "max": 145.74349999747938,
-          "mean": 51.255108266680814
+          "p50": 35.18216700467747,
+          "p95": 1633.6411669908557,
+          "p99": 1646.2277919927146,
+          "max": 1646.2277919927146,
+          "mean": 536.5066417318303
         },
         "round_p50_ms": [
-          29.809165993356146,
-          35.66208299889695,
-          81.24870800384087
+          25.264708005124703,
+          30.119083996396512,
+          1039.6319999999832
         ],
-        "throughput_qps": 27.758616622623602
+        "throughput_qps": 2.4216255035859695
       },
       "log_error_lines": {
         "signal": "logs",
@@ -165,18 +165,18 @@
         "first_wrong": null,
         "first_error": null,
         "latency_ms": {
-          "p50": 160.8384589999332,
-          "p95": 347.1686659977422,
-          "p99": 404.5594169947435,
-          "max": 404.5594169947435,
-          "mean": 185.06857779963562
+          "p50": 13.155707987607457,
+          "p95": 15.946083993185312,
+          "p99": 23.476250004023314,
+          "max": 23.476250004023314,
+          "mean": 14.062899999165287
         },
         "round_p50_ms": [
-          77.98758400167571,
-          224.293833001866,
-          160.8384589999332
+          15.16870800696779,
+          14.17037499777507,
+          12.732457995298319
         ],
-        "throughput_qps": 5.295400148092757
+        "throughput_qps": 73.13086682160562
       },
       "gauge_range_max": {
         "signal": "metrics",
@@ -189,18 +189,18 @@
         "first_wrong": null,
         "first_error": null,
         "latency_ms": {
-          "p50": 374.29683299706085,
-          "p95": 938.2873750000726,
-          "p99": 1068.0240420042537,
-          "max": 1068.0240420042537,
-          "mean": 460.43847486677504
+          "p50": 4.6642090019304305,
+          "p95": 5.862874997546896,
+          "p99": 6.084542008466087,
+          "max": 6.084542008466087,
+          "mean": 4.386930466474344
         },
         "round_p50_ms": [
-          362.854666003841,
-          402.95441699709045,
-          348.04741700645536
+          5.63095799589064,
+          4.5523750013671815,
+          2.813750004861504
         ],
-        "throughput_qps": 2.327554855495546
+        "throughput_qps": 218.00147145642143
       },
       "gauge_last": {
         "signal": "metrics",
@@ -213,18 +213,18 @@
         "first_wrong": null,
         "first_error": null,
         "latency_ms": {
-          "p50": 173.59900000155903,
-          "p95": 319.45433300279547,
-          "p99": 390.85324999905424,
-          "max": 390.85324999905424,
-          "mean": 176.48582213296322
+          "p50": 2.206625009421259,
+          "p95": 2.791917009744793,
+          "p99": 4.2745419923448935,
+          "max": 4.2745419923448935,
+          "mean": 2.303561134613119
         },
         "round_p50_ms": [
-          142.39858400105732,
-          173.59900000155903,
-          179.06287500227336
+          2.1049580100225285,
+          2.3050000017974526,
+          2.357667006435804
         ],
-        "throughput_qps": 5.53913433021816
+        "throughput_qps": 448.1876276500683
       },
       "sum_last": {
         "signal": "metrics",
@@ -237,18 +237,18 @@
         "first_wrong": null,
         "first_error": null,
         "latency_ms": {
-          "p50": 88.36383400193881,
-          "p95": 183.93604199809488,
-          "p99": 186.66245799977332,
-          "max": 186.66245799977332,
-          "mean": 102.65144726678652
+          "p50": 2.4661669885972515,
+          "p95": 3.3717079932102934,
+          "p99": 3.606709011364728,
+          "max": 3.606709011364728,
+          "mean": 2.625852733035572
         },
         "round_p50_ms": [
-          121.99683299695607,
-          88.36383400193881,
-          72.78645900078118
+          3.3245000086026266,
+          2.358625002671033,
+          2.109833003487438
         ],
-        "throughput_qps": 10.62441641676649
+        "throughput_qps": 387.1704715642443
       },
       "gauge_points": {
         "signal": "metrics",
@@ -261,18 +261,18 @@
         "first_wrong": null,
         "first_error": null,
         "latency_ms": {
-          "p50": 260.8734169989475,
-          "p95": 364.79229100223165,
-          "p99": 448.82283399783773,
-          "max": 448.82283399783773,
-          "mean": 281.07741666705505
+          "p50": 2.9971249896334484,
+          "p95": 4.298041996662505,
+          "p99": 4.436041010194458,
+          "max": 4.436041010194458,
+          "mean": 3.2835084003939605
         },
         "round_p50_ms": [
-          305.1234160011518,
-          272.4740420017042,
-          227.70333399967058
+          2.638791993376799,
+          3.0649170075776055,
+          4.032208991702646
         ],
-        "throughput_qps": 3.4748904264766276
+        "throughput_qps": 267.78302900970976
       },
       "trace_by_id": {
         "signal": "traces",
@@ -285,18 +285,18 @@
         "first_wrong": null,
         "first_error": null,
         "latency_ms": {
-          "p50": 178.9862500008894,
-          "p95": 205.68208299664548,
-          "p99": 235.38825000287034,
-          "max": 235.38825000287034,
-          "mean": 184.5998889330076
+          "p50": 67.3674590070732,
+          "p95": 102.41629200754687,
+          "p99": 157.29333300259896,
+          "max": 157.29333300259896,
+          "mean": 68.83742506712831
         },
         "round_p50_ms": [
-          174.49116700299783,
-          178.9862500008894,
-          184.05429200356593
+          88.41545799805317,
+          67.62849999358878,
+          51.192250000895
         ],
-        "throughput_qps": 5.555445218244995
+        "throughput_qps": 13.29916334954881
       },
       "log_count_over_time": {
         "signal": "logs",
@@ -309,18 +309,18 @@
         "first_wrong": null,
         "first_error": null,
         "latency_ms": {
-          "p50": 108.01524999988033,
-          "p95": 113.73800000001211,
-          "p99": 116.03454100259114,
-          "max": 116.03454100259114,
-          "mean": 108.29068326711422
+          "p50": 9.801666994462721,
+          "p95": 12.139250000473112,
+          "p99": 12.728041998343542,
+          "max": 12.728041998343542,
+          "mean": 10.061027866322547
         },
         "round_p50_ms": [
-          108.58387500047684,
-          107.3522079968825,
-          106.7463340004906
+          10.673666998627596,
+          8.233792003011331,
+          9.801666994462721
         ],
-        "throughput_qps": 9.177484052324655
+        "throughput_qps": 98.13157480577827
       },
       "log_count_all": {
         "signal": "logs",
@@ -333,18 +333,18 @@
         "first_wrong": null,
         "first_error": null,
         "latency_ms": {
-          "p50": 184.50262500118697,
-          "p95": 848.8461669985554,
-          "p99": 1003.8294999976642,
-          "max": 1003.8294999976642,
-          "mean": 326.14614733320195
+          "p50": 36.461709009017795,
+          "p95": 56.706832998315804,
+          "p99": 67.39641699823551,
+          "max": 67.39641699823551,
+          "mean": 40.54809733546184
         },
         "round_p50_ms": [
-          795.0845410014153,
-          163.434292000602,
-          148.00554100656882
+          40.20720899279695,
+          34.32591599994339,
+          36.461709009017795
         ],
-        "throughput_qps": 5.174584884749392
+        "throughput_qps": 23.508397026972744
       },
       "log_count_by_service": {
         "signal": "logs",
@@ -357,18 +357,18 @@
         "first_wrong": null,
         "first_error": null,
         "latency_ms": {
-          "p50": 207.95908300351584,
-          "p95": 628.919083996152,
-          "p99": 823.966375006421,
-          "max": 823.966375006421,
-          "mean": 276.3317834668366
+          "p50": 47.56979200465139,
+          "p95": 61.37429100635927,
+          "p99": 74.80929100711364,
+          "max": 74.80929100711364,
+          "mean": 51.91995840286836
         },
         "round_p50_ms": [
-          346.8797090026783,
-          203.19429200026207,
-          185.86283399781678
+          58.271667003282346,
+          47.52125000231899,
+          44.82008299964946
         ],
-        "throughput_qps": 5.178036871544138
+        "throughput_qps": 19.812932865910742
       },
       "log_regex_count": {
         "signal": "logs",
@@ -381,18 +381,18 @@
         "first_wrong": null,
         "first_error": null,
         "latency_ms": {
-          "p50": 289.80950000550365,
-          "p95": 368.2450839987723,
-          "p99": 457.5601250035106,
-          "max": 457.5601250035106,
-          "mean": 309.7499890665252
+          "p50": 8.247042002039962,
+          "p95": 13.525874994229525,
+          "p99": 18.228958011604846,
+          "max": 18.228958011604846,
+          "mean": 9.768852600245737
         },
         "round_p50_ms": [
-          278.1134589968133,
-          296.56487500324147,
-          283.10024999518646
+          8.247042002039962,
+          7.756624996545725,
+          9.58579100552015
         ],
-        "throughput_qps": 3.164387893585301
+        "throughput_qps": 97.02536530792713
       },
       "log_newest": {
         "signal": "logs",
@@ -405,18 +405,18 @@
         "first_wrong": null,
         "first_error": null,
         "latency_ms": {
-          "p50": 85.34312499978114,
-          "p95": 99.63154199795099,
-          "p99": 101.1339160031639,
-          "max": 101.1339160031639,
-          "mean": 86.84605006710626
+          "p50": 26.72091701242607,
+          "p95": 4046.976458004792,
+          "p99": 4147.089916994446,
+          "max": 4147.089916994446,
+          "mean": 861.0878305344764
         },
         "round_p50_ms": [
-          86.81662500021048,
-          93.40724999492522,
-          81.48058399820002
+          26.72091701242607,
+          136.89687500300352,
+          14.198999997461215
         ],
-        "throughput_qps": 11.421070513213943
+        "throughput_qps": 1.1637798653599745
       },
       "metric_sum_over_time": {
         "signal": "metrics",
@@ -429,18 +429,18 @@
         "first_wrong": null,
         "first_error": null,
         "latency_ms": {
-          "p50": 234.53512499690987,
-          "p95": 272.80749999772524,
-          "p99": 392.0274999982212,
-          "max": 392.0274999982212,
-          "mean": 244.25799439874632
+          "p50": 3.1161250080913305,
+          "p95": 4.914541990729049,
+          "p99": 8.721624995814636,
+          "max": 8.721624995814636,
+          "mean": 3.618147266873469
         },
         "round_p50_ms": [
-          222.50683299353113,
-          239.49933300173143,
-          234.07654199399985
+          2.170457999454811,
+          2.8956250025657937,
+          4.016416991362348
         ],
-        "throughput_qps": 4.324394606728054
+        "throughput_qps": 298.3479045498666
       },
       "metric_count_over_time": {
         "signal": "metrics",
@@ -453,18 +453,18 @@
         "first_wrong": null,
         "first_error": null,
         "latency_ms": {
-          "p50": 223.7258750028559,
-          "p95": 309.53862499882234,
-          "p99": 319.6665840005153,
-          "max": 319.6665840005153,
-          "mean": 237.69875006692018
+          "p50": 3.2729170052334666,
+          "p95": 7.874208997236565,
+          "p99": 7.931458996608853,
+          "max": 7.931458996608853,
+          "mean": 4.03220560013627
         },
         "round_p50_ms": [
-          219.53425000538118,
-          219.71666700119385,
-          245.181042002514
+          5.171208002138883,
+          3.5648750053951517,
+          2.9000000067753717
         ],
-        "throughput_qps": 4.062728115832319
+        "throughput_qps": 261.59407147125586
       },
       "metric_max_counter": {
         "signal": "metrics",
@@ -477,18 +477,18 @@
         "first_wrong": null,
         "first_error": null,
         "latency_ms": {
-          "p50": 256.0943339994992,
-          "p95": 920.0615000008838,
-          "p99": 1065.0501659984002,
-          "max": 1065.0501659984002,
-          "mean": 385.3928082006557
+          "p50": 2.609041999676265,
+          "p95": 3.602417011279613,
+          "p99": 4.852249985560775,
+          "max": 4.852249985560775,
+          "mean": 2.633419534928786
         },
         "round_p50_ms": [
-          228.69158299727133,
-          238.38154099939857,
-          759.347125000204
+          3.3540419972268865,
+          2.6098749949596822,
+          1.7343750077998266
         ],
-        "throughput_qps": 3.951623176355211
+        "throughput_qps": 372.6615489296968
       },
       "metric_sum_all": {
         "signal": "metrics",
@@ -501,56 +501,60 @@
         "first_wrong": null,
         "first_error": null,
         "latency_ms": {
-          "p50": 291.6424169961829,
-          "p95": 580.5212919949554,
-          "p99": 595.5193750050967,
-          "max": 595.5193750050967,
-          "mean": 331.03666673365905
+          "p50": 2.343792002648115,
+          "p95": 3.160375010338612,
+          "p99": 3.4219579974887893,
+          "max": 3.4219579974887893,
+          "mean": 2.4667389351331317
         },
         "round_p50_ms": [
-          287.6215840005898,
-          387.7758329981589,
-          255.0578329974087
+          2.50266699003987,
+          2.2337920090649277,
+          2.3770000116201118
         ],
-        "throughput_qps": 3.1203583869467666
+        "throughput_qps": 374.68970982599666
       },
       "trace_search": {
         "signal": "traces",
         "clients": 1,
         "rounds": 3,
         "runs": 15,
-        "ok": 0,
+        "ok": 15,
         "wrong": 0,
-        "errors": 15,
+        "errors": 0,
         "first_wrong": null,
-        "first_error": "HTTP 422: {\"error\":\"query reads more than 300000 spans; narrow the time range\",\"errorType\":\"execution\",\"status\":\"error\"}",
+        "first_error": null,
         "latency_ms": {
-          "p50": null,
-          "p95": null,
-          "p99": null,
-          "max": null,
-          "mean": null
+          "p50": 5.618208000669256,
+          "p95": 11.392083004466258,
+          "p99": 15.081666992045939,
+          "max": 15.081666992045939,
+          "mean": 6.849569464490439
         },
-        "round_p50_ms": [],
-        "throughput_qps": 0.0
+        "round_p50_ms": [
+          5.591583001660183,
+          5.0058749911841005,
+          5.863208993105218
+        ],
+        "throughput_qps": 158.3351602443744
       }
     }
   },
   "containers": {
-    "bench-canardstack-pg_canardstack_1": {
-      "cpu_mean_pct": 42.242761904761906,
-      "cpu_max_pct": 65.05,
-      "mem_max_mb": 1625.0
+    "bench-lgtm_loki_1": {
+      "cpu_mean_pct": 7.304509803921569,
+      "cpu_max_pct": 10.8,
+      "mem_max_mb": 104.3
     },
-    "bench-canardstack-pg_ingest_1": {
-      "cpu_mean_pct": 12.01938923395445,
-      "cpu_max_pct": 22.55,
-      "mem_max_mb": 789.2
+    "bench-lgtm_mimir_1": {
+      "cpu_mean_pct": 1.8932244008714598,
+      "cpu_max_pct": 2.28,
+      "mem_max_mb": 68.88
     },
-    "bench-canardstack-pg_postgres_1": {
-      "cpu_mean_pct": 3.184726708074534,
-      "cpu_max_pct": 5.46,
-      "mem_max_mb": 47.92
+    "bench-lgtm_tempo_1": {
+      "cpu_mean_pct": 3.794967320261438,
+      "cpu_max_pct": 5.84,
+      "mem_max_mb": 174.8
     }
   }
 }
