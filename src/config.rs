@@ -15,6 +15,9 @@ pub struct QueryLimits {
     /// aggregate in SQL (`count_over_time`, `rate`, `bytes_over_time` and `bytes_rate` over a
     /// selector with only plain line filters) never load lines and are not limited by it.
     pub max_log_lines: usize,
+    /// The most spans one TraceQL search or metrics query loads into memory at once; a search pages
+    /// through candidate traces newest first, so it is the size of one page that this bounds.
+    pub max_spans: usize,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -135,6 +138,9 @@ impl OperatorConfig {
         let query_max_log_lines = env_usize("CANARDSTACK_QUERY_MAX_LOG_LINES")?
             .or(file.usize(&["query", "max_log_lines"])?)
             .unwrap_or(1_000_000);
+        let query_max_spans = env_usize("CANARDSTACK_QUERY_MAX_SPANS")?
+            .or(file.usize(&["query", "max_spans"])?)
+            .unwrap_or(300_000);
         let tls_cert_file = env_path("CANARDSTACK_TLS_CERT_FILE")?.or(file.path(&[
             "server",
             "tls",
@@ -206,6 +212,7 @@ impl OperatorConfig {
                 timeout_secs: query_timeout_secs,
                 memory_limit: query_memory_limit,
                 max_log_lines: query_max_log_lines,
+                max_spans: query_max_spans,
             },
             query_admission_wait: duration_ms_or_secs(
                 file,
@@ -266,6 +273,7 @@ impl OperatorConfig {
                 timeout_secs: 15,
                 memory_limit: "512MiB".to_string(),
                 max_log_lines: 1_000_000,
+                max_spans: 300_000,
             },
             query_admission_wait: Duration::from_secs(1),
             cheap_query_admission_capacity: 1,
@@ -350,6 +358,9 @@ impl OperatorConfig {
             anyhow::bail!(
                 "CANARDSTACK_QUERY_CONCURRENCY must leave at least one heavy query slot after cheap-query admission reservations"
             );
+        }
+        if self.query_interactive.max_spans == 0 {
+            anyhow::bail!("CANARDSTACK_QUERY_MAX_SPANS must be > 0");
         }
         if self.query_interactive.max_log_lines == 0 {
             anyhow::bail!("CANARDSTACK_QUERY_MAX_LOG_LINES must be > 0");

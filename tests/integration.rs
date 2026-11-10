@@ -2041,3 +2041,106 @@ fn an_instant_query_at_a_samples_fractional_time_returns_that_sample() {
     assert_eq!(value_at("1767225600.849"), "1");
     assert_eq!(value_at("1767225600.7"), "1");
 }
+
+/// 100 traces `t000` to `t099`, a second apart from 2026-01-01T00:00:00Z, of three spans each: a root,
+/// a child `a` with `k = "v"`, and a child `b` that has `k = "v"` only in every fifth trace. A search
+/// for `{ span.k = "v" } | count() > 1` therefore has every trace as a candidate (each has a span
+/// with `k = "v"`) and 20 matches, so asking for fewer than 20 forces it past its first page.
+fn app_with_many_traces(max_spans: usize) -> (tempfile::TempDir, AppState) {
+    let dir = tempdir().unwrap();
+    let mut config = Config::test(dir.path().join("canardstack.duckdb"));
+    config.operator.local_storage_dir = dir.path().join("storage");
+    config.operator.query_interactive.max_spans = max_spans;
+    let state = AppState::new_with_storage_hook_for_tests(config, |storage| {
+        storage
+            .with_conn(|conn, prefix| {
+                conn.execute_batch(&format!(
+                    r#"INSERT INTO {prefix}otlp_traces (start_time_unix_nano, duration_time_unix_nano,
+                         trace_id, span_id, parent_span_id, name, kind, status_code, service_name,
+                         resource_attributes, span_attributes)
+                       SELECT * FROM (
+                       WITH t AS (SELECT i, 't' || lpad(i::VARCHAR, 3, '0') AS id,
+                                         TIMESTAMP_NS '2026-01-01 00:00:00' + INTERVAL (i) SECOND AS t0
+                                  FROM range(100) r(i))
+                       SELECT t0, 500000000, id, id || '-r', '', 'root', 2, 0, 'web', '{{}}', '{{}}' FROM t
+                       UNION ALL
+                       SELECT t0 + INTERVAL 100 MILLISECOND, 100000000, id, id || '-a', id || '-r', 'a', 1, 0,
+                              'web', '{{}}', '{{"k":"v"}}' FROM t
+                       UNION ALL
+                       SELECT t0 + INTERVAL 200 MILLISECOND, 100000000, id, id || '-b', id || '-r', 'b', 1, 0,
+                              'web', '{{}}', CASE WHEN i % 5 = 0 THEN '{{"k":"v"}}' ELSE '{{"k":"x"}}' END FROM t);"#
+                ))?;
+                Ok(())
+            })
+            .unwrap();
+    })
+    .unwrap();
+    (dir, state)
+}
+
+/// The trace ids of a search, in the order returned, or the error.
+fn search_trace_ids(state: &AppState, q: &str, limit: usize) -> Result<Vec<String>, (u16, Value)> {
+    let limit = limit.to_string();
+    let (status, body) = loki_response(
+        state,
+        "/api/search",
+        &[
+            ("q", q),
+            ("start", "1767225590"),
+            ("end", "1767225800"),
+            ("limit", &limit),
+        ],
+    );
+    if status != 200 {
+        return Err((status, body));
+    }
+    Ok(body["traces"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|t| t["traceID"].as_str().unwrap().to_string())
+        .collect())
+}
+
+/// The newest traces that match are the answer whatever the limit, even when the query rejects most of
+/// the candidates and the search has to read further pages to find them.
+#[test]
+fn traceql_search_reads_pages_until_the_limit_is_met() {
+    let (_dir, state) = app_with_many_traces(300_000);
+    let q = r#"{ span.k = "v" } | count() > 1"#;
+    let all = search_trace_ids(&state, q, 1000).unwrap();
+    let expected: Vec<String> = (0..20).rev().map(|n| format!("t{:03}", n * 5)).collect();
+    assert_eq!(all, expected, "every fifth trace, newest first");
+    for limit in [1, 3, 10, 19, 20] {
+        assert_eq!(
+            search_trace_ids(&state, q, limit).unwrap(),
+            all[..limit],
+            "limit {limit}"
+        );
+    }
+}
+
+/// The span cap bounds a page of traces, not the window: 300 spans match, the cap is 50, and a search
+/// for a few traces still works (a page that is too big is split), where loading the window would
+/// have been refused.
+#[test]
+fn traceql_search_below_the_span_cap_is_paged_not_refused() {
+    let (_dir, state) = app_with_many_traces(50);
+    let ids = search_trace_ids(&state, r#"{ span.k = "v" }"#, 5).unwrap();
+    assert_eq!(ids, ["t099", "t098", "t097", "t096", "t095"]);
+}
+
+/// One trace larger than the cap cannot be loaded at all: refused, naming the setting.
+#[test]
+fn traceql_search_refuses_a_single_trace_above_the_span_cap() {
+    let (_dir, state) = app_with_many_traces(2);
+    let (status, body) = search_trace_ids(&state, r#"{ span.k = "v" }"#, 5).unwrap_err();
+    assert_eq!(status, 422, "{body}");
+    assert!(
+        body["error"]
+            .as_str()
+            .unwrap()
+            .contains("CANARDSTACK_QUERY_MAX_SPANS"),
+        "{body}"
+    );
+}

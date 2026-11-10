@@ -3,7 +3,7 @@
 
 use super::pushdown::Needs;
 use super::value::{from_json, Val};
-use crate::db::sql::time_predicate;
+use crate::db::sql::{quote, time_predicate};
 use crate::query::QueryEngine;
 use crate::signal::StorageSignal;
 use crate::storage::Storage;
@@ -12,9 +12,6 @@ use chrono::{DateTime, Duration, Utc};
 use serde_json::Value;
 use std::cell::OnceCell;
 use std::collections::BTreeMap;
-
-/// Most spans one search loads; beyond it the query must be narrowed.
-pub const MAX_SPANS: usize = 300_000;
 
 /// Spans of a trace that start outside the search window are still loaded when they are within
 /// this margin of it, so a trace found near the edge of the window is complete.
@@ -261,33 +258,8 @@ impl Trace {
     }
 }
 
-/// Loads every trace with a span that starts in `[from, to)` and, for each of the `requirements`
-/// (SQL conditions on one span, see `pushdown`), at least one span that satisfies it.
-pub fn load(
-    engine: &QueryEngine,
-    storage: &Storage,
-    from: DateTime<Utc>,
-    to: DateTime<Utc>,
-    requirements: &[String],
-    needs: Needs,
-) -> ApiResult<Vec<Trace>> {
-    let table = StorageSignal::Spans.as_str();
-    // One scan over the margin: window functions tell, per trace, whether any span starts in the
-    // window and whether any span meets each requirement, and only such traces are returned.
-    let margin = time_predicate(
-        "start_time_unix_nano",
-        from - TRACE_MARGIN,
-        to + TRACE_MARGIN,
-    );
-    let flags: String = std::iter::once(time_predicate("start_time_unix_nano", from, to))
-        .chain(requirements.iter().cloned())
-        .enumerate()
-        .map(|(i, cond)| format!(", max(CASE WHEN {cond} THEN 1 ELSE 0 END) OVER w AS f{i}"))
-        .collect();
-    let wanted: String = (0..=requirements.len())
-        .map(|i| format!(" AND f{i} = 1"))
-        .collect();
-    // Columns the query cannot read are selected as NULL.
+/// The select list of a span, with the columns the query cannot read as NULL.
+fn span_columns(needs: Needs) -> String {
     let wide = |wanted: bool, column: &str| {
         if wanted {
             column.to_string()
@@ -295,7 +267,7 @@ pub fn load(
             "NULL".to_string()
         }
     };
-    let columns = format!(
+    format!(
         "epoch_ns(start_time_unix_nano) AS c0, duration_time_unix_nano AS c1, lower(trace_id) AS c2, lower(span_id) AS c3, lower(coalesce(parent_span_id, '')) AS c4, name AS c5, kind AS c6, status_code AS c7, {} AS c8, service_name AS c9, service_namespace AS c10, service_instance_id AS c11, {} AS c12, {} AS c13, {} AS c14, {} AS c15, {} AS c16, {} AS c17, {} AS c18",
         wide(needs.status_message, "status_status_message"),
         wide(needs.resource, "resource_attributes"),
@@ -305,11 +277,13 @@ pub fn load(
         wide(needs.span_attrs, "span_attributes"),
         wide(needs.events, "events_json"),
         wide(needs.links, "links_json"),
-    );
-    let sql = format!(
-        "SELECT c0, c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, c12, c13, c14, c15, c16, c17, c18 FROM (SELECT {columns}{flags} FROM {{prefix}}{table} WHERE {margin} WINDOW w AS (PARTITION BY lower(trace_id))) WHERE true{wanted} ORDER BY c2 LIMIT {}",
-        MAX_SPANS + 1
-    );
+    )
+}
+
+/// Runs `sql`, which selects [`span_columns`] as `c0` to `c18` ordered by `c2`, and builds the traces
+/// from its rows. More than the configured number of spans is refused.
+fn read_traces(engine: &QueryEngine, storage: &Storage, sql: String) -> ApiResult<Vec<Trace>> {
+    let max = engine.max_spans();
     engine.run_interactive(storage, |conn, prefix| {
         let mut stmt = conn.prepare(&sql.replace("{prefix}", prefix))?;
         let mut rows = stmt.query([])?;
@@ -318,12 +292,8 @@ pub fn load(
         let mut total = 0usize;
         while let Some(row) = rows.next()? {
             total += 1;
-            if total > MAX_SPANS {
-                return Ok(Err(ApiError::new(
-                    422,
-                    "execution",
-                    format!("query reads more than {MAX_SPANS} spans; narrow the time range"),
-                )));
+            if total > max {
+                return Ok(Err(spans_cap_error(max)));
             }
             let string = |i: usize| row.get::<_, Option<String>>(i);
             let trace_id = string(2)?.unwrap_or_default();
@@ -364,4 +334,112 @@ pub fn load(
         }
         Ok(Ok(traces))
     })?
+}
+
+pub fn spans_cap_error(max: usize) -> ApiError {
+    ApiError::new(
+        422,
+        "execution",
+        format!("query reads more than {max} spans; narrow the time range (the limit is CANARDSTACK_QUERY_MAX_SPANS)"),
+    )
+}
+
+/// The margin around a window within which a trace's spans are loaded.
+fn margin(from: DateTime<Utc>, to: DateTime<Utc>) -> String {
+    time_predicate(
+        "start_time_unix_nano",
+        from - TRACE_MARGIN,
+        to + TRACE_MARGIN,
+    )
+}
+
+/// Loads every trace with a span that starts in `[from, to)` and, for each of the `requirements`
+/// (SQL conditions on one span, see `pushdown`), at least one span that satisfies it.
+pub fn load(
+    engine: &QueryEngine,
+    storage: &Storage,
+    from: DateTime<Utc>,
+    to: DateTime<Utc>,
+    requirements: &[String],
+    needs: Needs,
+) -> ApiResult<Vec<Trace>> {
+    let table = StorageSignal::Spans.as_str();
+    // One scan over the margin: window functions tell, per trace, whether any span starts in the
+    // window and whether any span meets each requirement, and only such traces are returned.
+    let margin = margin(from, to);
+    let flags: String = std::iter::once(time_predicate("start_time_unix_nano", from, to))
+        .chain(requirements.iter().cloned())
+        .enumerate()
+        .map(|(i, cond)| format!(", max(CASE WHEN {cond} THEN 1 ELSE 0 END) OVER w AS f{i}"))
+        .collect();
+    let wanted: String = (0..=requirements.len())
+        .map(|i| format!(" AND f{i} = 1"))
+        .collect();
+    let columns = span_columns(needs);
+    let sql = format!(
+        "SELECT c0, c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, c12, c13, c14, c15, c16, c17, c18 FROM (SELECT {columns}{flags} FROM {{prefix}}{table} WHERE {margin} WINDOW w AS (PARTITION BY lower(trace_id))) WHERE true{wanted} ORDER BY c2 LIMIT {}",
+        engine.max_spans() + 1
+    );
+    read_traces(engine, storage, sql)
+}
+
+/// The ids of the traces [`load`] would return, newest first (by the start of the trace's earliest
+/// span, then by id), `count` of them after skipping `offset`. This reads three columns and
+/// aggregates, so it is cheap next to loading the spans.
+pub fn candidates(
+    engine: &QueryEngine,
+    storage: &Storage,
+    from: DateTime<Utc>,
+    to: DateTime<Utc>,
+    requirements: &[String],
+    offset: usize,
+    count: usize,
+) -> ApiResult<Vec<String>> {
+    let table = StorageSignal::Spans.as_str();
+    let margin = margin(from, to);
+    let having: String = std::iter::once(time_predicate("start_time_unix_nano", from, to))
+        .chain(requirements.iter().cloned())
+        .map(|cond| format!("max(CASE WHEN {cond} THEN 1 ELSE 0 END) = 1"))
+        .collect::<Vec<_>>()
+        .join(" AND ");
+    let sql = format!(
+        "SELECT lower(trace_id) AS tid FROM {{prefix}}{table} WHERE {margin} GROUP BY tid HAVING {having} ORDER BY min(start_time_unix_nano) DESC, tid LIMIT {count} OFFSET {offset}"
+    );
+    engine.run_interactive(storage, |conn, prefix| {
+        let mut stmt = conn.prepare(&sql.replace("{prefix}", prefix))?;
+        let mut rows = stmt.query([])?;
+        let mut ids = Vec::new();
+        while let Some(row) = rows.next()? {
+            ids.push(row.get::<_, String>(0)?);
+        }
+        Ok(ids)
+    })
+}
+
+/// Loads the traces with these ids, in full (every span within the margin of the window), ordered
+/// by trace id.
+pub fn load_ids(
+    engine: &QueryEngine,
+    storage: &Storage,
+    from: DateTime<Utc>,
+    to: DateTime<Utc>,
+    ids: &[String],
+    needs: Needs,
+) -> ApiResult<Vec<Trace>> {
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let table = StorageSignal::Spans.as_str();
+    let margin = margin(from, to);
+    let list = ids
+        .iter()
+        .map(|id| quote(id))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let columns = span_columns(needs);
+    let sql = format!(
+        "SELECT * FROM (SELECT {columns} FROM {{prefix}}{table} WHERE {margin} AND lower(trace_id) IN ({list})) ORDER BY c2 LIMIT {}",
+        engine.max_spans() + 1
+    );
+    read_traces(engine, storage, sql)
 }

@@ -29,6 +29,7 @@ pub struct QueryEngine {
     interactive_timeout: Duration,
     interactive_memory_limit: String,
     max_log_lines: usize,
+    max_spans: usize,
     execution: Option<Arc<QueryExecution>>,
     prom_name_suffixes: bool,
     exp_histograms: Arc<std::sync::Mutex<Option<(std::time::Instant, bool)>>>,
@@ -42,10 +43,16 @@ impl QueryEngine {
             ),
             interactive_memory_limit: config.operator.query_interactive.memory_limit.clone(),
             max_log_lines: config.operator.query_interactive.max_log_lines,
+            max_spans: config.operator.query_interactive.max_spans,
             execution: None,
             prom_name_suffixes: config.operator.prometheus_name_suffixes,
             exp_histograms: Default::default(),
         }
+    }
+
+    /// The most spans a TraceQL query may load into memory at once.
+    pub fn max_spans(&self) -> usize {
+        self.max_spans
     }
 
     /// The most log lines a LogQL query may load into memory.

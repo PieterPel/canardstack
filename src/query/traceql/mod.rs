@@ -48,6 +48,84 @@ pub struct TraceHit {
     pub sets: Vec<SetHit>,
 }
 
+/// Loads the traces `ids` names. A page that holds more spans than one load may, because its traces
+/// are large, is split and loaded in halves; a single trace larger than that is refused.
+fn load_page(
+    engine: &QueryEngine,
+    storage: &Storage,
+    from: DateTime<Utc>,
+    to: DateTime<Utc>,
+    ids: &[String],
+    needs: pushdown::Needs,
+) -> ApiResult<Vec<model::Trace>> {
+    match model::load_ids(engine, storage, from, to, ids, needs) {
+        Err(error) if ids.len() > 1 && error.status == 422 => {
+            let (head, tail) = ids.split_at(ids.len() / 2);
+            let mut traces = load_page(engine, storage, from, to, head, needs)?;
+            traces.extend(load_page(engine, storage, from, to, tail, needs)?);
+            Ok(traces)
+        }
+        other => other,
+    }
+}
+
+/// The hit for one trace, if the query selects at least one spanset of it.
+fn hit(
+    query: &Query,
+    trace: &model::Trace,
+    regexes: &Regexes,
+    spss: usize,
+) -> ApiResult<Option<TraceHit>> {
+    let eval = Eval { trace, regexes };
+    let groups = match &query.kind {
+        QueryKind::Pipeline(p) => eval.pipeline(p, eval.input())?,
+        QueryKind::Spansets(s) => {
+            let mut out = Vec::new();
+            for group in eval.input() {
+                out.extend(eval.pipeline(
+                    &ast::Pipeline {
+                        elements: vec![ast::Element::Spanset(s.clone())],
+                    },
+                    vec![group],
+                )?);
+            }
+            out
+        }
+        QueryKind::ScalarFilter(f) => eval.scalar_query(f)?,
+        _ => Vec::new(),
+    };
+    if groups.is_empty() {
+        return Ok(None);
+    }
+    let sets = groups
+        .into_iter()
+        .map(|group| SetHit {
+            matched: group.len(),
+            spans: group
+                .iter()
+                .take(spss)
+                .map(|&i| {
+                    let s = &trace.spans[i];
+                    SpanHit {
+                        span_id: s.span_id.clone(),
+                        name: s.name.clone(),
+                        start_ns: s.start_ns,
+                        duration_ns: s.duration_ns,
+                    }
+                })
+                .collect(),
+        })
+        .collect();
+    Ok(Some(TraceHit {
+        trace_id: trace.id.clone(),
+        root_service: trace.root_service.clone(),
+        root_name: trace.root_name.clone(),
+        start_ns: trace.start_ns,
+        duration_ns: trace.end_ns - trace.start_ns,
+        sets,
+    }))
+}
+
 /// Runs a search query: the traces with a span in `[from, to)` that have at least one spanset
 /// the query selects, newest first, at most `limit`, with up to `spss` spans per spanset.
 pub fn search(
@@ -69,68 +147,30 @@ pub fn search(
             "metrics queries are not search queries",
         ));
     }
-    let traces = model::load(
-        engine,
-        storage,
-        from,
-        to,
-        &pushdown::requirements(&query.kind),
-        pushdown::needs(&query.kind),
-    )?;
+    let requirements = pushdown::requirements(&query.kind);
+    let needs = pushdown::needs(&query.kind);
     let regexes = Regexes::default();
     let mut hits = Vec::new();
-    for trace in &traces {
-        let eval = Eval {
-            trace,
-            regexes: &regexes,
-        };
-        let groups = match &query.kind {
-            QueryKind::Pipeline(p) => eval.pipeline(p, eval.input())?,
-            QueryKind::Spansets(s) => {
-                let mut out = Vec::new();
-                for group in eval.input() {
-                    out.extend(eval.pipeline(
-                        &ast::Pipeline {
-                            elements: vec![ast::Element::Spanset(s.clone())],
-                        },
-                        vec![group],
-                    )?);
-                }
-                out
+    // Candidate traces come newest first, which is the order of the result, so the first `limit` that
+    // match are the answer. They are read a page at a time and the next page only when the query
+    // dropped too many of this one (a pipeline, an aggregate or a structural operator can reject a
+    // trace that has the spans the pushed-down conditions ask for), instead of loading the window.
+    let mut offset = 0;
+    let mut page = limit.max(10) * 2;
+    loop {
+        let ids = model::candidates(engine, storage, from, to, &requirements, offset, page)?;
+        let mut traces = load_page(engine, storage, from, to, &ids, needs)?;
+        traces.sort_by(|a, b| b.start_ns.cmp(&a.start_ns).then_with(|| a.id.cmp(&b.id)));
+        for trace in &traces {
+            if let Some(hit) = hit(query, trace, &regexes, spss)? {
+                hits.push(hit);
             }
-            QueryKind::ScalarFilter(f) => eval.scalar_query(f)?,
-            _ => Vec::new(),
-        };
-        if groups.is_empty() {
-            continue;
         }
-        let sets = groups
-            .into_iter()
-            .map(|group| SetHit {
-                matched: group.len(),
-                spans: group
-                    .iter()
-                    .take(spss)
-                    .map(|&i| {
-                        let s = &trace.spans[i];
-                        SpanHit {
-                            span_id: s.span_id.clone(),
-                            name: s.name.clone(),
-                            start_ns: s.start_ns,
-                            duration_ns: s.duration_ns,
-                        }
-                    })
-                    .collect(),
-            })
-            .collect();
-        hits.push(TraceHit {
-            trace_id: trace.id.clone(),
-            root_service: trace.root_service.clone(),
-            root_name: trace.root_name.clone(),
-            start_ns: trace.start_ns,
-            duration_ns: trace.end_ns - trace.start_ns,
-            sets,
-        });
+        if hits.len() >= limit || ids.len() < page {
+            break;
+        }
+        offset += page;
+        page = page.saturating_mul(4);
     }
     hits.sort_by(|a, b| {
         b.start_ns
