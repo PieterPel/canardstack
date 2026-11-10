@@ -16,6 +16,7 @@ service reach back a week, past what Loki accepts by default (`reject_old_sample
 from __future__ import annotations
 
 import argparse
+import os
 import subprocess
 import sys
 import time
@@ -54,7 +55,8 @@ def main() -> None:
                 ]
                 log = logs / f"{tag}-{time.strftime('%Y%m%dT%H%M%S')}.log"
                 with log.open("w") as out:
-                    code = subprocess.run(cmd, stdout=out, stderr=subprocess.STDOUT).returncode
+                    code = subprocess.run(cmd, stdout=out, stderr=subprocess.STDOUT,
+                                      env={**os.environ, "PYTHONUNBUFFERED": "1"}).returncode
                 print(f"   exit {code}, log {log}", flush=True)
                 if code:
                     failed.append(tag)

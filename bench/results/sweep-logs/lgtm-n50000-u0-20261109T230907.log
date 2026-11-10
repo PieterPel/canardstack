@@ -1,0 +1,17 @@
+Error: no container with name or ID "bench-lgtm_mimir_1" found: no such container
+Error: no container with name or ID "bench-lgtm_loki_1" found: no such container
+Error: no container with name or ID "bench-lgtm_tempo_1" found: no such container
+Error: no container with ID or name "bench-lgtm_mimir_1" found: no such container
+Error: no container with ID or name "bench-lgtm_tempo_1" found: no such container
+Error: no container with ID or name "bench-lgtm_loki_1" found: no such container
+Error: unable to find pod "pod_bench-lgtm": no such pod
+3f691db8cd2f3312fccbe58bfd8e90094d65e3ae13e565034051fb7abd333618
+72f7f19a86b5799b0ba121bd0ca18958768a0e90d2d445cec751ae91df5bfb01
+74939379ad755b6b16b256a24ec8833a5b03281b76c4ed15a311e491e6e37b95
+32937a0e4969d4a7e46487182522e918c3a213eca3f3f068a230bccd445782b4
+f888ed2eb195061b6b5da20c14919be140f08db850bc7ea14de3d6b6d9fda0aa
+82bde5002663d2de50dee9a0b60ab445e6fbaaed7275a8ec93d901568c64ff27
+45f2f69d3a3043b991a2486b6467cd57072516f1aa5644cd602fa757f453f8f5
+bench-lgtm_loki_1
+bench-lgtm_tempo_1
+bench-lgtm_mimir_1

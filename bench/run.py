@@ -114,6 +114,38 @@ def wait_ready(backend: Backend, timeout: float = 240) -> None:
         raise SystemExit(f"stack not ready: {pending}")
 
 
+def vm_clock_skew() -> Optional[float]:
+    """Seconds the Podman VM's clock is ahead of the host's (negative: behind), or None if unreadable.
+
+    The VM's clock only runs while the VM does, and after the host sleeps it can be hours behind for
+    a long while (chrony slews a large offset). The stacks judge every timestamp against that clock:
+    Loki drops lines it thinks are in the future, Mimir refuses samples it thinks are too old, and
+    Tempo dates its blocks by it, so a skewed VM turns into missing data and wrong answers."""
+    before = time.time()
+    out = subprocess.run(["podman", "machine", "ssh", "date +%s.%N"], capture_output=True, text=True)
+    after = time.time()
+    try:
+        return float(out.stdout.strip().splitlines()[-1]) - (before + after) / 2
+    except (ValueError, IndexError):
+        return None
+
+
+def sync_vm_clock(tolerance: float = 2.0, limit: float = 10.0) -> Optional[float]:
+    """Set the VM's clock from the host's when it is off by more than `tolerance` seconds, and refuse
+    to go on when it still is by more than `limit`. Returns the remaining skew."""
+    skew = vm_clock_skew()
+    if skew is not None and abs(skew) > tolerance:
+        print(f"VM clock is {skew:+.0f}s from the host's; setting it")
+        subprocess.run(["podman", "machine", "ssh", f"sudo date -u -s @{int(time.time())}"],
+                       capture_output=True, text=True)
+        skew = vm_clock_skew()
+    if skew is None or abs(skew) > limit:
+        raise SystemExit(f"the Podman VM's clock is off by {skew}s and could not be set: the stacks would "
+                         "misjudge timestamps (run `podman machine ssh sudo date -u -s @<epoch>`)")
+    print(f"VM clock skew {skew:+.2f}s")
+    return skew
+
+
 def git_revision() -> Dict[str, object]:
     def git(*args: str) -> str:
         return subprocess.run(["git", *args], cwd=HERE, capture_output=True, text=True).stdout.strip()
@@ -278,14 +310,14 @@ def settle(queries: List[Query], workload: Workload, ingest_done: Dict[str, dict
     ingest finished that took. Some are not served from the same state as the cheap lookups: Tempo
     searches a trace only after its ingester has closed it, for example."""
     out: Dict[str, dict] = {}
+    deadline = time.time() + timeout  # one budget for all intents: each is tried at least once
     for query in queries:
         if query.core:
             continue
-        deadline = time.time() + timeout
         ok = False
-        while time.time() < deadline:
+        while True:
             ok = all(run_once(query, workload, i)[0] == "ok" for i in range(workload.services))
-            if ok:
+            if ok or time.time() >= deadline:
                 break
             time.sleep(1)
         out[query.id] = {
@@ -383,6 +415,7 @@ def main() -> None:
     args = ap.parse_args()
 
     backend = BACKENDS[args.stack]()
+    clock_skew_start = sync_vm_clock()
     if args.manage:
         compose(backend, "down", "-v")
         try:
@@ -407,6 +440,9 @@ def main() -> None:
     queries = {f"clients_{c}": query_suite(selected, workload, args.repeats, c, args.rounds, args.warmup_rounds)
                for c in args.clients}
     sampler.stop.set()
+    clock_skew_end = vm_clock_skew()
+    if clock_skew_end is not None and abs(clock_skew_end) > 10:
+        print(f"WARNING: the VM clock drifted to {clock_skew_end:+.0f}s during the run; its results are suspect")
 
     report = {
         "stack": backend.name,
@@ -423,6 +459,7 @@ def main() -> None:
             "background_cpu_pct_mean": statistics.fmean(sampler.background) if sampler.background else None,
             "note": "one benchmark stack at a time on the same VM; containers outside the stack "
                     "(a developer compose stack) may be running, see background_cpu_pct_mean",
+            "vm_clock_skew_s": {"start": clock_skew_start, "end": clock_skew_end},
             "grafana_in_path": False, "collector_in_path": False,
         },
         "unsupported": backend.unsupported,
