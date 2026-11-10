@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -53,6 +54,10 @@ def main() -> None:
                     "--intents", "all", "--repeats", str(args.repeats), "--rounds", str(args.rounds),
                     "--clients", *map(str, args.clients), *args.extra,
                 ]
+                # A sleeping Mac pauses the Podman VM and leaves its clock behind, which makes the stacks
+                # drop back-dated data. Hold a sleep assertion for the duration of the run.
+                if shutil.which("caffeinate"):
+                    cmd = ["caffeinate", "-i", *cmd]
                 log = logs / f"{tag}-{time.strftime('%Y%m%dT%H%M%S')}.log"
                 with log.open("w") as out:
                     code = subprocess.run(cmd, stdout=out, stderr=subprocess.STDOUT,
