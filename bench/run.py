@@ -427,7 +427,10 @@ def main() -> None:
     if args.manage:
         time.sleep(20)  # Loki/Tempo/Mimir hold ingesters unready for ~15s after boot
 
-    base_ns = (int(time.time()) - args.records - 120) * 10**9  # whole seconds: no float drift in range queries
+    # The dataset ends two minutes ago and starts `span` before that, so all of it is recent (see
+    # workload.SPAN_NS). Whole seconds: no float drift in range queries.
+    span_s = Workload(args.seed, args.services, args.records, 0).span_s
+    base_ns = (int(time.time()) - span_s - 120) * 10**9
     workload = Workload(args.seed, args.services, args.records, base_ns, run=format(base_ns // 10**9, 'x'),
                         users=args.users)
     selected = [qy for qy in backend.queries
