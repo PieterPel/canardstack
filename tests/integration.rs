@@ -2001,3 +2001,43 @@ fn loki_sums_over_reduced_streams_match_reading_the_lines() {
         }
     }
 }
+
+/// A sample stored at 850 ms must be returned by an instant query at exactly that fractional time.
+/// 1767225600.85 is the float 1767225600.8499999..., which used to be truncated to 849.999 ms and so
+/// missed the sample and answered with the one before it.
+#[test]
+fn an_instant_query_at_a_samples_fractional_time_returns_that_sample() {
+    let dir = tempdir().unwrap();
+    let mut config = Config::test(dir.path().join("canardstack.duckdb"));
+    config.operator.local_storage_dir = dir.path().join("storage");
+    let state = AppState::new_with_storage_hook_for_tests(config, |storage| {
+        storage
+            .with_conn(|conn, prefix| {
+                conn.execute_batch(&format!(
+                    "INSERT INTO {prefix}otlp_metrics_gauge \
+                     (time_unix_nano, name, double_value, service_name, resource_attributes, metric_attributes) VALUES \
+                     (TIMESTAMP_NS '2026-01-01 00:00:00.700', 'frac', 1, 'demo', '{{}}', '{{}}'), \
+                     (TIMESTAMP_NS '2026-01-01 00:00:00.850', 'frac', 2, 'demo', '{{}}', '{{}}');"
+                ))?;
+                Ok(())
+            })
+            .unwrap();
+    })
+    .unwrap();
+    let value_at = |time: &str| {
+        let body = prom_get(
+            &state,
+            "/api/v1/query",
+            &[("query", "frac"), ("time", time)],
+        );
+        body["data"]["result"][0]["value"][1]
+            .as_str()
+            .unwrap()
+            .to_string()
+    };
+    assert_eq!(value_at("1767225600.85"), "2");
+    assert_eq!(value_at("1767225600.850"), "2");
+    // Just before the second sample, and from the first to the second, the first one is the newest.
+    assert_eq!(value_at("1767225600.849"), "1");
+    assert_eq!(value_at("1767225600.7"), "1");
+}
