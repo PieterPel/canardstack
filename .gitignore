@@ -10,3 +10,12 @@ site/node_modules/
 *.ducklake.files/
 
 .env
+/deploy/azure-functions/local.settings.json
+/deploy/azure-functions/canardstack
+
+# benchmark harness
+bench/.venv/
+__pycache__/
+
+# per-run compatibility results vary (timings, run ids, phase-dependent values); baselines are the contract
+bench/compat/results/

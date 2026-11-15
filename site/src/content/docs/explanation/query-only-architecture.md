@@ -3,9 +3,10 @@ title: Query-Only Architecture
 description: Why canardstack reads DuckLake instead of owning ingest.
 ---
 
-canardstack is one synchronous Rust process backed by DuckDB. It attaches to a
-DuckLake catalog that another DuckDB process writes through `duckdb-otlp`, then
-serves bounded compatibility query APIs over the visible tables.
+canardstack is one Rust process with Axum/Hyper HTTP on Tokio and synchronous
+DuckDB queries in bounded blocking tasks. It attaches to a DuckLake catalog that
+another DuckDB process writes through `duckdb-otlp`, then serves bounded
+compatibility query APIs over the visible tables.
 
 ```mermaid
 flowchart LR
@@ -16,7 +17,7 @@ flowchart LR
 
     subgraph Canardstack["canardstack query server"]
         direction TB
-        Http["std-library HTTP server"]
+        Http["Axum / Hyper on Tokio"]
         Auth["auth + validation"]
         Admission["query admission"]
         Adapters["Prometheus / Loki / Tempo adapters"]

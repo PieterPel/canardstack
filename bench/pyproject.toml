@@ -1,0 +1,16 @@
+[project]
+name = "canardstack-bench"
+version = "0.0.0"
+description = "Benchmark and compatibility harness for canardstack"
+requires-python = ">=3.10"
+dependencies = [
+    "opentelemetry-proto>=1.27",   # OTLP protobuf encoding for ingest
+]
+
+[dependency-groups]
+# compat/promql/bridge.py parses OpenMetrics text.
+compliance = ["prometheus-client>=0.20"]
+
+[tool.uv]
+package = false
+default-groups = ["compliance"]

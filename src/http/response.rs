@@ -1,7 +1,6 @@
 use crate::validation::ApiError;
+use axum::response::{IntoResponse, Response};
 use serde_json::{json, Value};
-use std::io::Write;
-use std::net::TcpStream;
 
 pub struct HttpResponse {
     status: u16,
@@ -76,45 +75,16 @@ impl HttpResponse {
     }
 }
 
-pub(super) fn write_response(stream: &mut TcpStream, response: HttpResponse) -> anyhow::Result<()> {
-    write_response_with_connection(stream, response, false)
-}
-
-pub(super) fn write_response_with_connection(
-    stream: &mut TcpStream,
-    response: HttpResponse,
-    keep_alive: bool,
-) -> anyhow::Result<()> {
-    let reason = match response.status {
-        200 => "OK",
-        202 => "Accepted",
-        400 => "Bad Request",
-        401 => "Unauthorized",
-        403 => "Forbidden",
-        404 => "Not Found",
-        429 => "Too Many Requests",
-        503 => "Service Unavailable",
-        _ => "OK",
-    };
-    // Assemble the whole response (status line, headers, body) into one buffer
-    // and flush it with a single write_all, instead of a syscall per header
-    // line plus one per body. With TCP_NODELAY set on the socket this lets the
-    // response go out in one packet rather than dribbling.
-    let mut out = Vec::with_capacity(response.body.len() + 128);
-    write!(
-        out,
-        "HTTP/1.1 {} {}\r\ncontent-type: {}\r\ncontent-length: {}\r\nconnection: {}\r\n",
-        response.status,
-        reason,
-        response.content_type,
-        response.body.len(),
-        if keep_alive { "keep-alive" } else { "close" }
-    )?;
-    if let Some(seconds) = response.retry_after_seconds {
-        write!(out, "retry-after: {seconds}\r\n")?;
+impl IntoResponse for HttpResponse {
+    fn into_response(self) -> Response {
+        let mut builder = Response::builder()
+            .status(self.status)
+            .header(axum::http::header::CONTENT_TYPE, self.content_type);
+        if let Some(seconds) = self.retry_after_seconds {
+            builder = builder.header(axum::http::header::RETRY_AFTER, seconds.to_string());
+        }
+        builder
+            .body(axum::body::Body::from(self.body))
+            .expect("valid response headers")
     }
-    out.extend_from_slice(b"\r\n");
-    out.extend_from_slice(&response.body);
-    stream.write_all(&out)?;
-    Ok(())
 }

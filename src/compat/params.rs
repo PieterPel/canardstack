@@ -69,9 +69,13 @@ pub(super) fn parse_time(raw: &str) -> Option<DateTime<Utc>> {
         return Utc.timestamp_opt(value, 0).single();
     }
     if let Ok(value) = raw.parse::<f64>() {
-        let secs = value.trunc() as i64;
-        let nanos = ((value.fract()) * 1_000_000_000.0) as u32;
-        return Utc.timestamp_opt(secs, nanos).single();
+        // A fractional epoch is rounded to the millisecond, as Prometheus does. Truncating the
+        // fraction is wrong: 1700001499.85 is the float 1700001499.8499999..., so it would land a
+        // millisecond early and exclude the sample stored at exactly that instant.
+        return value
+            .is_finite()
+            .then(|| (value * 1000.0).round() as i64)
+            .and_then(|millis| Utc.timestamp_millis_opt(millis).single());
     }
     None
 }
@@ -126,4 +130,39 @@ pub(super) fn result_rows(result: &Value) -> Vec<Value> {
         .and_then(Value::as_array)
         .cloned()
         .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn millis(raw: &str) -> Option<i64> {
+        parse_time(raw).map(|t| t.timestamp_millis())
+    }
+
+    #[test]
+    fn a_fractional_epoch_keeps_its_milliseconds() {
+        // These floats sit just below their decimal value; truncation would drop a millisecond.
+        assert_eq!(millis("1700001499.85"), Some(1_700_001_499_850));
+        assert_eq!(millis("1700001499.97"), Some(1_700_001_499_970));
+        assert_eq!(millis("1700001500.001"), Some(1_700_001_500_001));
+        assert_eq!(millis("1767225600.850"), Some(1_767_225_600_850));
+    }
+
+    #[test]
+    fn whole_seconds_and_nanoseconds_are_unchanged() {
+        assert_eq!(millis("1700001499"), Some(1_700_001_499_000));
+        assert_eq!(
+            parse_time("1700001499850000000").map(|t| t.timestamp_nanos_opt()),
+            Some(Some(1_700_001_499_850_000_000))
+        );
+        assert_eq!(millis("2026-01-01T00:00:00.850Z"), Some(1_767_225_600_850));
+    }
+
+    #[test]
+    fn what_is_not_a_time_is_refused() {
+        assert_eq!(millis("NaN"), None);
+        assert_eq!(millis("inf"), None);
+        assert_eq!(millis("soon"), None);
+    }
 }

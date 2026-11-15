@@ -1,0 +1,507 @@
+//! LogQL metric queries: range aggregations over the lines a log query selects, then vector
+//! aggregations, binary operators and `label_replace` on the resulting series.
+//!
+//! The lines are fetched once for the whole evaluation window and grouped into series; each step
+//! then looks at the samples in `(t - range - offset, t - offset]`.
+
+use super::fetch::{countable, counts, fetch_all, CountWindow};
+use super::pipeline::{anchored, Pipeline};
+use super::values::{parse_bytes, parse_duration_secs};
+use crate::query::prom_labels::Labels;
+use crate::query::vector::{
+    self, extrapolated, quantile, variance, Card, Grid, Grouping, Matching, Series,
+};
+use crate::query::QueryEngine;
+use crate::storage::Storage;
+use crate::validation::{ApiError, ApiResult};
+use chrono::{TimeZone, Utc};
+use logql_syntax::ast::{self, BinOp, Conv, Expr, MatchOp, RangeAgg, RangeOp, VecOp};
+use std::collections::BTreeMap;
+
+/// The most time buckets one counted series may span; wider evaluations read the lines.
+const MAX_BUCKETS: i64 = 1_000_000;
+
+fn gcd(a: i64, b: i64) -> i64 {
+    if b == 0 {
+        a
+    } else {
+        gcd(b, a % b)
+    }
+}
+
+pub enum Value {
+    Scalar(Vec<f64>),
+    Vector(Vec<Series>),
+}
+
+fn bad(msg: impl Into<String>) -> ApiError {
+    ApiError::new(400, "bad_data", msg)
+}
+
+pub fn evaluate(
+    engine: &QueryEngine,
+    storage: &Storage,
+    expr: &Expr,
+    grid: Grid,
+) -> ApiResult<Value> {
+    Ev {
+        engine,
+        storage,
+        grid,
+    }
+    .eval(expr)
+}
+
+struct Ev<'a> {
+    engine: &'a QueryEngine,
+    storage: &'a Storage,
+    grid: Grid,
+}
+
+struct Sample {
+    ts_ns: i64,
+    value: f64,
+    bytes: f64,
+}
+
+/// The labels that a `sum` over a range aggregation, and the selector under it, look at: those of the
+/// selector's matchers and of the sum's `by (...)`. `None` for `without (...)`, which keeps every label
+/// but the listed ones.
+fn sum_labels(grouping: Option<&ast::Grouping>, r: &RangeAgg) -> Option<Vec<String>> {
+    let mut names: Vec<String> = r.log.matchers.iter().map(|m| m.name.clone()).collect();
+    if let Some(g) = grouping {
+        if !g.by {
+            return None;
+        }
+        names.extend(g.labels.iter().cloned());
+    }
+    names.sort();
+    names.dedup();
+    Some(names)
+}
+
+fn grouping(g: &Option<ast::Grouping>) -> Option<Grouping> {
+    g.as_ref().map(|g| Grouping {
+        by: g.by,
+        labels: g.labels.clone(),
+    })
+}
+
+fn op_name(op: BinOp) -> &'static str {
+    match op {
+        BinOp::Or => "or",
+        BinOp::And => "and",
+        BinOp::Unless => "unless",
+        BinOp::Add => "+",
+        BinOp::Sub => "-",
+        BinOp::Mul => "*",
+        BinOp::Div => "/",
+        BinOp::Mod => "%",
+        BinOp::Pow => "^",
+        BinOp::Eq => "==",
+        BinOp::Ne => "!=",
+        BinOp::Gt => ">",
+        BinOp::Ge => ">=",
+        BinOp::Lt => "<",
+        BinOp::Le => "<=",
+    }
+}
+
+impl Ev<'_> {
+    fn n(&self) -> usize {
+        self.grid.steps
+    }
+
+    fn eval(&self, expr: &Expr) -> ApiResult<Value> {
+        match expr {
+            Expr::Number(n) => Ok(Value::Scalar(vec![*n; self.n()])),
+            Expr::VectorLit(n) => Ok(Value::Vector(vec![Series { labels: Labels::new(), vals: vec![Some(*n); self.n()] }])),
+            Expr::Log(_) => Err(bad("a log query is not a metric query: wrap it in a range aggregation such as count_over_time")),
+            Expr::Range(r) => Ok(Value::Vector(self.range(r)?)),
+            Expr::Vector(v) => {
+                let input = match (v.op, &v.expr) {
+                    // A sum adds the streams' windows, so the streams may be added first, and then
+                    // only the labels the sum and the selector look at are needed.
+                    (VecOp::Sum, Expr::Range(r)) => {
+                        let labels = sum_labels(v.grouping.as_ref(), r);
+                        self.range_with(r, labels.as_deref())?
+                    }
+                    _ => self.vector(&v.expr)?,
+                };
+                if matches!(v.op, VecOp::Sort | VecOp::SortDesc) {
+                    return Ok(Value::Vector(sorted(input, v.op == VecOp::SortDesc)));
+                }
+                let name = match v.op {
+                    VecOp::Sum => "sum",
+                    VecOp::Avg => "avg",
+                    VecOp::Min => "min",
+                    VecOp::Max => "max",
+                    VecOp::Count => "count",
+                    VecOp::Stddev => "stddev",
+                    VecOp::Stdvar => "stdvar",
+                    VecOp::Topk => "topk",
+                    _ => "bottomk",
+                };
+                let k = v.param.map(|k| vec![k; self.n()]);
+                vector::aggregate(name, self.n(), input, &grouping(&v.grouping), k.as_deref())
+                    .map(Value::Vector)
+                    .map_err(bad)
+            }
+            Expr::LabelReplace(l) => {
+                let mut series = self.vector(&l.expr)?;
+                let rx = anchored(&l.regex)?;
+                for s in &mut series {
+                    let value = s.labels.get(&l.src).cloned().unwrap_or_default();
+                    if let Some(caps) = rx.captures(&value) {
+                        let mut out = String::new();
+                        caps.expand(&l.replacement, &mut out);
+                        if out.is_empty() {
+                            s.labels.remove(&l.dst);
+                        } else {
+                            s.labels.insert(l.dst.clone(), out);
+                        }
+                    }
+                }
+                Ok(Value::Vector(series))
+            }
+            Expr::Binary(b) => self.binary(b),
+        }
+    }
+
+    fn vector(&self, expr: &Expr) -> ApiResult<Vec<Series>> {
+        match self.eval(expr)? {
+            Value::Vector(v) => Ok(v),
+            Value::Scalar(_) => Err(bad("expected a vector, found a scalar")),
+        }
+    }
+
+    fn binary(&self, b: &ast::Binary) -> ApiResult<Value> {
+        let op = op_name(b.op);
+        let comparison = b.op.is_comparison();
+        let n = self.n();
+        let lhs = self.eval(&b.lhs)?;
+        let rhs = self.eval(&b.rhs)?;
+        match (lhs, rhs) {
+            (Value::Scalar(a), Value::Scalar(c)) => {
+                if comparison && !b.bool_modifier {
+                    return Err(bad(
+                        "comparisons between scalars must use the bool modifier",
+                    ));
+                }
+                Ok(Value::Scalar(
+                    (0..n)
+                        .map(|i| match vector::arith(op, a[i], c[i]) {
+                            vector::Applied::Value(v) => v,
+                            vector::Applied::Cmp(t) => f64::from(t),
+                        })
+                        .collect(),
+                ))
+            }
+            (Value::Vector(s), Value::Scalar(c)) => Ok(Value::Vector(vector::vector_scalar(
+                s,
+                &c,
+                op,
+                comparison,
+                b.bool_modifier,
+                false,
+            ))),
+            (Value::Scalar(c), Value::Vector(s)) => Ok(Value::Vector(vector::vector_scalar(
+                s,
+                &c,
+                op,
+                comparison,
+                b.bool_modifier,
+                true,
+            ))),
+            (Value::Vector(l), Value::Vector(r)) => {
+                let matching = Matching {
+                    on: b.matching.clone(),
+                    card: match &b.group {
+                        Some((true, _)) => Card::ManyToOne,
+                        Some((false, _)) => Card::OneToMany,
+                        None => Card::OneToOne,
+                    },
+                    include: b
+                        .group
+                        .as_ref()
+                        .map(|(_, labels)| labels.clone())
+                        .unwrap_or_default(),
+                };
+                if b.op.is_set() {
+                    Ok(Value::Vector(vector::set_op(n, op, l, r, &matching.on)))
+                } else {
+                    vector::vector_vector(n, op, comparison, b.bool_modifier, l, r, &matching)
+                        .map(Value::Vector)
+                        .map_err(|e| ApiError::new(422, "execution", e))
+                }
+            }
+        }
+    }
+
+    fn range(&self, r: &RangeAgg) -> ApiResult<Vec<Series>> {
+        self.range_with(r, None)
+    }
+
+    /// `labels`, when given, are the only labels the caller will look at (see [`sum_labels`]).
+    fn range_with(&self, r: &RangeAgg, labels: Option<&[String]>) -> ApiResult<Vec<Series>> {
+        if let Some(series) = self.range_counted(r, labels)? {
+            return Ok(series);
+        }
+        let pipeline = Pipeline::compile(&r.log.stages)?;
+        let at = |ms: i64| {
+            Utc.timestamp_millis_opt(ms)
+                .single()
+                .ok_or_else(|| bad("time out of range"))
+        };
+        let entries = fetch_all(
+            self.engine,
+            self.storage,
+            &r.log.matchers,
+            &r.log.stages,
+            at(self.grid.start_ms - r.offset_ms - r.range_ms)?,
+            at(self.grid.end_ms() - r.offset_ms + 1)?,
+        )?;
+        let group = grouping(&r.grouping);
+        let mut by_series: BTreeMap<Labels, Vec<Sample>> = BTreeMap::new();
+        for entry in &entries {
+            let Some((line, mut labels)) =
+                pipeline.process(entry.ts_ns, &entry.line, &entry.labels)
+            else {
+                continue;
+            };
+            if let Some(kind) = labels.get("__error__") {
+                let detail = labels
+                    .get("__error_details__")
+                    .map(String::as_str)
+                    .unwrap_or("");
+                return Err(bad(format!(
+                    "pipeline error: '{kind}' ({detail}). Use a label filter to intentionally skip this error. (e.g | __error__!=\"{kind}\")"
+                )));
+            }
+            // Loki groups `by (...)` on the labels as they are before the unwrapped one is
+            // removed, so `by (status)` can keep the label that was unwrapped.
+            let before_unwrap =
+                matches!(group, Some(Grouping { by: true, .. })).then(|| labels.clone());
+            let value = match &r.unwrap {
+                Some(u) => unwrap_value(u, &mut labels)?,
+                None => 1.0,
+            };
+            let key = match &before_unwrap {
+                Some(before) => vector::group_key(before, &group),
+                None => vector::group_key_or_all(&labels, &group),
+            };
+            by_series.entry(key).or_default().push(Sample {
+                ts_ns: entry.ts_ns,
+                value,
+                bytes: line.len() as f64,
+            });
+        }
+        if r.op == RangeOp::AbsentOverTime {
+            return Ok(self.absent(r, &by_series));
+        }
+        let range_secs = r.range_ms as f64 / 1000.0;
+        let mut out = Vec::new();
+        for (labels, samples) in by_series {
+            let vals: Vec<Option<f64>> = (0..self.n())
+                .map(|i| {
+                    let end_ms = self.grid.ts(i) - r.offset_ms;
+                    let window = window(&samples, end_ms - r.range_ms, end_ms);
+                    if window.is_empty() {
+                        return None;
+                    }
+                    apply(r, window, range_secs, end_ms)
+                })
+                .collect();
+            if vals.iter().any(Option::is_some) {
+                out.push(Series { labels, vals });
+            }
+        }
+        Ok(out)
+    }
+
+    /// `count_over_time`, `rate`, `bytes_over_time` and `bytes_rate` over lines that only plain line
+    /// filters select need no line in memory: the database counts them per stream and time bucket and
+    /// the windows are sums of buckets. `None` when the query has another shape, which reads the lines.
+    fn range_counted(
+        &self,
+        r: &RangeAgg,
+        labels: Option<&[String]>,
+    ) -> ApiResult<Option<Vec<Series>>> {
+        let counted_op = matches!(
+            r.op,
+            RangeOp::CountOverTime | RangeOp::Rate | RangeOp::BytesOverTime | RangeOp::BytesRate
+        );
+        if !counted_op || r.unwrap.is_some() || !countable(&r.log.stages) || r.range_ms <= 0 {
+            return Ok(None);
+        }
+        // Every window edge falls on a bucket edge when the buckets are as wide as the greatest
+        // common divisor of the step and the range.
+        let steps = self.n();
+        let step_ms = if steps > 1 {
+            self.grid.step_ms
+        } else {
+            r.range_ms
+        };
+        if step_ms <= 0 {
+            return Ok(None);
+        }
+        let width = gcd(step_ms, r.range_ms);
+        let (per_step, per_window) = (step_ms / width, r.range_ms / width);
+        let total = (steps as i64 - 1) * per_step + per_window;
+        if total > MAX_BUCKETS {
+            return Ok(None);
+        }
+        let origin_ms = self.grid.start_ms - r.offset_ms - r.range_ms;
+        let end_ms = self.grid.end_ms() - r.offset_ms;
+        let window = CountWindow {
+            origin_ns: origin_ms * 1_000_000,
+            end_ns: end_ms * 1_000_000,
+            bucket_ns: width * 1_000_000,
+        };
+        // A grouping of the range aggregation itself needs the labels as they are.
+        let labels = labels.filter(|_| r.grouping.is_none());
+        let found = counts(
+            self.engine,
+            self.storage,
+            &r.log.matchers,
+            &r.log.stages,
+            window,
+            labels,
+        )?;
+        let group = grouping(&r.grouping);
+        // Streams that group to the same series add up.
+        let mut by_series: BTreeMap<Labels, (Vec<u64>, Vec<f64>)> = BTreeMap::new();
+        for stream in found {
+            let key = match &group {
+                Some(Grouping { by: true, .. }) => vector::group_key(&stream.labels, &group),
+                _ => vector::group_key_or_all(&stream.labels, &group),
+            };
+            let (lines, bytes) = by_series
+                .entry(key)
+                .or_insert_with(|| (vec![0; total as usize + 1], vec![0.0; total as usize + 1]));
+            for (bucket, n, b) in stream.buckets {
+                // Prefix sums are built below; here the counts sit at their bucket.
+                if let Some(slot) = usize::try_from(bucket).ok().filter(|i| *i < total as usize) {
+                    lines[slot + 1] += n;
+                    bytes[slot + 1] += b;
+                }
+            }
+        }
+        let range_secs = r.range_ms as f64 / 1000.0;
+        let mut out = Vec::new();
+        for (labels, (mut lines, mut bytes)) in by_series {
+            for i in 1..lines.len() {
+                lines[i] += lines[i - 1];
+                bytes[i] += bytes[i - 1];
+            }
+            let vals: Vec<Option<f64>> = (0..steps as i64)
+                .map(|i| {
+                    let (lo, hi) = (
+                        (i * per_step) as usize,
+                        (i * per_step + per_window) as usize,
+                    );
+                    let (n, b) = (lines[hi] - lines[lo], bytes[hi] - bytes[lo]);
+                    if n == 0 {
+                        return None;
+                    }
+                    Some(match r.op {
+                        RangeOp::CountOverTime => n as f64,
+                        RangeOp::Rate => n as f64 / range_secs,
+                        RangeOp::BytesOverTime => b,
+                        _ => b / range_secs,
+                    })
+                })
+                .collect();
+            if vals.iter().any(Option::is_some) {
+                out.push(Series { labels, vals });
+            }
+        }
+        Ok(Some(out))
+    }
+
+    /// `absent_over_time`: 1 at every step where no line at all is in the window.
+    fn absent(&self, r: &RangeAgg, by_series: &BTreeMap<Labels, Vec<Sample>>) -> Vec<Series> {
+        let labels: Labels = r
+            .log
+            .matchers
+            .iter()
+            .filter(|m| m.op == MatchOp::Eq)
+            .map(|m| (m.name.clone(), m.value.clone()))
+            .collect();
+        let vals = (0..self.n())
+            .map(|i| {
+                let end_ms = self.grid.ts(i) - r.offset_ms;
+                by_series
+                    .values()
+                    .all(|s| window(s, end_ms - r.range_ms, end_ms).is_empty())
+                    .then_some(1.0)
+            })
+            .collect();
+        vec![Series { labels, vals }]
+    }
+}
+
+/// The samples in `(start_ms, end_ms]`.
+fn window(samples: &[Sample], start_ms: i64, end_ms: i64) -> &[Sample] {
+    let lo = samples.partition_point(|s| s.ts_ns <= start_ms * 1_000_000);
+    let hi = samples.partition_point(|s| s.ts_ns <= end_ms * 1_000_000);
+    &samples[lo..hi]
+}
+
+fn unwrap_value(u: &ast::Unwrap, labels: &mut Labels) -> ApiResult<f64> {
+    let err = |detail: String| {
+        bad(format!("pipeline error: 'SampleExtractionErr' ({detail}). Use a label filter to intentionally skip this error."))
+    };
+    let raw = labels
+        .remove(&u.label)
+        .ok_or_else(|| err(format!("label {} is missing", u.label)))?;
+    let parsed = match u.conv {
+        Conv::None => raw.parse::<f64>().ok(),
+        Conv::Bytes => parse_bytes(&raw),
+        Conv::Duration | Conv::DurationSeconds => parse_duration_secs(&raw),
+    };
+    parsed.ok_or_else(|| {
+        err(format!(
+            "label {} has the value {raw:?}, which cannot be converted",
+            u.label
+        ))
+    })
+}
+
+fn apply(r: &RangeAgg, win: &[Sample], range_secs: f64, end_ms: i64) -> Option<f64> {
+    let n = win.len() as f64;
+    let values = || win.iter().map(|s| s.value);
+    let sum_bytes: f64 = win.iter().map(|s| s.bytes).sum();
+    Some(match r.op {
+        RangeOp::CountOverTime => n,
+        RangeOp::Rate if r.unwrap.is_some() => values().sum::<f64>() / range_secs,
+        RangeOp::Rate => n / range_secs,
+        RangeOp::BytesOverTime => sum_bytes,
+        RangeOp::BytesRate => sum_bytes / range_secs,
+        RangeOp::RateCounter => {
+            let points: Vec<(i64, f64)> =
+                win.iter().map(|s| (s.ts_ns / 1_000_000, s.value)).collect();
+            // Loki gives a window with fewer than two samples the rate 0.
+            extrapolated(&points, end_ms - r.range_ms, end_ms, true, true).unwrap_or(0.0)
+        }
+        RangeOp::SumOverTime => values().sum(),
+        RangeOp::AvgOverTime => values().sum::<f64>() / n,
+        RangeOp::MinOverTime => values().fold(f64::INFINITY, f64::min),
+        RangeOp::MaxOverTime => values().fold(f64::NEG_INFINITY, f64::max),
+        RangeOp::StddevOverTime => variance(values()).sqrt(),
+        RangeOp::StdvarOverTime => variance(values()),
+        RangeOp::QuantileOverTime => quantile(r.param.unwrap_or(f64::NAN), values().collect()),
+        RangeOp::FirstOverTime => win.first()?.value,
+        RangeOp::LastOverTime => win.last()?.value,
+        RangeOp::AbsentOverTime => return None,
+    })
+}
+
+fn sorted(mut series: Vec<Series>, descending: bool) -> Vec<Series> {
+    let key = |s: &Series| s.vals.iter().rev().find_map(|v| *v).unwrap_or(f64::NAN);
+    series.sort_by(|a, b| key(a).total_cmp(&key(b)));
+    if descending {
+        series.reverse();
+    }
+    series
+}

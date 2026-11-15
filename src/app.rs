@@ -7,12 +7,13 @@ use crate::storage::Storage;
 use anyhow::Result;
 use std::sync::Arc;
 
+#[derive(Clone)]
 pub struct AppState {
     pub config: Config,
     pub storage: Arc<Storage>,
-    pub admission: AdmissionController,
+    pub admission: Arc<AdmissionController>,
     pub queries: QueryEngine,
-    pub metadata: Metadata,
+    pub metadata: Arc<Metadata>,
     pub metrics: Arc<Metrics>,
 }
 
@@ -39,9 +40,9 @@ impl AppState {
         let metrics = Arc::new(Metrics::default());
         Ok(Self {
             storage,
-            admission,
+            admission: Arc::new(admission),
             queries: QueryEngine::new(&config),
-            metadata: Metadata::new(),
+            metadata: Arc::new(Metadata::new()),
             metrics,
             config,
         })

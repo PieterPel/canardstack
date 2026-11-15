@@ -1,16 +1,11 @@
-//! Query admission control.
-//!
-//! canardstack is query-only: admission protects the embedded DuckDB process by
-//! reserving fixed slots for cheap metadata/instant-style queries and separate
-//! slots for heavier range/search/trace queries.
-
 use crate::config::Config;
 use crate::metrics::{MetricName, Metrics};
 use crate::validation::{ApiError, ApiResult};
-use crate::LockExt;
 use serde::Serialize;
-use std::sync::{Condvar, Mutex};
-use std::time::{Duration, Instant};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
+use std::time::Duration;
+use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum QueryClass {
@@ -37,47 +32,37 @@ pub struct AdmissionSnapshot {
 }
 
 pub struct AdmissionController {
-    inner: Mutex<AdmissionState>,
-    query_available: Condvar,
+    cheap: Arc<Semaphore>,
+    heavy: Arc<Semaphore>,
     cheap_query_capacity: usize,
     heavy_query_capacity: usize,
+    rejections: AtomicU64,
 }
 
-#[derive(Debug)]
-struct AdmissionState {
-    cheap_query_active: usize,
-    heavy_query_active: usize,
-    query_rejections_total: u64,
-}
+pub type QueryAdmissionGuard = OwnedSemaphorePermit;
 
 impl AdmissionController {
     pub fn new(config: &Config) -> Self {
-        let cheap_query_capacity = config
+        let total = config.operator.query_interactive.concurrency;
+        let cheap = config
             .operator
             .cheap_query_admission_capacity
-            .min(
-                config
-                    .operator
-                    .query_interactive
-                    .concurrency
-                    .saturating_sub(1),
-            )
+            .min(total.saturating_sub(1))
             .max(1);
-        let heavy_query_capacity = config
-            .operator
-            .query_interactive
-            .concurrency
-            .saturating_sub(cheap_query_capacity)
-            .max(1);
+        let heavy = total.saturating_sub(cheap).max(1);
         Self {
-            inner: Mutex::new(AdmissionState {
-                cheap_query_active: 0,
-                heavy_query_active: 0,
-                query_rejections_total: 0,
-            }),
-            query_available: Condvar::new(),
-            cheap_query_capacity,
-            heavy_query_capacity,
+            cheap: Arc::new(Semaphore::new(cheap)),
+            heavy: Arc::new(Semaphore::new(heavy)),
+            cheap_query_capacity: cheap,
+            heavy_query_capacity: heavy,
+            rejections: AtomicU64::new(0),
+        }
+    }
+
+    fn semaphore(&self, class: QueryClass) -> Arc<Semaphore> {
+        match class {
+            QueryClass::Cheap => self.cheap.clone(),
+            QueryClass::Heavy => self.heavy.clone(),
         }
     }
 
@@ -85,237 +70,160 @@ impl AdmissionController {
         &self,
         class: QueryClass,
         metrics: &Metrics,
-    ) -> ApiResult<QueryAdmissionGuard<'_>> {
-        self.reserve_query_with_wait(class, Duration::ZERO, metrics)
+    ) -> ApiResult<QueryAdmissionGuard> {
+        let result = self
+            .semaphore(class)
+            .try_acquire_owned()
+            .map_err(|_| self.reject(class, metrics));
+        self.record_metrics(metrics);
+        result
     }
 
-    pub fn reserve_query_with_wait(
+    pub async fn reserve_query_with_wait(
         &self,
         class: QueryClass,
         max_wait: Duration,
         metrics: &Metrics,
-    ) -> ApiResult<QueryAdmissionGuard<'_>> {
-        let mut state = self.inner.lock_or_poisoned();
-        let deadline = Instant::now() + max_wait;
-        let result = loop {
-            if self.try_reserve_query_locked(class, &mut state) {
-                break Ok(QueryAdmissionGuard {
-                    admission: self,
-                    class,
-                });
-            }
-            if max_wait.is_zero() {
-                break self.reject_query_locked(class, &mut state, metrics);
-            }
-            let now = Instant::now();
-            if now >= deadline {
-                break self.reject_query_locked(class, &mut state, metrics);
-            }
-            let remaining = deadline.saturating_duration_since(now);
-            let wait_result = self
-                .query_available
-                .wait_timeout(state, remaining)
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            state = wait_result.0;
-        };
-        let snapshot = self.snapshot_from_state(&state);
-        drop(state);
-        self.emit_admission_gauges(metrics, &snapshot);
+    ) -> ApiResult<QueryAdmissionGuard> {
+        if max_wait.is_zero() {
+            return self.reserve_query(class, metrics);
+        }
+        let result =
+            match tokio::time::timeout(max_wait, self.semaphore(class).acquire_owned()).await {
+                Ok(Ok(permit)) => Ok(permit),
+                _ => Err(self.reject(class, metrics)),
+            };
+        self.record_metrics(metrics);
         result
     }
 
-    fn try_reserve_query_locked(&self, class: QueryClass, state: &mut AdmissionState) -> bool {
-        match class {
-            QueryClass::Cheap if state.cheap_query_active < self.cheap_query_capacity => {
-                state.cheap_query_active += 1;
-                true
-            }
-            QueryClass::Heavy if state.heavy_query_active < self.heavy_query_capacity => {
-                state.heavy_query_active += 1;
-                true
-            }
-            _ => false,
-        }
-    }
-
-    fn reject_query_locked(
-        &self,
-        class: QueryClass,
-        state: &mut AdmissionState,
-        metrics: &Metrics,
-    ) -> ApiResult<QueryAdmissionGuard<'_>> {
-        let reason = query_rejection_reason(class);
-        state.query_rejections_total += 1;
+    fn reject(&self, class: QueryClass, metrics: &Metrics) -> ApiError {
+        self.rejections.fetch_add(1, Ordering::Relaxed);
+        let (reason, message) = match class {
+            QueryClass::Cheap => (
+                "cheap_query_admission_full",
+                "cheap query admission capacity is exhausted",
+            ),
+            QueryClass::Heavy => (
+                "heavy_query_admission_full",
+                "heavy query admission capacity is exhausted",
+            ),
+        };
         metrics.inc(
             MetricName::AdmissionRejectionsTotal,
             &[("admission", "query"), ("reason", reason)],
             1,
         );
-        Err(ApiError::new(429, reason, query_rejection_message(class)).with_retry_after(1))
+        ApiError::new(429, reason, message).with_retry_after(1)
     }
 
     pub fn snapshot(&self) -> AdmissionSnapshot {
-        let state = self.inner.lock_or_poisoned();
-        self.snapshot_from_state(&state)
+        AdmissionSnapshot {
+            cheap_query_active: self.cheap_query_capacity - self.cheap.available_permits(),
+            cheap_query_capacity: self.cheap_query_capacity,
+            heavy_query_active: self.heavy_query_capacity - self.heavy.available_permits(),
+            heavy_query_capacity: self.heavy_query_capacity,
+            query_rejections_total: self.rejections.load(Ordering::Relaxed),
+        }
     }
 
     pub fn record_metrics(&self, metrics: &Metrics) {
         let snapshot = self.snapshot();
-        self.emit_admission_gauges(metrics, &snapshot);
-    }
-
-    fn snapshot_from_state(&self, state: &AdmissionState) -> AdmissionSnapshot {
-        AdmissionSnapshot {
-            cheap_query_active: state.cheap_query_active,
-            cheap_query_capacity: self.cheap_query_capacity,
-            heavy_query_active: state.heavy_query_active,
-            heavy_query_capacity: self.heavy_query_capacity,
-            query_rejections_total: state.query_rejections_total,
+        for (label, capacity, active) in [
+            (
+                "query_cheap",
+                snapshot.cheap_query_capacity,
+                snapshot.cheap_query_active,
+            ),
+            (
+                "query_heavy",
+                snapshot.heavy_query_capacity,
+                snapshot.heavy_query_active,
+            ),
+        ] {
+            metrics.gauge(
+                MetricName::AdmissionCapacity,
+                &[("admission", label)],
+                capacity as f64,
+            );
+            metrics.gauge(
+                MetricName::AdmissionInUse,
+                &[("admission", label)],
+                active as f64,
+            );
         }
-    }
-
-    fn emit_admission_gauges(&self, metrics: &Metrics, snapshot: &AdmissionSnapshot) {
-        metrics.gauge(
-            MetricName::AdmissionCapacity,
-            &[("admission", "query_cheap")],
-            snapshot.cheap_query_capacity as f64,
-        );
-        metrics.gauge(
-            MetricName::AdmissionInUse,
-            &[("admission", "query_cheap")],
-            snapshot.cheap_query_active as f64,
-        );
-        metrics.gauge(
-            MetricName::AdmissionCapacity,
-            &[("admission", "query_heavy")],
-            snapshot.heavy_query_capacity as f64,
-        );
-        metrics.gauge(
-            MetricName::AdmissionInUse,
-            &[("admission", "query_heavy")],
-            snapshot.heavy_query_active as f64,
-        );
-    }
-}
-
-pub struct QueryAdmissionGuard<'a> {
-    admission: &'a AdmissionController,
-    class: QueryClass,
-}
-
-impl Drop for QueryAdmissionGuard<'_> {
-    fn drop(&mut self) {
-        let mut state = self.admission.inner.lock_or_poisoned();
-        match self.class {
-            QueryClass::Cheap => {
-                state.cheap_query_active = state.cheap_query_active.saturating_sub(1);
-            }
-            QueryClass::Heavy => {
-                state.heavy_query_active = state.heavy_query_active.saturating_sub(1);
-            }
-        }
-        drop(state);
-        self.admission.query_available.notify_one();
-    }
-}
-
-fn query_rejection_reason(class: QueryClass) -> &'static str {
-    match class {
-        QueryClass::Cheap => "cheap_query_admission_full",
-        QueryClass::Heavy => "heavy_query_admission_full",
-    }
-}
-
-fn query_rejection_message(class: QueryClass) -> &'static str {
-    match class {
-        QueryClass::Cheap => "cheap query admission capacity is exhausted",
-        QueryClass::Heavy => "heavy query admission capacity is exhausted",
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::Config;
-    use std::sync::Arc;
-    use tempfile::tempdir;
 
     fn controller() -> AdmissionController {
-        let dir = tempdir().unwrap();
-        let mut config = Config::test(dir.path().join("canardstack.duckdb"));
-        config.operator.query_interactive.concurrency = 4;
-        config.operator.cheap_query_admission_capacity = 1;
-        AdmissionController::new(&config)
+        AdmissionController::new(&Config::test(std::path::PathBuf::from("unused.duckdb")))
     }
 
     #[test]
     fn cheap_and_heavy_queries_use_separate_capacity() {
         let admission = controller();
         let metrics = Metrics::default();
-        let _cheap = admission
+        let cheap = admission
             .reserve_query(QueryClass::Cheap, &metrics)
             .unwrap();
-        let _heavy1 = admission
-            .reserve_query(QueryClass::Heavy, &metrics)
-            .unwrap();
-        let _heavy2 = admission
-            .reserve_query(QueryClass::Heavy, &metrics)
-            .unwrap();
-        let _heavy3 = admission
-            .reserve_query(QueryClass::Heavy, &metrics)
-            .unwrap();
-
-        let err = match admission.reserve_query(QueryClass::Heavy, &metrics) {
-            Ok(_) => panic!("heavy query should reject when capacity is full"),
-            Err(err) => err,
-        };
-        assert_eq!(err.status, 429);
-        assert_eq!(err.reason, "heavy_query_admission_full");
-
-        let err = match admission.reserve_query(QueryClass::Cheap, &metrics) {
-            Ok(_) => panic!("cheap query should reject when capacity is full"),
-            Err(err) => err,
-        };
-        assert_eq!(err.status, 429);
-        assert_eq!(err.reason, "cheap_query_admission_full");
+        let heavy = (0..3)
+            .map(|_| {
+                admission
+                    .reserve_query(QueryClass::Heavy, &metrics)
+                    .unwrap()
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            admission
+                .reserve_query(QueryClass::Cheap, &metrics)
+                .unwrap_err()
+                .status,
+            429
+        );
+        assert_eq!(
+            admission
+                .reserve_query(QueryClass::Heavy, &metrics)
+                .unwrap_err()
+                .reason,
+            "heavy_query_admission_full"
+        );
+        assert_eq!(admission.snapshot().cheap_query_active, 1);
+        drop((cheap, heavy));
+        assert_eq!(admission.snapshot().heavy_query_active, 0);
     }
 
-    #[test]
-    fn query_waits_for_capacity_before_rejecting() {
+    #[tokio::test]
+    async fn query_waits_and_cancelled_waiter_does_not_leak_capacity() {
         let admission = Arc::new(controller());
         let metrics = Arc::new(Metrics::default());
         let first = admission
             .reserve_query(QueryClass::Cheap, &metrics)
             .unwrap();
-        let waiting_admission = admission.clone();
-        let waiting_metrics = metrics.clone();
-        let waiting = std::thread::spawn(move || {
-            waiting_admission
-                .reserve_query_with_wait(
-                    QueryClass::Cheap,
-                    std::time::Duration::from_millis(250),
-                    &waiting_metrics,
-                )
-                .map(|_guard| ())
-        });
-
-        std::thread::sleep(std::time::Duration::from_millis(20));
+        let waiting = {
+            let admission = admission.clone();
+            let metrics = metrics.clone();
+            tokio::spawn(async move {
+                admission
+                    .reserve_query_with_wait(QueryClass::Cheap, Duration::from_secs(1), &metrics)
+                    .await
+            })
+        };
+        tokio::task::yield_now().await;
+        assert!(!waiting.is_finished());
         drop(first);
-
-        assert!(waiting.join().unwrap().is_ok());
-    }
-
-    #[test]
-    fn snapshot_reports_active_and_capacity() {
-        let admission = controller();
-        let metrics = Metrics::default();
-        let _cheap = admission
+        drop(waiting.await.unwrap().unwrap());
+        let first = admission
             .reserve_query(QueryClass::Cheap, &metrics)
             .unwrap();
-        let snapshot = admission.snapshot();
-
-        assert_eq!(snapshot.cheap_query_active, 1);
-        assert_eq!(snapshot.cheap_query_capacity, 1);
-        assert_eq!(snapshot.heavy_query_capacity, 3);
+        let result = admission
+            .reserve_query_with_wait(QueryClass::Cheap, Duration::from_millis(10), &metrics)
+            .await;
+        assert_eq!(result.unwrap_err().status, 429);
+        drop(first);
+        assert_eq!(admission.snapshot().cheap_query_active, 0);
     }
 }

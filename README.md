@@ -3,14 +3,22 @@
   canardstack
 </h1>
 
-[![Crates.io](https://img.shields.io/crates/v/canardstack)](https://crates.io/crates/canardstack)
-[![CI](https://github.com/smithclay/canardstack/actions/workflows/ci.yml/badge.svg)](https://github.com/smithclay/canardstack/actions/workflows/ci.yml)
+[![CI](https://github.com/PieterPel/canardstack/actions/workflows/ci.yml/badge.svg)](https://github.com/PieterPel/canardstack/actions/workflows/ci.yml)
 [![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![DuckLake](https://img.shields.io/badge/storage-DuckLake-fff000.svg?logo=duckdb&logoColor=black)](https://ducklake.select/)
 
 > Query OpenTelemetry-shaped logs, traces, and metrics stored in DuckLake.
 
+This is a fork of [smithclay/canardstack](https://github.com/smithclay/canardstack) (Apache-2.0,
+copyright Clay Smith). It has diverged: PromQL, LogQL and TraceQL are evaluated by in-process
+engines (with the LogQL and TraceQL parsers as separate crates in `crates/`) and measured against
+Prometheus, Loki and Tempo with differential harnesses under [`bench/compat`](bench/compat/README.md).
+
 canardstack is an experimental query server for observability data stored in [DuckLake](https://ducklake.select/). It exposes bounded Prometheus, Loki, and Tempo-compatible HTTP APIs for Grafana-style clients.
+
+HTTP runs on Axum/Hyper and Tokio; synchronous DuckDB queries execute in bounded
+blocking tasks. See [developer notes](docs/developer.md) and the
+[Azure Functions deployment notes](docs/azure-functions.md).
 
 Write telemetry with [duckdb-otlp](https://github.com/smithclay/duckdb-otlp) in a DuckDB process, then point canardstack at the resulting DuckLake catalog for query serving in Grafana.
 
@@ -46,11 +54,18 @@ The default Compose stack runs the full query-only architecture:
 
 ```bash
 docker compose up
+# or, with Podman on macOS/Linux:
+podman-compose up
 ```
 
-It starts a DuckDB Quack catalog, the published `duckdb-otlp` ingest image,
-canardstack, and Grafana. The OTLP/HTTP ingest endpoint is on `localhost:4318`,
-canardstack is on `localhost:9090`, and Grafana is on `localhost:3000`.
+It starts a DuckDB Quack catalog behind a small TLS front end, the published
+`duckdb-otlp` ingest image, canardstack, and Grafana. The OTLP/HTTP ingest
+endpoint is on `localhost:4318`, canardstack is on `localhost:9090`, and Grafana
+is on `localhost:3000`.
+
+The stack pins `duckdb-otlp` to `0.7.3`, the newest DuckDB 1.5.x image. The
+current canardstack image also bundles DuckDB 1.5.x and cannot read DuckLake
+metadata written by the DuckDB 2.0 image (`duckdb-otlp:latest`).
 
 To run the stack against a locally built canardstack image:
 

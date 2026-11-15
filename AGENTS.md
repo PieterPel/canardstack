@@ -6,7 +6,7 @@ This file is durable guidance for coding agents working in this repository. Keep
 
 canardstack is a single-binary, experimental observability query server written in Rust. It attaches DuckDB to DuckLake tables populated by an external writer, usually `duckdb-otlp`, and exposes bounded Prometheus, Loki, and Tempo-compatible HTTP APIs for Grafana-style clients.
 
-There is exactly one binary (`canardstack`), one synchronous std-library HTTP server, and one DuckDB process inside canardstack. There is no async runtime, no OTLP ingest endpoint, no OTLP/gRPC endpoint, no Kafka, no bundled catalog service, and no separate hot store. The optional `tls` cargo feature (deps `rustls` + `rcgen`, off by default, enabled in the Docker image) adds a synchronous in-binary TLS terminator for the public `serve` endpoint.
+There is exactly one binary (`canardstack`), one Axum/Hyper HTTP server on Tokio, and one embedded DuckDB instance inside canardstack. DuckDB execution remains synchronous and runs in bounded blocking tasks. There is no OTLP ingest endpoint, no OTLP/gRPC endpoint, no Kafka, no bundled catalog service, and no separate hot store. The optional `tls` cargo feature (off by default, enabled in the Docker image) serves TLS directly on the public listener through tokio-rustls.
 
 ## Commands
 
@@ -21,9 +21,13 @@ cargo build --all-targets --locked
 cargo test
 cargo test <test_name>
 
-# Lint and formatting
+# Lint and formatting (CI runs both on every pull request into main)
 cargo fmt --all -- --check
 cargo clippy --all-targets --all-features --locked -- -D warnings
+# The same checks through a script that falls back to a Nix toolchain when cargo has no rustfmt or clippy,
+# and as git hooks: install once with `pre-commit install` (for example `uv tool install pre-commit`).
+scripts/rust-check.sh fmt
+scripts/rust-check.sh clippy
 
 # Site
 cd site && ASTRO_TELEMETRY_DISABLED=1 npm run build
@@ -56,7 +60,7 @@ OpenTelemetry producers
   -> bounded Prometheus / Loki / Tempo compatibility APIs
 ```
 
-Storage signals are `Logs`, `Spans`, `MetricGauge`, and `MetricSum`. Histograms and exponential histograms are not part of the v0 query surface.
+Storage signals are `Logs`, `Spans`, `MetricGauge`, `MetricSum`, `MetricHistogram` and `MetricExpHistogram`. Explicit-bucket histograms are read as Prometheus `_bucket{le}`, `_sum` and `_count` series (the histogram table is only scanned for selectors that can match them). Exponential histograms are read as Prometheus native histograms (`src/query/native_histogram.rs`, `src/query/promql/native.rs`); that table is only scanned once it has data, checked every 30 seconds. Summaries are not part of the query surface.
 
 ## Source Map
 
@@ -64,24 +68,28 @@ Storage signals are `Logs`, `Spans`, `MetricGauge`, and `MetricSum`. Histograms 
 - `src/lib.rs` - re-exports `AppState` and `Config`; defines `log_event` and `LockExt::lock_or_poisoned`.
 - `src/app.rs` - wires long-lived components into shared `Arc<AppState>`.
 - `src/config.rs` - reads `CANARDSTACK_*` env vars into one `Config`; startup calls `Config::validate()`.
-- `src/http.rs` and `src/http/` - hand-rolled std-library HTTP/1.1 server, routing, auth, parsing, and responses.
+- `src/http.rs` and `src/http/` - Axum/Hyper HTTP/1.1 transport, routing, auth, and responses.
 - `src/validation.rs` - shared auth, request bounds, `ApiError`, and error envelopes.
 - `src/signal.rs` - shared `StorageSignal` physical signal/table vocabulary.
 - `src/admission_control.rs` - cheap/heavy query admission.
 - `src/storage/` - DuckDB/DuckLake attach, schema fencing, health probes, metadata helpers, and scoped query connections.
-- `src/query/` - bounded query helpers, shared query plans, and Prometheus/Loki/Tempo selector parsing.
+- `src/query/` - bounded query helpers, shared query plans, and Prometheus/Loki/Tempo selector parsing; `native_histogram.rs` holds the native histogram type and arithmetic, ported from Prometheus.
 - `src/compat/` - Prometheus/Loki/Tempo route adapters and the v0 public query surface.
 - `src/metadata.rs` - bounded discovery-metadata adapters over visible DuckLake rows, with an in-process cache.
 - `src/metrics.rs` - Prometheus-style operator metrics at `/metrics`.
 - `src/db/sql.rs` - shared SQL fragment helpers used by `storage`, `query`, and `compat`.
 - `src/runtime/memory.rs` - runtime memory-pressure probing.
 - `src/cli/` - subcommand implementations.
+- `crates/logql-syntax/` - dependency-free LogQL parser (lexer, AST, parser) in a workspace member that can be published on its own; `src/query/logql/` wraps it and holds the evaluator.
+- `crates/traceql-syntax/` - dependency-free TraceQL parser and validator, tested against Tempo's own example queries; `src/query/traceql/` wraps it and evaluates search queries (spanset filters, pipelines, aggregates, structural operators) over whole traces loaded into memory (`model.rs`, `eval.rs`, `value.rs`) and metrics queries (`metrics.rs`).
 
 ## Load-Bearing Constraints
 
-- Keep the code synchronous. Do not add `tokio`, `async fn`, gRPC, Kafka, a second binary, or another long-running service unless the task explicitly changes the architecture.
-- Use OS threads plus `Arc<Mutex<_>>`. Prefer `LockExt::lock_or_poisoned()` over `.lock().unwrap()` for shared state.
-- Keep query routes bounded by time range, row limit, timeout, DuckDB memory limit, and concurrency caps through `QueryEngine`.
+- Keep blocking DuckDB/storage work off Tokio runtime workers. Acquire bounded admission before `spawn_blocking`, and keep its owned permit until the blocking operation actually finishes, including after cancellation or an HTTP timeout.
+- Use async semaphores for admission waits. Keep ordinary mutexes for short synchronous state access; never hold a std mutex guard across `.await`. Prefer `LockExt::lock_or_poisoned()` over `.lock().unwrap()` for shared state.
+- Keep hosting-platform adaptation in deployment configuration or launch scripts, not in application configuration or query code.
+- Do not add gRPC, Kafka, a second binary, or another long-running service unless the task explicitly changes the architecture.
+- Keep query routes bounded by time range, row limit, timeout, DuckDB memory limit, and concurrency caps through `QueryEngine`. LogQL reads lines into memory only up to `CANARDSTACK_QUERY_MAX_LOG_LINES`; shapes that can be counted or limited in SQL must be (see `docs/architecture/query-api.md`), and a change that adds a bound needs a test that runs it below the data size.
 - Do not expose arbitrary SQL through the compatibility APIs. Direct SQL is intentionally an external DuckDB CLI / MotherDuck path.
 - Preserve the Prometheus/Loki error envelope shape: `{"status":"error","errorType":"...","error":"..."}`.
 - canardstack does not own ingestion durability or visibility timing. It queries whatever rows are visible in the attached DuckLake catalog.

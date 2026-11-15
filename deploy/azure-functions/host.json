@@ -1,0 +1,17 @@
+{
+  "version": "2.0",
+  "functionTimeout": "00:01:00",
+  "extensions": {
+    "http": {
+      "routePrefix": "",
+      "maxConcurrentRequests": 8,
+      "maxOutstandingRequests": 16
+    }
+  },
+  "customHandler": {
+    "description": {
+      "defaultExecutablePath": "launch.sh"
+    },
+    "enableProxyingHttpRequest": true
+  }
+}

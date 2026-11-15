@@ -11,6 +11,10 @@ pub struct QueryLimits {
     pub concurrency: usize,
     pub timeout_secs: u64,
     pub memory_limit: String,
+    /// The most log lines one LogQL query may load into memory before it is refused. Queries that
+    /// aggregate in SQL (`count_over_time`, `rate`, `bytes_over_time` and `bytes_rate` over a
+    /// selector with only plain line filters) never load lines and are not limited by it.
+    pub max_log_lines: usize,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -35,7 +39,6 @@ pub struct TlsServerConfig {
     pub mode: TlsMode,
     pub cert_file: Option<PathBuf>,
     pub key_file: Option<PathBuf>,
-    pub backend_bind: String,
 }
 
 #[derive(Clone, Debug)]
@@ -63,6 +66,9 @@ pub struct OperatorConfig {
     pub query_interactive: QueryLimits,
     pub query_admission_wait: Duration,
     pub cheap_query_admission_capacity: usize,
+    /// Add unit and `_total` suffixes to Prometheus metric names, as Prometheus' OTLP receiver
+    /// does by default. Off keeps only the character escaping (Mimir's default).
+    pub prometheus_name_suffixes: bool,
     pub max_concurrent_connections: usize,
     pub socket_read_timeout: Duration,
     pub socket_write_timeout: Duration,
@@ -99,6 +105,11 @@ impl Config {
 
 impl OperatorConfig {
     fn from_env(file: &FileConfig, data_dir: &Path) -> Result<Self> {
+        if env_string("CANARDSTACK_TLS_BACKEND_BIND")?.is_some()
+            || file.string(&["server", "tls", "backend_bind"])?.is_some()
+        {
+            anyhow::bail!("CANARDSTACK_TLS_BACKEND_BIND/server.tls.backend_bind is no longer supported; TLS uses the server bind address directly");
+        }
         reject_removed_bool(
             "CANARDSTACK_GRPC_ENABLED",
             file,
@@ -121,6 +132,9 @@ impl OperatorConfig {
         let query_memory_limit = env_string("CANARDSTACK_QUERY_MEMORY_LIMIT")?
             .or(file.string(&["query", "memory_limit"])?)
             .unwrap_or_else(|| "1GiB".to_string());
+        let query_max_log_lines = env_usize("CANARDSTACK_QUERY_MAX_LOG_LINES")?
+            .or(file.usize(&["query", "max_log_lines"])?)
+            .unwrap_or(1_000_000);
         let tls_cert_file = env_path("CANARDSTACK_TLS_CERT_FILE")?.or(file.path(&[
             "server",
             "tls",
@@ -145,9 +159,6 @@ impl OperatorConfig {
                 mode: tls_mode,
                 cert_file: tls_cert_file,
                 key_file: tls_key_file,
-                backend_bind: env_string("CANARDSTACK_TLS_BACKEND_BIND")?
-                    .or(file.string(&["server", "tls", "backend_bind"])?)
-                    .unwrap_or_else(|| "127.0.0.1:4319".to_string()),
             },
             api_key: env_string("CANARDSTACK_API_KEY")?
                 .or(file.string(&["auth", "api_key"])?)
@@ -194,6 +205,7 @@ impl OperatorConfig {
                 concurrency: query_concurrency,
                 timeout_secs: query_timeout_secs,
                 memory_limit: query_memory_limit,
+                max_log_lines: query_max_log_lines,
             },
             query_admission_wait: duration_ms_or_secs(
                 file,
@@ -208,6 +220,9 @@ impl OperatorConfig {
             )?
             .or(file.usize(&["admission", "cheap_query_capacity"])?)
             .unwrap_or(1),
+            prometheus_name_suffixes: env_bool("CANARDSTACK_PROMETHEUS_NAME_SUFFIXES")?
+                .or(file.bool(&["prometheus", "name_suffixes"])?)
+                .unwrap_or(true),
             max_concurrent_connections: env_usize("CANARDSTACK_MAX_CONNECTIONS")?
                 .or(file.usize(&["server", "max_connections"])?)
                 .unwrap_or(1024),
@@ -232,7 +247,6 @@ impl OperatorConfig {
                 mode: TlsMode::File,
                 cert_file: None,
                 key_file: None,
-                backend_bind: "127.0.0.1:0".to_string(),
             },
             api_key: "test-key".to_string(),
             admin_api_key: "test-admin-key".to_string(),
@@ -251,9 +265,11 @@ impl OperatorConfig {
                 concurrency: 4,
                 timeout_secs: 15,
                 memory_limit: "512MiB".to_string(),
+                max_log_lines: 1_000_000,
             },
             query_admission_wait: Duration::from_secs(1),
             cheap_query_admission_capacity: 1,
+            prometheus_name_suffixes: true,
             max_concurrent_connections: 64,
             socket_read_timeout: Duration::from_secs(5),
             socket_write_timeout: Duration::from_secs(5),
@@ -272,26 +288,16 @@ impl OperatorConfig {
                 "CANARDSTACK_API_KEY and CANARDSTACK_ADMIN_API_KEY must differ; reusing a single key collapses the admin authorization gate"
             );
         }
-        if self.tls.enabled {
-            if self.tls.backend_bind.trim().is_empty() {
-                anyhow::bail!("CANARDSTACK_TLS_BACKEND_BIND must not be empty when TLS is enabled");
-            }
-            if self.tls.backend_bind == self.bind {
+        if self.tls.enabled && self.tls.mode == TlsMode::File {
+            if self.tls.cert_file.is_none() {
                 anyhow::bail!(
-                    "CANARDSTACK_TLS_BACKEND_BIND must differ from CANARDSTACK_BIND when TLS is enabled"
+                    "CANARDSTACK_TLS_CERT_FILE must be set when CANARDSTACK_TLS_ENABLED=true and CANARDSTACK_TLS_MODE=file"
                 );
             }
-            if self.tls.mode == TlsMode::File {
-                if self.tls.cert_file.is_none() {
-                    anyhow::bail!(
-                        "CANARDSTACK_TLS_CERT_FILE must be set when CANARDSTACK_TLS_ENABLED=true and CANARDSTACK_TLS_MODE=file"
-                    );
-                }
-                if self.tls.key_file.is_none() {
-                    anyhow::bail!(
-                        "CANARDSTACK_TLS_KEY_FILE must be set when CANARDSTACK_TLS_ENABLED=true and CANARDSTACK_TLS_MODE=file"
-                    );
-                }
+            if self.tls.key_file.is_none() {
+                anyhow::bail!(
+                    "CANARDSTACK_TLS_KEY_FILE must be set when CANARDSTACK_TLS_ENABLED=true and CANARDSTACK_TLS_MODE=file"
+                );
             }
         }
         if self.max_body_bytes == 0 {
@@ -327,6 +333,13 @@ impl OperatorConfig {
         if self.max_concurrent_connections == 0 {
             anyhow::bail!("CANARDSTACK_MAX_CONNECTIONS must be > 0");
         }
+        if self.max_concurrent_connections > tokio::sync::Semaphore::MAX_PERMITS
+            || self.query_interactive.concurrency > tokio::sync::Semaphore::MAX_PERMITS
+        {
+            anyhow::bail!(
+                "connection and query concurrency limits exceed Tokio semaphore capacity"
+            );
+        }
         if self.query_interactive.concurrency == 0 {
             anyhow::bail!("CANARDSTACK_QUERY_CONCURRENCY must be > 0");
         }
@@ -337,6 +350,9 @@ impl OperatorConfig {
             anyhow::bail!(
                 "CANARDSTACK_QUERY_CONCURRENCY must leave at least one heavy query slot after cheap-query admission reservations"
             );
+        }
+        if self.query_interactive.max_log_lines == 0 {
+            anyhow::bail!("CANARDSTACK_QUERY_MAX_LOG_LINES must be > 0");
         }
         if self.query_interactive.timeout_secs == 0 {
             anyhow::bail!("CANARDSTACK_QUERY_TIMEOUT_SECS must be > 0");
@@ -551,6 +567,7 @@ mod tests {
         "CANARDSTACK_QUERY_ADMISSION_WAIT_MS",
         "CANARDSTACK_QUERY_ADMISSION_WAIT_SECS",
         "CANARDSTACK_CHEAP_QUERY_ADMISSION_CAPACITY",
+        "CANARDSTACK_PROMETHEUS_NAME_SUFFIXES",
         "CANARDSTACK_MAX_CONNECTIONS",
         "CANARDSTACK_SOCKET_READ_TIMEOUT_SECS",
         "CANARDSTACK_SOCKET_WRITE_TIMEOUT_SECS",
@@ -610,7 +627,6 @@ max_connections = 42
 [server.tls]
 enabled = true
 mode = "ephemeral_self_signed"
-backend_bind = "127.0.0.1:9443"
 
 [auth]
 api_key = "file-api-key"
@@ -644,7 +660,6 @@ cheap_query_capacity = 2
         unsafe {
             env::set_var(CONFIG_PATH_ENV, &config_path);
             env::set_var("CANARDSTACK_BIND", "127.0.0.1:4319");
-            env::set_var("CANARDSTACK_TLS_BACKEND_BIND", "127.0.0.1:9444");
             env::set_var("CANARDSTACK_DUCKLAKE_ATTACH_URI", "");
             env::set_var("CANARDSTACK_DUCKLAKE_CATALOG_PATH", "/env/catalog.ducklake");
             env::set_var(
@@ -658,7 +673,6 @@ cheap_query_capacity = 2
         assert_eq!(config.operator.bind, "127.0.0.1:4319");
         assert!(config.operator.tls.enabled);
         assert_eq!(config.operator.tls.mode, TlsMode::EphemeralSelfSigned);
-        assert_eq!(config.operator.tls.backend_bind, "127.0.0.1:9444");
         assert_eq!(config.operator.api_key, "file-api-key");
         assert_eq!(config.operator.admin_api_key, "file-admin-api-key");
         assert_eq!(

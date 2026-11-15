@@ -13,7 +13,6 @@ socket_write_timeout_secs = 30
 # mode = "file"
 # cert_file = "/etc/canardstack/tls/fullchain.pem"
 # key_file = "/etc/canardstack/tls/privkey.pem"
-# backend_bind = "127.0.0.1:4319"
 
 [auth]
 api_key = "dev-canardstack-key"
@@ -37,6 +36,10 @@ memory_limit = "1GiB"
 #
 # Object storage examples:
 # data_path = "s3://canardstack-data/prod/"
+
+[prometheus]
+# Add unit and _total suffixes to Prometheus metric names (see CANARDSTACK_PROMETHEUS_NAME_SUFFIXES).
+name_suffixes = true
 
 [query]
 concurrency = 4

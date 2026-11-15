@@ -1,0 +1,470 @@
+{
+  "uid": "bench-results",
+  "title": "Benchmark results",
+  "tags": [
+    "bench"
+  ],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "refresh": "",
+  "panels": [
+    {
+      "id": 1,
+      "type": "barchart",
+      "title": "Query latency p50 (ms), clients 1 (log scale)",
+      "description": "Median across trials of each trial's pooled p50. Lower is better.",
+      "datasource": {
+        "type": "grafana-testdata-datasource",
+        "uid": "testdata"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 12,
+        "h": 9
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-testdata-datasource",
+            "uid": "testdata"
+          },
+          "scenarioId": "csv_content",
+          "csvContent": "name,canardstack,canardstack-pg,canardstack-sqlite,lgtm,victoria\nlog_lines,28.74,11.02,10.10,4.14,11.69\nlog_error_lines,25.52,6.98,6.82,2.67,1.39\ngauge_range_max,25.26,6.41,5.88,1.21,0.84\ngauge_last,25.08,6.91,5.64,1.09,0.80\nsum_last,30.31,7.80,7.43,1.11,0.78\ngauge_points,27.94,9.73,9.32,1.51,1.05\ntrace_by_id,24.82,6.93,6.08,1.95,1.44"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "custom": {
+            "scaleDistribution": {
+              "type": "log",
+              "log": 10
+            },
+            "axisSoftMin": null,
+            "fillOpacity": 80
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "xField": "name",
+        "orientation": "auto",
+        "showValue": "auto",
+        "groupWidth": 0.75,
+        "barWidth": 0.95,
+        "stacking": "none",
+        "xTickLabelRotation": 0,
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 2,
+      "type": "barchart",
+      "title": "Query latency p50 (ms), clients 4 (log scale)",
+      "description": "",
+      "datasource": {
+        "type": "grafana-testdata-datasource",
+        "uid": "testdata"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 0,
+        "w": 12,
+        "h": 9
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-testdata-datasource",
+            "uid": "testdata"
+          },
+          "scenarioId": "csv_content",
+          "csvContent": "name,canardstack,canardstack-pg,canardstack-sqlite,lgtm,victoria\nlog_lines,69.63,15.94,15.81,7.68,22.44\nlog_error_lines,62.83,10.24,10.33,4.12,3.27\ngauge_range_max,64.38,8.85,7.84,2.23,1.72\ngauge_last,95.41,24.07,18.32,2.03,1.64\nsum_last,114.51,27.71,26.43,1.89,1.69\ngauge_points,66.44,13.99,15.52,2.71,2.51\ntrace_by_id,63.69,8.85,9.47,4.07,2.73"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "custom": {
+            "scaleDistribution": {
+              "type": "log",
+              "log": 10
+            },
+            "axisSoftMin": null,
+            "fillOpacity": 80
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "xField": "name",
+        "orientation": "auto",
+        "showValue": "auto",
+        "groupWidth": 0.75,
+        "barWidth": 0.95,
+        "stacking": "none",
+        "xTickLabelRotation": 0,
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 3,
+      "type": "barchart",
+      "title": "Query latency p95 (ms), clients 1 (log scale)",
+      "description": "",
+      "datasource": {
+        "type": "grafana-testdata-datasource",
+        "uid": "testdata"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 9,
+        "w": 12,
+        "h": 9
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-testdata-datasource",
+            "uid": "testdata"
+          },
+          "scenarioId": "csv_content",
+          "csvContent": "name,canardstack,canardstack-pg,canardstack-sqlite,lgtm,victoria\nlog_lines,35.42,14.17,11.98,6.55,15.41\nlog_error_lines,32.25,8.92,8.89,4.14,2.39\ngauge_range_max,37.67,9.35,7.42,1.71,1.12\ngauge_last,31.95,9.23,7.46,1.64,1.15\nsum_last,39.61,9.70,9.16,1.74,1.14\ngauge_points,34.07,12.81,12.08,2.47,1.65\ntrace_by_id,30.24,9.35,7.51,3.70,2.05"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "custom": {
+            "scaleDistribution": {
+              "type": "log",
+              "log": 10
+            },
+            "axisSoftMin": null,
+            "fillOpacity": 80
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "xField": "name",
+        "orientation": "auto",
+        "showValue": "auto",
+        "groupWidth": 0.75,
+        "barWidth": 0.95,
+        "stacking": "none",
+        "xTickLabelRotation": 0,
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 4,
+      "type": "barchart",
+      "title": "Query throughput (qps), clients 1",
+      "description": "",
+      "datasource": {
+        "type": "grafana-testdata-datasource",
+        "uid": "testdata"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 9,
+        "w": 12,
+        "h": 9
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-testdata-datasource",
+            "uid": "testdata"
+          },
+          "scenarioId": "csv_content",
+          "csvContent": "name,canardstack,canardstack-pg,canardstack-sqlite,lgtm,victoria\nlog_lines,33,84,94,219,81\nlog_error_lines,38,138,143,328,592\ngauge_range_max,40,146,161,720,1032\ngauge_last,38,144,175,798,1052\nsum_last,32,127,130,796,1114\ngauge_points,35,96,102,523,698\ntrace_by_id,41,137,164,474,636"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": {
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "axisSoftMin": 0,
+            "fillOpacity": 80
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "xField": "name",
+        "orientation": "auto",
+        "showValue": "auto",
+        "groupWidth": 0.75,
+        "barWidth": 0.95,
+        "stacking": "none",
+        "xTickLabelRotation": 0,
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 5,
+      "type": "barchart",
+      "title": "Ingest: accepted rows/s (acceptance, not durability)",
+      "description": "",
+      "datasource": {
+        "type": "grafana-testdata-datasource",
+        "uid": "testdata"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 18,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-testdata-datasource",
+            "uid": "testdata"
+          },
+          "scenarioId": "csv_content",
+          "csvContent": "name,canardstack,canardstack-pg,canardstack-sqlite,lgtm,victoria\nlogs,74085,86622,79774,75206,25799\nmetrics,164061,169939,156349,155325,164815\ntraces,68306,69424,67833,63129,63965"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "axisSoftMin": 0,
+            "fillOpacity": 80
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "xField": "name",
+        "orientation": "auto",
+        "showValue": "auto",
+        "groupWidth": 0.75,
+        "barWidth": 0.95,
+        "stacking": "none",
+        "xTickLabelRotation": 0,
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 6,
+      "type": "barchart",
+      "title": "Ingest to queryable (seconds after accept, log scale)",
+      "description": "Time from the write being accepted until every expected row is queryable.",
+      "datasource": {
+        "type": "grafana-testdata-datasource",
+        "uid": "testdata"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 18,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-testdata-datasource",
+            "uid": "testdata"
+          },
+          "scenarioId": "csv_content",
+          "csvContent": "name,canardstack,canardstack-pg,canardstack-sqlite,lgtm,victoria\nlogs,5.75,5.53,5.81,0.53,1.97\nmetrics,6.15,5.58,5.80,0.43,13.93\ntraces,4.99,5.00,5.00,0.10,22.71"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "scaleDistribution": {
+              "type": "log",
+              "log": 10
+            },
+            "axisSoftMin": null,
+            "fillOpacity": 80
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "xField": "name",
+        "orientation": "auto",
+        "showValue": "auto",
+        "groupWidth": 0.75,
+        "barWidth": 0.95,
+        "stacking": "none",
+        "xTickLabelRotation": 0,
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 7,
+      "type": "table",
+      "title": "Correctness: every answer checked against workload-derived expectations",
+      "description": "Summed over all queries and trials. wrong = answered, but not the expected value; errors = no answer.",
+      "datasource": {
+        "type": "grafana-testdata-datasource",
+        "uid": "testdata"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 26,
+        "w": 12,
+        "h": 12
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-testdata-datasource",
+            "uid": "testdata"
+          },
+          "scenarioId": "csv_content",
+          "csvContent": "clients,stack,ok / runs,wrong,errors\nclients 1,canardstack,4200/4200,0,0\nclients 1,canardstack-pg,4200/4200,0,0\nclients 1,canardstack-sqlite,4200/4200,0,0\nclients 1,lgtm,4200/4200,0,0\nclients 1,victoria,4200/4200,0,0\nclients 4,canardstack,4200/4200,0,0\nclients 4,canardstack-pg,4200/4200,0,0\nclients 4,canardstack-sqlite,3866/4200,0,334\nclients 4,lgtm,4200/4200,0,0\nclients 4,victoria,4200/4200,0,0"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "",
+          "custom": {}
+        },
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
+      "id": 8,
+      "type": "table",
+      "title": "Container resource use (median across trials)",
+      "description": "",
+      "datasource": {
+        "type": "grafana-testdata-datasource",
+        "uid": "testdata"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 26,
+        "w": 12,
+        "h": 17
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-testdata-datasource",
+            "uid": "testdata"
+          },
+          "scenarioId": "csv_content",
+          "csvContent": "stack,container,cpu mean %,cpu max %,mem max MB\ncanardstack,canardstack_1,22.6,33.8,54\ncanardstack,ducklake-catalog_1,14.7,21.5,157\ncanardstack,ingest_1,1.2,2.0,85\ncanardstack,quack-tls_1,31.9,50.4,11\ncanardstack-pg,canardstack_1,20.6,43.0,81\ncanardstack-pg,ingest_1,1.1,1.2,81\ncanardstack-pg,postgres_1,2.1,3.4,43\ncanardstack-sqlite,canardstack_1,23.5,40.9,85\ncanardstack-sqlite,ingest_1,2.3,3.0,102\nlgtm,loki_1,4.5,8.2,131\nlgtm,mimir_1,1.3,3.2,76\nlgtm,tempo_1,1.0,2.9,65\nvictoria,victoria-logs_1,2.6,14.4,49\nvictoria,victoria-metrics_1,0.3,0.9,46\nvictoria,victoria-traces_1,0.5,1.4,90"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "",
+          "custom": {}
+        },
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
+      "id": 9,
+      "type": "text",
+      "title": "About this run",
+      "gridPos": {
+        "x": 0,
+        "y": 50,
+        "w": 24,
+        "h": 5
+      },
+      "options": {
+        "mode": "markdown",
+        "content": "**Workload** seed 1, 5 services x 2000 records per signal.  \n**Trials** canardstack: 3, canardstack-pg: 3, canardstack-sqlite: 3, lgtm: 3, victoria: 3. Every number is the median across trials.  \n**Budget** 2 CPUs / 3 GiB per stack, enforced on the whole pod (--infra=false --share= --cpus=2 --memory=3g).  \n**Git** `f5f11cb46d` (dirty).  \n**Background CPU** outside the stack: mean 5.0%, max 5.0%.  \n\nSingle-node local containers; Grafana and collectors are not in the measured path; query languages differ per stack. See `bench/README.md`."
+      }
+    }
+  ],
+  "templating": {
+    "list": []
+  },
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "links": [
+    {
+      "type": "dashboards",
+      "title": "Benchmark dashboards",
+      "tags": [
+        "bench"
+      ],
+      "asDropdown": true,
+      "includeVars": false,
+      "keepTime": false
+    }
+  ]
+}

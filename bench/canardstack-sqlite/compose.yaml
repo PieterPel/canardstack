@@ -1,0 +1,79 @@
+# canardstack with a SQLite DuckLake catalog: the writer and canardstack share one catalog
+# file on a volume (same host only; SQLite locking does not work over network filesystems).
+# Resource budget (2 CPUs / 3 GiB for the whole project) is applied at pod level by bench/run.py.
+services:
+  # Create the catalog in WAL mode first: with the default rollback journal the writer's own
+  # startup fails with "database is locked". WAL lets readers and the writer share the file.
+  init:
+    image: docker.io/library/python:3.14-slim
+    command:
+      - sh
+      - -c
+      - |
+        python -c "import sqlite3; c = sqlite3.connect('/mnt/meta/catalog.sqlite'); c.execute('PRAGMA journal_mode=WAL'); c.close()"
+        chmod -R 0777 /mnt/data /mnt/meta /mnt/canardstack
+    volumes:
+      - ducklake-data:/mnt/data
+      - ducklake-meta:/mnt/meta
+      - canardstack-data:/mnt/canardstack
+
+  ingest:
+    image: ${DUCKDB_OTLP_IMAGE}
+    depends_on:
+      init:
+        condition: service_completed_successfully
+    ports:
+      - "14358:4318"
+    environment:
+      DUCKDB_MODE: none
+      DUCKDB_OTLP_INIT_SQL: /etc/duckdb-otlp/ingest.sql
+      DUCKDB_CATALOG: canardlake
+      DUCKDB_OTLP_HOST: 0.0.0.0
+      DUCKDB_OTLP_HTTP_PORT: "4318"
+      DUCKDB_OTLP_GRPC_PORT: "0"
+      DUCKDB_OTLP_TOKEN: dev-otlp-token-123456
+    volumes:
+      - ducklake-data:/var/lib/ducklake/data
+      - ducklake-meta:/var/lib/ducklake/meta
+      - ./ingest.sql:/etc/duckdb-otlp/ingest.sql:ro
+    healthcheck:
+      test: ["CMD", "duckdb-otlp", "doctor", "--host", "127.0.0.1", "--http", "4318", "--grpc", "0"]
+      interval: 5s
+      timeout: 5s
+      start_period: 60s
+      retries: 24
+    restart: unless-stopped
+
+  canardstack:
+    image: ${CANARDSTACK_IMAGE:-canardstack:local}
+    user: "65532:65532"
+    depends_on:
+      init:
+        condition: service_completed_successfully
+      ingest:
+        condition: service_healthy
+    ports:
+      - "19093:9090"
+    environment:
+      CANARDSTACK_BIND: 0.0.0.0:9090
+      CANARDSTACK_API_KEY: dev-canardstack-key
+      CANARDSTACK_ADMIN_API_KEY: dev-canardstack-admin-key
+      CANARDSTACK_DATA_DIR: /var/lib/canardstack
+      CANARDSTACK_DUCKLAKE_ATTACH_URI: ducklake:sqlite:/var/lib/ducklake/meta/catalog.sqlite
+      CANARDSTACK_DUCKLAKE_DATA_PATH: /var/lib/ducklake/data/
+    volumes:
+      - canardstack-data:/var/lib/canardstack
+      - ducklake-data:/var/lib/ducklake/data
+      - ducklake-meta:/var/lib/ducklake/meta
+    healthcheck:
+      test: ["CMD", "canardstack", "healthcheck", "--endpoint", "http://127.0.0.1:9090/healthz"]
+      interval: 5s
+      timeout: 5s
+      start_period: 20s
+      retries: 12
+    restart: on-failure
+
+volumes:
+  canardstack-data:
+  ducklake-data:
+  ducklake-meta:

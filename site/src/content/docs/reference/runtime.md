@@ -8,9 +8,10 @@ canardstack is a query-only process.
 ## Process
 
 - one Rust binary: `canardstack`
-- synchronous standard-library HTTP server
-- one DuckDB process inside canardstack
-- no async runtime
+- Axum/Hyper HTTP server on Tokio
+- one embedded DuckDB instance inside canardstack
+- synchronous database execution in bounded blocking tasks
+- asynchronous cheap/heavy admission, with permits held until execution finishes
 - no OTLP ingest endpoint
 - no gRPC endpoint
 - no bundled DuckLake catalog service
@@ -31,7 +32,8 @@ The catalog must contain the `otlp_*` tables in the
 
 - Query routes use `CANARDSTACK_API_KEY`.
 - Admin health routes use `CANARDSTACK_ADMIN_API_KEY`.
-- If a key is unset, that route group is unauthenticated.
+- Non-empty, distinct query and admin keys are required. Unset settings use the
+  development defaults; query/admin routes still require authentication.
 
 ## Query Bounds
 

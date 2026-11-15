@@ -1,4 +1,3 @@
-use crate::signal::StorageSignal;
 use crate::validation::{ApiError, ApiResult};
 use chrono::{DateTime, Utc};
 
@@ -53,16 +52,9 @@ pub struct FieldMatcher {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub enum TextFilter {
-    BodyContains(String),
-    BodyRegex(String),
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SelectorPlan {
     pub resource: Option<String>,
     pub matchers: Vec<FieldMatcher>,
-    pub text_filters: Vec<TextFilter>,
 }
 
 impl SelectorPlan {
@@ -80,92 +72,21 @@ pub struct TimeBounds {
     pub to: DateTime<Utc>,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum MetricSignal {
-    Gauge,
-    Sum,
-}
-
-impl MetricSignal {
-    pub fn parse(raw: &str) -> ApiResult<Self> {
-        match raw {
-            "gauge" => Ok(Self::Gauge),
-            "sum" => Ok(Self::Sum),
-            _ => Err(ApiError::new(
-                400,
-                "unsupported_signal",
-                "signal must be gauge or sum",
-            )),
-        }
-    }
-
-    pub fn storage_signal(self) -> StorageSignal {
-        match self {
-            Self::Gauge => StorageSignal::MetricGauge,
-            Self::Sum => StorageSignal::MetricSum,
-        }
-    }
-
-    pub fn table(self) -> &'static str {
-        self.storage_signal().as_str()
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum MetricAggregation {
-    Avg,
-    Min,
-    Max,
-    Sum,
-    Count,
-    Rate,
-}
-
-impl MetricAggregation {
-    pub fn parse(raw: &str) -> ApiResult<Self> {
-        match raw {
-            "avg" => Ok(Self::Avg),
-            "min" => Ok(Self::Min),
-            "max" => Ok(Self::Max),
-            "sum" => Ok(Self::Sum),
-            "count" => Ok(Self::Count),
-            "rate" => Ok(Self::Rate),
-            _ => Err(ApiError::new(
-                400,
-                "unsupported_aggregation",
-                "unsupported aggregation",
-            )),
-        }
-    }
-}
-
-#[derive(Clone, Debug)]
-pub struct MetricPlan {
-    pub selector: SelectorPlan,
-    pub time_bounds: TimeBounds,
-    pub signal: MetricSignal,
-    pub aggregation: MetricAggregation,
-    pub group_by: Vec<String>,
-    pub step_seconds: i64,
-    pub limit: usize,
-    pub order: SortDirection,
-}
-
-#[derive(Clone, Debug)]
-pub struct LogPlan {
-    pub selector: SelectorPlan,
-    pub time_bounds: TimeBounds,
-    pub limit: usize,
-    pub direction: SortDirection,
-    pub stream_labels: Vec<String>,
-}
-
 #[derive(Clone, Debug)]
 pub struct TracePlan {
     pub selector: SelectorPlan,
     pub time_bounds: TimeBounds,
     pub limit: usize,
     pub sort: TraceSort,
+    /// Span duration conditions from a TraceQL `{ duration > 1s }` filter, all ANDed.
+    pub durations: Vec<DurationFilter>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DurationFilter {
+    /// A SQL comparison operator.
+    pub op: &'static str,
+    pub nanos: i64,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

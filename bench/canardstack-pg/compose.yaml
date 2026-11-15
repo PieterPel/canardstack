@@ -1,0 +1,83 @@
+# canardstack with a Postgres DuckLake catalog: Postgres + duckdb-otlp writer + canardstack.
+# Resource budget (2 CPUs / 3 GiB for the whole project) is applied at pod level by bench/run.py.
+services:
+  init:
+    image: docker.io/library/alpine:3
+    command: ["sh", "-c", "chmod -R 0777 /mnt/data /mnt/canardstack"]
+    volumes:
+      - ducklake-data:/mnt/data
+      - canardstack-data:/mnt/canardstack
+
+  postgres:
+    image: ${POSTGRES_IMAGE}
+    environment:
+      POSTGRES_PASSWORD: bench
+      POSTGRES_DB: ducklake
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres", "-d", "ducklake"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  ingest:
+    image: ${DUCKDB_OTLP_IMAGE}
+    depends_on:
+      init:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+    ports:
+      - "14348:4318"
+    environment:
+      DUCKDB_MODE: none
+      DUCKDB_OTLP_INIT_SQL: /etc/duckdb-otlp/ingest.sql
+      DUCKDB_CATALOG: canardlake
+      DUCKDB_OTLP_HOST: 0.0.0.0
+      DUCKDB_OTLP_HTTP_PORT: "4318"
+      DUCKDB_OTLP_GRPC_PORT: "0"
+      DUCKDB_OTLP_TOKEN: dev-otlp-token-123456
+    volumes:
+      - ducklake-data:/var/lib/ducklake/data
+      - ./ingest.sql:/etc/duckdb-otlp/ingest.sql:ro
+    healthcheck:
+      test: ["CMD", "duckdb-otlp", "doctor", "--host", "127.0.0.1", "--http", "4318", "--grpc", "0"]
+      interval: 5s
+      timeout: 5s
+      start_period: 60s
+      retries: 24
+    restart: unless-stopped
+
+  canardstack:
+    image: ${CANARDSTACK_IMAGE:-canardstack:local}
+    user: "65532:65532"
+    depends_on:
+      init:
+        condition: service_completed_successfully
+      ingest:
+        condition: service_healthy
+    ports:
+      - "19092:9090"
+    environment:
+      CANARDSTACK_BIND: 0.0.0.0:9090
+      CANARDSTACK_API_KEY: dev-canardstack-key
+      CANARDSTACK_ADMIN_API_KEY: dev-canardstack-admin-key
+      CANARDSTACK_DATA_DIR: /var/lib/canardstack
+      CANARDSTACK_POSTGRES_DSN: dbname=ducklake host=postgres user=postgres password=bench
+      CANARDSTACK_DUCKLAKE_DATA_PATH: /var/lib/ducklake/data/
+    volumes:
+      - canardstack-data:/var/lib/canardstack
+      - ducklake-data:/var/lib/ducklake/data
+    healthcheck:
+      test: ["CMD", "canardstack", "healthcheck", "--endpoint", "http://127.0.0.1:9090/healthz"]
+      interval: 5s
+      timeout: 5s
+      start_period: 20s
+      retries: 12
+    restart: on-failure
+
+volumes:
+  canardstack-data:
+  ducklake-data:
+  pg-data:

@@ -67,6 +67,11 @@ Supported PromQL subset:
   `without(...)` grouping over supported labels such as `service_name` and
   `deployment_environment`.
 
+Instant queries (`/api/v1/query`) take the latest sample per series inside a 5-minute
+lookback ending at `time`, then aggregate across series, so `max()` is the maximum of the
+latest values and `count()` is the number of series. Range queries (`/api/v1/query_range`)
+include a sample exactly at `end`.
+
 Not implemented: full PromQL expression evaluation, joins, binary operators,
 subqueries, histograms, exemplars, rule evaluation, staleness semantics, and
 remote read/write.
@@ -93,15 +98,36 @@ Responses use Loki-style stream results:
 }
 ```
 
-Supported LogQL subset:
+Supported LogQL (see `src/query/logql/` and `crates/logql-syntax/`):
 
-- Stream selectors such as `{service_name="checkout"}`.
-- Equality label filters over supported labels.
+- Stream selectors with equality, inequality and regex matchers. Only `service_name` equality narrows
+  the database scan; other matchers are applied to the labels of each stream after the rows are read.
 - `start`, `end`, `limit`, and `direction`.
-- Simple text contains filters with `|= "text"`.
+- Line filters (`|=`, `!=`, `|~`, `!~`), parsers and label stages (`json`, `line_format`, label filters
+  and so on), and `unwrap`.
+- Metric queries: range aggregations (`count_over_time`, `rate`, `bytes_over_time`, `bytes_rate`,
+  `sum_over_time`, `quantile_over_time`, `absent_over_time` and the rest of the families the parser
+  accepts), vector aggregations (`sum`, `avg`, `min`, `max`, `count`, `stddev`, `stdvar`, `topk`,
+  `bottomk`, `sort`, `sort_desc`), binary operators and `label_replace`.
 
-Not implemented: regex/negative matchers, parser stages, unwrap, line format,
-label format, metric queries, aggregations, recording rules, and full LogQL.
+Not implemented: recording rules, and LogQL features the parser rejects.
+
+### How a LogQL query is evaluated, and what bounds it
+
+Every query is bounded by the interactive query timeout and memory limit. On top of that, how much of the
+log table a query reads depends on its shape:
+
+| Shape | How it is evaluated | Bound |
+| --- | --- | --- |
+| `count_over_time`, `rate`, `bytes_over_time`, `bytes_rate` over a selector with no stage except plain `\|=` / `!=` text filters | Counted inside DuckDB: `GROUP BY` stream and time bucket. No line is read into memory. | Streams times buckets, at most `CANARDSTACK_QUERY_MAX_LOG_LINES` (default 1,000,000). Not limited by the number of lines. Under a `sum` (`sum by (service_name) (count_over_time(...))`), streams are first reduced to the labels the selector and the `by (...)` use, when each is a column with a value in every row of the window; any label only an attribute supplies, a gap in a column, or `without (...)` keeps every stream. |
+| A log query (not a metric) | Reads the newest (or, with `direction=forward`, the oldest) rows in the database with `ORDER BY ... LIMIT`, a few times `limit` at first, and more only when a stage dropped too many to fill the limit. | At most `CANARDSTACK_QUERY_MAX_LOG_LINES` rows read; a query that cannot find `limit` matching lines within that is refused. |
+| Any other metric query (regex filters, parsers, `unwrap`, other range functions) | Every matching line is read into memory and evaluated per line. | More than `CANARDSTACK_QUERY_MAX_LOG_LINES` matching lines is refused with HTTP 422 and "narrow the selector or the time range". |
+
+Tests: `loki_counted_range_aggregations_match_reading_the_lines` runs the counted shapes and the
+line-reading path on the same data and requires equal answers;
+`loki_sums_over_reduced_streams_match_reading_the_lines` does the same for `sum by (...)` over data built to break the reduction (empty and missing columns, attributes that shadow a column);
+`loki_line_cap_bounds_reading_but_not_counting_or_limits` runs with a cap smaller than the data.
+Before this was written down, the cap was an undocumented constant of 1,000,000 that no test reached.
 
 ## Tempo Traces Subset
 
@@ -143,3 +169,19 @@ The remaining HTTP endpoints are operational endpoints:
 Direct DuckDB/DuckLake SQL access is available outside Canardstack through
 DuckDB CLI, MotherDuck, or SQL clients. That path is intentionally separate from
 the normal HTTP product surface.
+
+## Prometheus labels and metric names
+
+Series follow the OpenTelemetry-to-Prometheus convention, computed from the stored rows:
+
+- Labels: `job` (`service.namespace/service.name`, or the name alone), `instance`
+  (`service.instance.id`), every metric attribute with its name escaped to `[a-zA-Z0-9_]`, and
+  `otel_scope_name` / `otel_scope_version` when the scope has them. Other resource attributes are
+  not labels.
+- Names: characters outside `[a-zA-Z0-9_:]` become `_`; a known unit adds a suffix (`s` ->
+  `_seconds`, `By` -> `_bytes`, `By/s` -> `_bytes_per_second`); a gauge with unit `1` gets
+  `_ratio`; a monotonic sum gets `_total`. `CANARDSTACK_PROMETHEUS_NAME_SUFFIXES=false` keeps only
+  the escaping.
+
+Label names, label values, series and metadata are read from the raw metric tables in the requested
+window (capped), not from `metadata_summary`.

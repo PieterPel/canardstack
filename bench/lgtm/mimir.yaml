@@ -1,0 +1,49 @@
+multitenancy_enabled: false
+target: all
+server:
+  http_listen_port: 9009
+  log_level: warn
+common:
+  storage:
+    backend: filesystem
+    filesystem:
+      dir: /data/common
+blocks_storage:
+  backend: filesystem
+  bucket_store:
+    sync_dir: /data/tsdb-sync
+  filesystem:
+    dir: /data/blocks
+  tsdb:
+    dir: /data/tsdb
+ingester:
+  ring:
+    replication_factor: 1
+    kvstore:
+      store: inmemory
+distributor:
+  ring:
+    kvstore:
+      store: inmemory
+store_gateway:
+  sharding_ring:
+    replication_factor: 1
+    kvstore:
+      store: inmemory
+compactor:
+  data_dir: /data/compactor
+  sharding_ring:
+    kvstore:
+      store: inmemory
+ruler_storage:
+  backend: filesystem
+  filesystem:
+    dir: /data/ruler
+alertmanager_storage:
+  backend: filesystem
+  filesystem:
+    dir: /data/alertmanager
+limits:
+  ingestion_rate: 1000000
+  ingestion_burst_size: 2000000
+  max_global_series_per_user: 0
